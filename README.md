@@ -19,5 +19,5 @@ An open-source clojure library for use in [Afrolabs](http://afrolabs.co.za/) pro
 Initial contributor:
 
 Pieter Breed  
-[mailto:pieter@afrolabs.co.za](pieter@afrolabs.co.za)
+[pieter@afrolabs.co.za](mailto:pieter@afrolabs.co.za)
 
