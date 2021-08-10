@@ -36,8 +36,13 @@
             (with-open [f (clojure.java.io/reader f)]
               (->> (line-seq f)
 
+                   (map str/trim)
+
+                   ;; remove empty lines
+                   (filter #(pos? (count %)))
+
                    ;; filter comment lines
-                   (filter (complement #(.startsWith (str/trim %) "#")))
+                   (filter (complement #(.startsWith % "#")))
 
                    ;; split on the first '='
                    (map (fn [s]
@@ -53,6 +58,12 @@
   (let [result (get ps (keywordize (str value)))]
     (when-not result (throw (ex-info (format "The parameter '%s' can not be resolved to a value." (str value)) {})))
     result))
+
+(defmethod aero/reader 'parameter-opt
+  [{ps :parameters} _ value]
+  (when-not ps
+    (throw (ex-info "Give the :parameters option value to the aero read-config file." {})))
+  (get ps (keywordize (str value))))
 
 (defmethod aero/reader 'ig/ref
   [_ _ value]

@@ -16,11 +16,11 @@
    & {:keys [NextToken]}]
   (let [{:keys [Topics
                 NextToken]}
-        (aws/invoke sns-client (cond-> {:op :ListTopics}
-                                 NextToken (assoc :request {:NextToken NextToken})))]
+        (aws/invoke @sns-client (cond-> {:op :ListTopics}
+                                  NextToken (assoc :request {:NextToken NextToken})))]
     (if-not NextToken Topics
             (concat Topics
-                    (lazy-seq (query-all-topics sns-client
+                    (lazy-seq (query-all-topics {:sns-client sns-client}
                                                 :NextToken NextToken))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -32,12 +32,12 @@
                      ::-comp/ig-kw       ::sns-client}
   [{:keys [aws-creds-component
            aws-region-component]}]
-  (let [state {:sns-client (aws/client {:api                  :sns
-                                        :credentials-provider aws-creds-component
-                                        :region               (:region aws-region-component)})}]
+  (let [state (aws/client {:api                  :sns
+                           :credentials-provider aws-creds-component
+                           :region               (:region aws-region-component)})]
     (reify
       -comp/IHaltable
-      (halt [_] (aws/stop (:sns-client state)))
+      (halt [_] (aws/stop state))
 
       clojure.lang.IDeref
       (deref [_] state))))

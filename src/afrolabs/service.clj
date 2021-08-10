@@ -17,16 +17,22 @@
             (str/join "/" ))
        "/config.edn"))
 
+
+;; TODO - require a bloody spec for the arguments
 (defn as-system
   [{:keys [cli-args
-           config-file]
+           config-file
+           profile
+           ig-cfg-ks]
     :or {config-file (*ns*-as-config-file-path)}}]
 
   (log/debug (str "Attempting to read config file at: " config-file))
 
   (let [ig-cfg (-config/read-config config-file
-                                    :profile :prod
+                                    :profile (or profile :prod)
                                     :cli-args cli-args)
+
+        ig-cfg-ks (or ig-cfg-ks (keys ig-cfg)) ;; default is everything
 
         ;; abusing the let-block here...
         _ (log/trace (str "Effective Integrant Config:\n"
@@ -35,10 +41,11 @@
         ;; this does (require [...]) on all namespaces referenced in the keys of the integrant configuration map
         ;; thus if every component is a ::keyword then all the required code will by loaded at the correct time
         ;; before the components need to be initialized.
-        _ (ig/load-namespaces ig-cfg)
+        _ (ig/load-namespaces ig-cfg
+                              ig-cfg-ks)
 
         ig-system
-        (ig/init ig-cfg)]
+        (ig/init ig-cfg ig-cfg-ks)]
 
     ig-system))
 

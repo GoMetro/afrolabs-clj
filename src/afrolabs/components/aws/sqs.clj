@@ -2,10 +2,6 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.aws :as -aws]
             [cognitect.aws.client.api :as aws]
-            [integrant.core :as ig]
-            [clojure.string :as str]
-            [net.cgrand.xforms :as x]
-            [clojure.data.json :as json]
             [clojure.spec.alpha :as s]
             [clojure.core.async :as csp]
             [taoensso.timbre :as log]))
@@ -20,7 +16,7 @@
              fifo?]}]
 
   (let [{:keys [QueueUrl]}
-        (aws/invoke sqs-client
+        (aws/invoke @sqs-client
                     {:op      :CreateQueue
                      :request {:QueueName  QueueName
                                :Attributes (cond-> {"VisibilityTimeout" (str (or visibility-time-seconds
@@ -28,7 +24,7 @@
                                              fifo? (assoc "FifoQueue" "true"))}})
 
         {{:strs [QueueArn]} :Attributes}
-        (aws/invoke sqs-client
+        (aws/invoke @sqs-client
                     {:op      :GetQueueAttributes
                      :request {:QueueUrl       QueueUrl
                                :AttributeNames ["QueueArn"]}})]
@@ -51,19 +47,19 @@
     :keys [aws-creds-component
            aws-region-component]}]
 
-  (let [state {:sqs-client (aws/client {:api                  :sqs
-                                        :credentials-provider aws-creds-component
-                                        :region               (:region aws-region-component)})}]
+  (let [state (aws/client {:api                  :sqs
+                           :credentials-provider aws-creds-component
+                           :region               (:region aws-region-component)})]
     (reify
       -comp/IHaltable
-      (halt [_] (aws/stop (:sqs-client state)))
+      (halt [_] (aws/stop state))
 
 
       ;; marker protocol
       ISqsClient
 
       clojure.lang.IDeref
-      (deref [_] (:sqs-client state)))))
+      (deref [_] state))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -73,7 +69,8 @@
   (consume-message [_ msg] "Consumes a single message. When this method returns without exception, the message will be deleted."))
 
 (s/def ::sqs-consumer-client #(satisfies? ISqsConsumerClient %))
-(s/def ::QueueUrl string?)
+(s/def ::QueueUrl (s/and string?
+                         #(pos-int? (count %))))
 (s/def ::wait-time-seconds int?)
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
@@ -83,6 +80,12 @@
                                   :opt-un [::wait-time-seconds
                                            ::max-nr-of-messages]))
 
+(comment
+
+  (s/check-asserts true)
+
+  )
+
 (defn consumer-main
   [must-run
    {:keys [sqs-client
@@ -90,11 +93,14 @@
            QueueUrl
            wait-time-seconds
            max-nr-of-messages]
-    :or   {wait-time-seconds  30
-           max-nr-of-messages 5}}]
+    :or   {wait-time-seconds  5 ;; 5 seconds is not really that long. could easily be 30 seconds and would save on compute resources
+           max-nr-of-messages 5}
+    :as   sqs-consumer-cfg}]
+  (s/assert ::sqs-consumer-cfg sqs-consumer-cfg)
   (while @must-run
-    (let [{msgs :Messages} ;; ask for messages from the queue with a long-polling http call
-          (aws/invoke @sqs-client
+    (let [{msgs :Messages
+           :as  sqs-invoke-result} ;; ask for messages from the queue with a long-polling http call
+          (aws/invoke @sqs-client ;; consumer-main needs intimate knowledge of the sqs-client's dereffed state value to be able to pull this off
                       {:op      :ReceiveMessage
                        :request {:QueueUrl            QueueUrl
                                  :WaitTimeSeconds     wait-time-seconds
