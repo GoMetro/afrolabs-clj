@@ -161,11 +161,11 @@
 (defstrategy StringSerializer
   [& {producer-option :producer
       consumer-option :consumer
-      :or {producer-option :both
-           consumer-option :both}}]
+      :or {producer-option :none
+           consumer-option :none}}]
 
   ;; validation of arguments, fail early
-  (let [allowed-values #{:key :value :both}]
+  (let [allowed-values #{:key :value :both :none}]
     (when-not (or (allowed-values producer-option)
                   (allowed-values consumer-option))
       (throw (ex-info "StringSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (StringSerializery :producer :both :consumer :key)"
@@ -187,6 +187,36 @@
       (cond-> cfg
         (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "org.apache.kafka.common.serialization.StringDeserializer")
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "org.apache.kafka.common.serialization.StringDeserializer")))))
+
+(defstrategy JsonSerializer
+  [& {producer-option :producer
+      consumer-option :consumer
+      :or {producer-option :none
+           consumer-option :none}}]
+
+  ;; validation of arguments, fail early
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "StringSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (StringSerializery :producer :both :consumer :key)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (reify
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.json_serdes.Serializer")
+        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.json_serdes.Serializer")))
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
 
 (defstrategy SubscribeWithTopicsCollection
   [^Collection topics]
