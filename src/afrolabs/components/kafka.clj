@@ -41,13 +41,20 @@
 
 (defn- producer-produce
   [^Producer producer msgs]
-  (doseq [m (->> msgs
-                 (map #(ProducerRecord. (:topic %)
-                                        (:key %)
-                                        (:value %)))
-                 (map #(.send producer %))
-                 (doall))]
-    (.get ^Future m)))
+  (let [produce-futures
+        (->> msgs
+             (map #(ProducerRecord. (:topic %)
+                                    (:key %)
+                                    (:value %)))
+             (map #(.send producer %))
+             ;; doall means evaluate the lazy list (do side-effcts) but keep the sequence
+             ;; this forces the send before the call returns
+             (doall))]
+    (reify
+      clojure.lang.IDeref
+      (deref [_]
+        (doseq [f produce-futures]
+          (.get ^Future f))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Strategies
