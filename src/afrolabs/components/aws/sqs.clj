@@ -66,7 +66,7 @@
 
 (defprotocol ISqsConsumerClient
   "A protocol for a sqs message handler."
-  (consume-message [_ msg] "Consumes a single message. When this method returns without exception, the message will be deleted."))
+  (consume-message [_ msg delete-ch] "Consumes a single message. When the message may be deleted, deliver the original message to the delete-ch."))
 
 (s/def ::sqs-consumer-client #(satisfies? ISqsConsumerClient %))
 (s/def ::QueueUrl (s/and string?
@@ -97,41 +97,38 @@
            max-nr-of-messages 5}
     :as   sqs-consumer-cfg}]
   (s/assert ::sqs-consumer-cfg sqs-consumer-cfg)
-  (while @must-run
-    (let [{msgs :Messages
-           :as  sqs-invoke-result} ;; ask for messages from the queue with a long-polling http call
-          (aws/invoke @sqs-client ;; consumer-main needs intimate knowledge of the sqs-client's dereffed state value to be able to pull this off
-                      {:op      :ReceiveMessage
-                       :request {:QueueUrl            QueueUrl
-                                 :WaitTimeSeconds     wait-time-seconds
-                                 :MaxNumberOfMessages max-nr-of-messages}})
+  (let [delete-ch (csp/chan (* 2 max-nr-of-messages))
+        message-delete-thread
+        (csp/thread
+          (loop [v (csp/<!! delete-ch)]
+            (when-let [{receipt-handle :ReceiptHandle} v] ;; v is nil only when channel is closed
+              (aws/invoke @sqs-client
+                          {:op      :DeleteMessage
+                           :request {:QueueUrl      QueueUrl
+                                     :ReceiptHandle receipt-handle}}))))]
 
-          successes (->> msgs
-                         (map #(assoc % :status
-                                      (try (consume-message sqs-consumer-client
-                                                            %)
+    (while @must-run
+      (let [{msgs :Messages
+             :as  sqs-invoke-result} ;; TODO do something intelligent with failures. Ask for messages from the queue with a long-polling http call
+            (aws/invoke @sqs-client
+                        {:op      :ReceiveMessage
+                         :request {:QueueUrl            QueueUrl
+                                   :WaitTimeSeconds     wait-time-seconds
+                                   :MaxNumberOfMessages max-nr-of-messages}})]
 
-                                        ;; we're still here, that means it was a :success
-                                        :success
 
-                                        (catch Throwable t
+        ;; pass on every message to the consumer client (business code)
+        ;; back-pressure comes from the pace at which the consumer client access the messages
+        (doseq [msg msgs]
+          (consume-message sqs-consumer-client
+                           msg
+                           delete-ch))))
 
-                                          (log/warn t "Error while consuming a message from sqs.")
+    ;; when the outer loop is done because of not @must-run, close the delete-ch so the deleting thread can stop too
+    (csp/close! delete-ch)
 
-                                          ;; ok, no, it was a failure instead
-                                          ;; failures must not be deleted from the queue, they will just expire
-                                          ;; and another process will pick this message up again for a retry
-                                          :failure))))
-                         (filter #(= (:status %)
-                                     :success)))]
-
-      ;; delete all the messages we just processed :success-fully
-      (doseq [{receipt-handle :ReceiptHandle}
-              successes]
-        (aws/invoke @sqs-client
-                    {:op      :DeleteMessage
-                     :request {:QueueUrl      QueueUrl
-                               :ReceiptHandle receipt-handle}})))))
+    ;; wait for the delete thread to signal it's finished
+    (csp/<!! message-delete-thread)))
 
 (-comp/defcomponent {::-comp/config-spec ::sqs-consumer-cfg
                      ::-comp/ig-kw       ::sqs-consumer}
