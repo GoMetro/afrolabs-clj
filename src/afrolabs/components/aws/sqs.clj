@@ -126,7 +126,7 @@
           (consume-message sqs-consumer-client
                            msg
                            delete-ch))))
-    (log/debug "Done with sqs consumer-main loop. Cloning delete-ch...")
+    (log/debug "Done with sqs consumer-main loop. Closing delete-ch...")
 
     ;; when the outer loop is done because of not @must-run, close the delete-ch so the deleting thread can stop too
     (csp/close! delete-ch)
@@ -144,9 +144,12 @@
   (let [must-run (atom true)
         worker (csp/thread (consumer-main must-run cfg)
                            nil)]
+    (log/info "SQS Consumer started.")
     (reify
       -comp/IHaltable
       (halt [_]
         (log/debug "sqs; Setting must-run to false...")
         (reset! must-run false)
-        (csp/<!! worker)))))
+        (log/debug "Waiting for worker thread to quit...")
+        (csp/<!! worker)
+        (log/debug "SQS Consumer done.")))))

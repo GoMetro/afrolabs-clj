@@ -67,6 +67,8 @@
                          Callback
                          (onCompletion [_ _ ex]
                            ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
+                           (when ex
+                             (error ex))
                            (when-not ex
                              (csp/>!! delivered-ch msg)
                              (csp/close! delivered-ch)))))
