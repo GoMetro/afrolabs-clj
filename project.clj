@@ -99,5 +99,6 @@
                  [com.fasterxml.jackson.core/jackson-databind "2.12.4"]
                  [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.12.4"]
                  ]
+  :aot [afrolabs.components.kafka.json-serdes]
   :repl-options {}
   :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.0"]]}})
