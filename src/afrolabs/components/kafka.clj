@@ -66,17 +66,16 @@
                        (reify
                          Callback
                          (onCompletion [_ _ ex]
-                           (debug (str "Firing onCompletion for msg: "
-                                       (with-out-str (clojure.pprint/pprint msg))))
+                           (trace (str "Firing onCompletion for msg. "))
                            ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
                            (when ex
-                             (error ex))
+                             (warn ex "Error while getting confirmation of producing record."))
                            (when-not ex
-                             (debug "Forwarding delivery notification...")
+                             (trace "Forwarding delivery notification...")
                              (csp/go
                                (csp/>! delivered-ch msg)
                                (csp/close! delivered-ch)
-                               (debug "onCompletion done."))))))
+                               (trace "onCompletion done."))))))
                 (.send producer producer-record))))
        ;; doall means evaluate the lazy list (do side-effcts) but keep the sequence
        ;; this forces the send before the call returns

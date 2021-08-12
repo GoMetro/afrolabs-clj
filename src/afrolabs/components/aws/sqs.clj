@@ -102,13 +102,13 @@
         (csp/thread
           (loop [v (csp/<!! delete-ch)]
             (when-let [{receipt-handle :ReceiptHandle} v] ;; v is nil only when channel is closed
-              (log/debugf "deleting sqs message: %s" receipt-handle)
+              (log/tracef "deleting sqs message: %s" receipt-handle)
               (aws/invoke @sqs-client
                           {:op      :DeleteMessage
                            :request {:QueueUrl      QueueUrl
                                      :ReceiptHandle receipt-handle}})
               (recur (csp/<!! delete-ch))))
-          (log/debug "Done with sqs consumer-main loop's message-delete-thread."))]
+          (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
 
     (while @must-run
       (let [{msgs :Messages
@@ -126,17 +126,17 @@
           (consume-message sqs-consumer-client
                            msg
                            delete-ch))))
-    (log/debug "Done with sqs consumer-main loop. Closing delete-ch...")
+    (log/trace "Done with sqs consumer-main loop. Closing delete-ch...")
 
     ;; when the outer loop is done because of not @must-run, close the delete-ch so the deleting thread can stop too
     (csp/close! delete-ch)
 
-    (log/debug "Closed delete-ch. Waiting for message-delete-thread...")
+    (log/trace "Closed delete-ch. Waiting for message-delete-thread...")
 
     ;; wait for the delete thread to signal it's finished
     (csp/<!! message-delete-thread)
 
-    (log/debug "sqs consumer-main finally done.")))
+    (log/debug "sqs consumer-main done.")))
 
 (-comp/defcomponent {::-comp/config-spec ::sqs-consumer-cfg
                      ::-comp/ig-kw       ::sqs-consumer}
@@ -148,8 +148,8 @@
     (reify
       -comp/IHaltable
       (halt [_]
-        (log/debug "sqs; Setting must-run to false...")
+        (log/trace "sqs; Setting must-run to false...")
         (reset! must-run false)
-        (log/debug "Waiting for worker thread to quit...")
+        (log/trace "Waiting for worker thread to quit...")
         (csp/<!! worker)
-        (log/debug "SQS Consumer done.")))))
+        (log/info "SQS Consumer done.")))))
