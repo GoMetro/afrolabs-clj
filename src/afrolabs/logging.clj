@@ -6,13 +6,15 @@
                      spy get-env]]
             [timbre-json-appender.core :as tas]))
 
+(def default-min-log-level-maps [[#{"afrolabs.*"} :debug]
+                                 ["*" :info]])
+
 (defn configure-logging!
   [& {:keys [disable-stacktrace-colors
              min-level-maps
              gck-logging?]
       :or {disable-stacktrace-colors false
-           min-level-maps [[#{"afrolabs.*"} :debug]
-                           ["*" :info]]}}]
+           min-level-maps default-min-log-level-maps}}]
 
   (let [plain-logging? (not gck-logging?)]
 
