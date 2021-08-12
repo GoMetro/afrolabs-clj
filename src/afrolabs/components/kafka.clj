@@ -9,7 +9,7 @@
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]])
-  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer MockProducer Producer]
+  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer]
            [java.util.concurrent Future]
            [java.util Map Collection UUID]))
@@ -39,22 +39,43 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(s/def :producer.msg/topic (s/and string?
+                                  (comp pos-int? count)))
+(s/def :producer.msg/key any?)
+(s/def :producer.msg/value any?)
+(s/def :producer.msg/delivered-ch any?) ;; if csp/chan? existed, we'd have used that
+(s/def :producer/msg (s/keys :req-un [:producer.msg/topic
+                                      :producer.msg/key
+                                      :producer.msg/value]
+                             :opt-un [:producer.msg/delivered-ch]))
+(s/def :producer/msgs (s/coll-of :producer/msg))
+
 (defn- producer-produce
   [^Producer producer msgs]
-  (let [produce-futures
-        (->> msgs
-             (map #(ProducerRecord. (:topic %)
+  (s/assert :producer/msgs msgs)
+  (->> msgs
+       (map (juxt identity
+                  #(ProducerRecord. (:topic %)
                                     (:key %)
-                                    (:value %)))
-             (map #(.send producer %))
-             ;; doall means evaluate the lazy list (do side-effcts) but keep the sequence
-             ;; this forces the send before the call returns
-             (doall))]
-    (reify
-      clojure.lang.IDeref
-      (deref [_]
-        (doseq [f produce-futures]
-          (.get ^Future f))))))
+                                    (:value %))))
+       (map (fn [[{:keys [delivered-ch]
+                   :as   msg}
+                  producer-record]]
+              (if delivered-ch
+                (.send producer producer-record
+                       (reify
+                         Callback
+                         (onCompletion [_ _ ex]
+                           ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
+                           (when-not ex
+                             (csp/>!! delivered-ch msg)
+                             (csp/close! delivered-ch)))))
+                (.send producer producer-record))))
+       ;; doall means evaluate the lazy list (do side-effcts) but keep the sequence
+       ;; this forces the send before the call returns
+       (doall))
+  ;; return value
+  nil)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Strategies
