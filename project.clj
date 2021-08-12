@@ -88,7 +88,7 @@
                  [joda-time "2.10.10"]
 
                  ;; dependencies for confluent cloud
-                 [org.apache.kafka/connect-runtime "2.8.0" :exclusions [slf4j-log4j12]]
+                 [org.apache.kafka/connect-runtime "2.8.0" :exclusions [org.slf4j/slf4j-log4j12]]
                  [io.confluent/kafka-json-serializer "6.2.0"  :exclusions []]
                  [io.confluent/kafka-json-schema-serializer "6.2.0" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
