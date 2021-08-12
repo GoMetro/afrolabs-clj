@@ -16,20 +16,19 @@
 
   (let [plain-logging? (not gck-logging?)]
 
-    (cond
+    ;; json-based logging output
+    ;; needs a side-effect to install itself
+    ;; so we do that up-front
+    (when gck-logging? (tas/install))
 
-      plain-logging?
-      (timbre/merge-config!
-       (cond-> {}
-         disable-stacktrace-colors (assoc :output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}}))
-         (not disable-stacktrace-colors) (assoc :output-fn timbre/default-output-fn)))
-
-      gck-logging?
-      (do
-        (tas/install)
-        (timbre/merge-config!
-         (cond-> {}
-           min-level-maps (assoc :min-level min-level-maps)))))))
+    (timbre/merge-config!
+     (merge
+      {:min-level min-level-maps}
+      (cond
+        plain-logging?
+        (cond-> {}
+          disable-stacktrace-colors (assoc :output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}}))
+          (not disable-stacktrace-colors) (assoc :output-fn timbre/default-output-fn)))))))
 
 (comment
 
