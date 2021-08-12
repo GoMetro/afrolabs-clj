@@ -93,7 +93,7 @@
                  [io.confluent/kafka-json-schema-serializer "6.2.0" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
                  [org.slf4j/slf4j-api "1.7.32"]
-                 [org.slf4j/slf4j-log4j12 "1.7.32"]
+                 ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
                  [com.fasterxml.jackson.core/jackson-databind "2.12.4"]
