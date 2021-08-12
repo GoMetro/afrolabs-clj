@@ -62,7 +62,7 @@
                  [metosin/malli "0.5.1"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
-                 ;; [org.slf4j/log4j-over-slf4j "1.7.32"]
+                 [org.slf4j/log4j-over-slf4j "1.7.32"]
                  [org.slf4j/jul-to-slf4j "1.7.32"]
                  [org.slf4j/jcl-over-slf4j "1.7.32"]
 
@@ -88,7 +88,7 @@
                  [joda-time "2.10.10"]
 
                  ;; dependencies for confluent cloud
-                 [org.apache.kafka/connect-runtime "2.8.0"]
+                 [org.apache.kafka/connect-runtime "2.8.0" :exclusions [slf4j-log4j12]]
                  [io.confluent/kafka-json-serializer "6.2.0"  :exclusions []]
                  [io.confluent/kafka-json-schema-serializer "6.2.0" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
