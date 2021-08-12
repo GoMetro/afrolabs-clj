@@ -105,11 +105,12 @@
               (aws/invoke @sqs-client
                           {:op      :DeleteMessage
                            :request {:QueueUrl      QueueUrl
-                                     :ReceiptHandle receipt-handle}}))))]
+                                     :ReceiptHandle receipt-handle}})
+              (recur (csp/<!! delete-ch)))))]
 
     (while @must-run
       (let [{msgs :Messages
-             :as  sqs-invoke-result} ;; TODO do something intelligent with failures. Ask for messages from the queue with a long-polling http call
+             :as  sqs-invoke-result} ;; TODO do something intelligent with failures.
             (aws/invoke @sqs-client
                         {:op      :ReceiveMessage
                          :request {:QueueUrl            QueueUrl
