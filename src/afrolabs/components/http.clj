@@ -25,26 +25,37 @@
                      #(> % 1024)
                      #(< % java.lang.Short/MAX_VALUE)))
 (s/def ::ip valid-ip4?)
-(s/def ::health-endpoint-cfg (s/keys :req-un [::health-component]
+(s/def ::endpoint (s/and string?
+                         #(pos-int? (count %))
+                         #(str/starts-with? % "/")))
+(s/def ::health-endpoint-cfg (s/keys :req-un [::health-component
+                                              ::endpoint]
                                      :opt-un [::port
                                               ::ip]))
 
 (defn create-http-health
   [{:keys [health-component
            port
-           ip]
+           ip
+           endpoint]
     :or   {port 8000
            ip   "0.0.0.0"}
     :as   cfg}]
 
   (s/assert ::health-endpoint-cfg cfg)
 
-  (let [handler (fn [r]
-                  (if (-health/healthy? health-component)
-                    {:body "Service is healthy."
-                     :status 200}
-                    {:body "Service is NOT healthy :("
-                     :status 500}))
+  (let [handler (fn [{:keys [uri]}]
+                  (let [h? (-health/healthy? health-component)]
+                    (cond
+                      (not= uri endpoint)
+                      {:status 400
+                       :body "Unknown path"}
+
+                      h? {:status 200
+                          :body   "Service is healthy."}
+
+                      (not h?) {:status 500
+                                :body   "Service is NOT healthy :("})))
         s (httpkit/run-server handler
                               {:worker-name-prefix   "health-http-worker"
                                :error-logger         (fn [txt ex]
