@@ -39,14 +39,18 @@
 
 (defprotocol IServiceHealthTripSwitch
   (indicate-unhealthy! [_ subsystem] "A subsystem indicates that it is unhealthy.")
-  (wait-while-healthy [_] "Returns when indicate-unhealth! has been called."))
+  (wait-while-healthy [_] "Returns when indicate-unhealth! has been called.")
+  (healthy? [_] "Returns boolean indicating health."))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn make-health-component
   [{:keys [intercept-signals
            intercept-uncaught-exceptions]}]
-  (let [health-ch (csp/chan)]
+  (let [health-ch (csp/chan)
+        -healthy? (atom true)
+        -indicate-unhealthy #(do (csp/close! health-ch)
+                                 (reset! -healthy? false))]
 
     ;; in prod, interept-signals must be true
     ;; so the ServireHealthTripSwitch can be triggerd when the process receives SIGINT
@@ -60,7 +64,7 @@
                       [v ch] (csp/alts! [health-ch sigint-ch])]
                   (when (= ch sigint-ch)
                     (log/fatal (str "Intercepted an OS signal: '" v "'. Marking the system as unhealthy..."))
-                    (csp/close! health-ch))))))
+                    (-indicate-unhealthy))))))
 
     ;; do we want this component do think it's unhealthy if some thread somewher has lost itself
     ;; in the throws of a violent exception? Yes... yes we want that.
@@ -72,8 +76,8 @@
                 (let [uncaught-exs-ch @uncaught-exception-ch
                       [_ ch] (csp/alts! [health-ch uncaught-exs-ch])]
                   (when (= ch uncaught-exception-ch)
-                    (log/fatal (str "======Found an uncaught exception handler on another thread: Marking the system as unhealthy..."))
-                    (csp/close! health-ch))))))
+                    (log/fatal (str "Found an uncaught exception handler on another thread: Marking the system as unhealthy..."))
+                    (-indicate-unhealthy))))))
 
     ;; this is the implementation that's being returned as a component.
     (reify
@@ -82,11 +86,10 @@
       (indicate-unhealthy!
           [_ p]
         (log/warn (str "A subsystem has indicated that it is unhealthy: " p))
-        (csp/close! health-ch))
+        (-indicate-unhealthy))
 
-      (wait-while-healthy
-          [_]
-        (csp/<!! health-ch))
+      (wait-while-healthy [_] (csp/<!! health-ch))
+      (healthy? [_] @-healthy?)
 
       ;;;;;;;;;;
       -comp/IHaltable
