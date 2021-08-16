@@ -7,12 +7,14 @@
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]))
 
-(defn load-messages-from-topic
+(defn load-messages-from-confluent-topic
   [& {:keys [bootstrap-server
              topics
              nr-msgs
-             api-key api-secret]
-      :or {nr-msgs 10}}]
+             api-key api-secret
+             extra-strategies]
+      :or {nr-msgs          10
+           extra-strategies []}}]
   (let [loaded-msgs (atom nil)
         loaded-enough-msgs (promise)
 
@@ -32,11 +34,11 @@
         {::k/kafka-consumer
          {:bootstrap-server               bootstrap-server
           :consumer/client                consumer-client
-          :strategies                     [(k/StringSerializer)
-                                           (k/ConfluentCloud api-key api-secret)
-                                           (k/SubscribeWithTopicsCollection topics)
-                                           (k/FreshConsumerGroup)
-                                           (k/OffsetReset "earliest")]}}
+          :strategies                     (concat [(k/ConfluentCloud :api-key api-key :api-secret api-secret)
+                                                   (k/SubscribeWithTopicsCollection topics)
+                                                   (k/FreshConsumerGroup)
+                                                   (k/OffsetReset "earliest")]
+                                                  extra-strategies)}}
 
         system (ig/init ig-cfg)]
 

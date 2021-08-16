@@ -59,7 +59,7 @@
     (when-not result (throw (ex-info (format "The parameter '%s' can not be resolved to a value." (str value)) {})))
     result))
 
-(defmethod aero/reader 'parameter-opt
+(defmethod aero/reader 'option
   [{ps :parameters} _ value]
   (when-not ps
     (throw (ex-info "Give the :parameters option value to the aero read-config file." {})))
@@ -71,6 +71,11 @@
 
 (defonce static-parameter-sources (delay (merge (read-system-env)
                                                 (read-system-props))))
+
+(defn read-parameter-sources
+  [dotenv-file]
+  (merge (read-dotenv-file dotenv-file)
+         @static-parameter-sources))
 
 (defn read-config
   [config-file-location
@@ -90,8 +95,7 @@
                       (not (clojure.java.io/resource config-file-location))
                       (assoc ::reason (str "No resource found at : " config-file-location))))))
 
-  (let [parameters (merge (read-dotenv-file dotenv-file)
-                          @static-parameter-sources
+  (let [parameters (merge (read-parameter-sources dotenv-file)
                           cli-args)]
     (aero/read-config (try
                         (clojure.java.io/resource config-file-location)
