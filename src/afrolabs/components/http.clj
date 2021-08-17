@@ -4,7 +4,8 @@
             [clojure.spec.alpha :as s]
             [afrolabs.components.health :as -health]
             [clojure.string :as str]
-            [taoensso.timbre :as log])
+            [taoensso.timbre :as log]
+            [afrolabs.components.health :as -health])
   (:import [afrolabs.components IHaltable]
            [afrolabs.components.health IServiceHealthTripSwitch]))
 
@@ -48,7 +49,7 @@
                   (let [h? (-health/healthy? health-component)]
                     (cond
                       (not= uri endpoint)
-                      {:status 400
+                      {:status 404
                        :body "Unknown path"}
 
                       h? {:status 200
