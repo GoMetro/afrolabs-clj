@@ -317,15 +317,17 @@
               (into #{}
                     (map (fn [tp] {:topic (.topic tp)
                                    :partition (.partition tp)
-                                   :offset (dec (.position consumer tp))}))
-                    topic-partition-assignment)]
-          (when (= (into #{}
-                         (map (fn [[tp o]] {:topic (.topic tp)
-                                            :partition (.partition tp)
-                                            :offset o}))
-                         (.endOffsets consumer
-                                      topic-partition-assignment))
-                   current-offsets)
+                                   :offset (.position consumer tp)}))
+                    topic-partition-assignment)
+
+              end-offsets
+              (into #{}
+                    (map (fn [[tp o]] {:topic (.topic tp)
+                                       :partition (.partition tp)
+                                       :offset o}))
+                    (.endOffsets consumer
+                                 topic-partition-assignment))]
+          (when (= end-offsets current-offsets)
             (csp/>!! caught-up-ch
                      current-offsets)))))))
 
