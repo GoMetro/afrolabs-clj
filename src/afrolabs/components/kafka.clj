@@ -298,6 +298,18 @@
       ;; this is the meat of the fn
       (assoc cfg ConsumerConfig/AUTO_OFFSET_RESET_CONFIG strategy))))
 
+(defstrategy AutoCommitOffsets
+  [& {:keys [commit-interval-ms]
+      :or {commit-interval-ms (* 30 1000)}}]
+  (reify
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (assoc cfg
+             ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG true
+             ConsumerConfig/AUTO_COMMIT_INTERVAL_MS_CONFIG commit-interval-ms))))
+
 (defstrategy CaughtUpNotifications
   [& chs]
   (let [caught-up-ch (csp/chan)
