@@ -59,7 +59,7 @@
                  [org.clojure/data.json "2.4.0"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.5.1"]
+                 [metosin/malli "0.6.1"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
                  [org.slf4j/log4j-over-slf4j "1.7.32"]
