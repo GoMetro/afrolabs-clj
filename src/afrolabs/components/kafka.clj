@@ -45,9 +45,9 @@
 (s/def :producer.msg/value any?)
 (s/def :producer.msg/delivered-ch any?) ;; if csp/chan? existed, we'd have used that
 (s/def :producer/msg (s/keys :req-un [:producer.msg/topic
-                                      :producer.msg/key
                                       :producer.msg/value]
-                             :opt-un [:producer.msg/delivered-ch]))
+                             :opt-un [:producer.msg/delivered-ch
+                                      :producer.msg/key]))
 (s/def :producer/msgs (s/coll-of :producer/msg))
 
 (defn- producer-produce
@@ -107,12 +107,16 @@
   (shutdown-hook [this consumer] "Receives the consumer."))
 
 (defprotocol IConsumerMiddleware
-  "A strategy protocol to interept messages between the consumer object thread and the consumer-client.
+  "A strategy protocol to intercept messages between the consumer object thread and the consumer-client.
 
   All the middlewares will form a chain, succesively intercepting and modifying messages one after the other, with later interceptors having access to the changes made be earlier interceptors.
 
   It is assumed that the result of any consumer-client is again messages that must be produced, so in reality this middleware accepts kafka messages (in map format) both from and to the consumer thread."
   (consumer-middleware-hook [this msgs] "Accepts a collection of messages and returns a collection of messages."))
+
+(defprotocol IConsumedResultsHandler
+  "A strategy protocol for dealing with the result of the IConsumerClient's consume-messages call. This is useful when for example you want to set up consumer-producer unit, where the results of consuming messages are messages that has to be produced."
+  (handle-consumption-results [this xs] "Accepts whatever the (consume-messages ...) from the consumer-client returned."))
 
 
 (def satisfies-some-of-the-strategy-protocols (->> [IShutdownHook
@@ -120,7 +124,8 @@
                                                     IConsumerInitHook
                                                     IUpdateConsumerConfigHook
                                                     IUpdateProducerConfigHook
-                                                    IConsumerMiddleware]
+                                                    IConsumerMiddleware
+                                                    IConsumedResultsHandler]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -435,27 +440,45 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(s/def ::producer-consumption-results-xs-spec (s/or :single :producer/msg
+                                                    :more   :producer/msgs))
+
 (defn make-producer
   [{:keys [bootstrap-server
            strategies]
     :as producer-config}]
   (s/assert ::producer-config producer-config)
-  (let [strategies (normalize-strategies strategies)]
-    (let [starting-cfg {ProducerConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
-          props ((->> strategies
-                      (filter #(satisfies? IUpdateProducerConfigHook %))
-                      (map #(partial update-producer-cfg-hook %))
-                      (apply comp)) starting-cfg)
-          producer (KafkaProducer. ^Map props)]
+  (let [strategies (normalize-strategies strategies)
+        starting-cfg {ProducerConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
+        props ((->> strategies
+                    (filter #(satisfies? IUpdateProducerConfigHook %))
+                    (map #(partial update-producer-cfg-hook %))
+                    (apply comp)) starting-cfg)
+        producer (KafkaProducer. ^Map props)]
+    (reify
+      IProducer
+      (produce! [_ msgs]
+        (producer-produce producer msgs))
+      (get-producer [_] producer)
 
-      (reify
-        IProducer
-        (produce! [_ msgs]
-          (producer-produce producer msgs))
-        (get-producer [_] producer)
+      IConsumedResultsHandler
+      (handle-consumption-results
+          [_ xs]
 
-        -comp/IHaltable
-        (halt [_] (.close ^Producer producer))))))
+        (let [xs (s/conform ::producer-consumption-results-xs-spec xs)]
+          (when (= ::s/invalid xs)
+            ;; horrible place to throw, but this is the best we've got.
+            (throw (ex-info "The producer can only handle the result of consume-messages, if the value is either a single message to be produced, or a collection of messages to be produced."
+                            {::explain-str (s/explain-str ::producer-consumption-results-xs-spec xs)
+                             ::explain-data (s/explain-data ::producer-consumption-results-xs-spec xs)})))
+          (let [[xs-type xs-value] xs]
+            (producer-produce producer
+                              (condp = xs-type
+                                :single [xs-value]
+                                :more    xs-value)))))
+
+      -comp/IHaltable
+      (halt [_] (.close ^Producer producer)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -489,13 +512,25 @@
 
   (s/assert ::consumer-config consumer-config)
 
-  (let [post-consume-hooks (into []
-                                 (filter (partial satisfies? IPostConsumeHook))
-                                 strategies)
+  (let [post-consume-hooks
+        (into []
+              (filter (partial satisfies? IPostConsumeHook))
+              strategies)
+
         combined-post-consume-hook
         (fn [& args]
           (doseq [s post-consume-hooks]
-            (apply post-consume-hook s args)))]
+            (apply post-consume-hook s args)))
+
+        consumed-results-handlers
+        (into []
+              (filter (partial satisfies? IConsumedResultsHandler))
+              strategies)
+
+        combined-consumed-results-handler
+        (fn [xs]
+          (doseq [h consumed-results-handlers]
+            (handle-consumption-results h xs)))]
     (try
 
       (while (not @must-stop)
@@ -509,8 +544,7 @@
                                                (.poll consumer ^long poll-timeout))
               consumption-results        (consume-messages client consumed-records)]
 
-          (when (seq consumption-results)
-            (warn "This consumer is not configured for the consumer->produce cycle."))
+          (combined-consumed-results-handler consumption-results)
 
           (combined-post-consume-hook consumer consumed-records)))
 
