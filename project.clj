@@ -48,9 +48,9 @@
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.515"]
-                 [com.cognitect.aws/endpoints "1.1.12.13"]
-                 [com.cognitect.aws/sns "811.2.934.0"]
-                 [com.cognitect.aws/sqs "811.2.934.0"]
+                 [com.cognitect.aws/endpoints "1.1.12.42"]
+                 [com.cognitect.aws/sns "811.2.959.0"]
+                 [com.cognitect.aws/sqs "811.2.958.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "5.1.2"]
