@@ -58,6 +58,9 @@
                  ;; https://github.com/clojure/data.json
                  [org.clojure/data.json "2.4.0"]
 
+                 ;; https://github.com/clojure/data.csv
+                 [org.clojure/data.csv "1.0.0"]
+
                  ;; malli; schema-driven development and utilities
                  [metosin/malli "0.6.1"]
 
