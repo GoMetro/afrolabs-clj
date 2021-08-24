@@ -35,3 +35,12 @@
                      ::-comp/ig-kw       ::aws-region-component}
   [cfg] cfg)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn throw-when-anomaly
+  [aws-response]
+
+  (when-let [err-category (:cognitect.anomalies/category aws-response)]
+    (throw (ex-info (str "AWS operation returned an error: " err-category)
+                    aws-response)))
+  aws-response)

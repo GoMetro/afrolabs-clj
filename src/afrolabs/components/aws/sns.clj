@@ -2,10 +2,6 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.aws :as -aws]
             [cognitect.aws.client.api :as aws]
-            [integrant.core :as ig]
-            [clojure.string :as str]
-            [net.cgrand.xforms :as x]
-            [clojure.data.json :as json]
             [clojure.spec.alpha :as s]))
 
 (defn query-all-topics
