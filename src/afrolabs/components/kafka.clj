@@ -443,8 +443,9 @@
       IUpdateAdminClientConfigHook
       (update-admin-client-cfg-hook
           [_ cfg]
-        (merge (merge-common)
-               {"default.api.timeout.ms" "300000"})))))
+        (-> cfg
+            (merge-common)
+            (merge {"default.api.timeout.ms" "300000"}))))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -673,19 +674,24 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-(s/def ::admin-client-cfg (s/keys :req-un [::bootstrap-server]
-                                  :opt-un [::update-admin-client-config-hook]))
+(s/def ::admin-client-cfg (s/keys :req-un [::bootstrap-server
+                                           ::strategies]))
 
 (defn make-admin-client
   [{:keys [bootstrap-server
-           update-admin-client-config-hook]
+           strategies]
     :as   cfg}]
 
   (s/assert ::admin-client-cfg cfg)
 
-  (let [admin-client-cfg {AdminClientConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
-        admin-client-cfg (if-not update-admin-client-config-hook admin-client-cfg
-                                 (update-admin-client-cfg-hook update-admin-client-config-hook admin-client-cfg))
+  (let [strategies (normalize-strategies strategies)
+        admin-client-cfg {AdminClientConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
+        admin-client-cfg ((->> strategies
+                               (filter #(satisfies? IUpdateAdminClientConfigHook %))
+                               (map (fn [strat]
+                                      (fn [cfg]
+                                        (update-admin-client-cfg-hook strat cfg))))
+                               (apply comp)) admin-client-cfg)
         ac (AdminClient/create admin-client-cfg)]
     (reify
       clojure.lang.IDeref
@@ -696,7 +702,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::topic-asserter-cfg (s/and ::topic-asserter-cfg
+(s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
                                    (s/keys :req-un [::topic-name-providers])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
