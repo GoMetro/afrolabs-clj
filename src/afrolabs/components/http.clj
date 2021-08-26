@@ -17,7 +17,7 @@
          (->> ip-parts
               (map #(try (Integer/parseInt %)
                          (catch Throwable _ -1)))
-              (filter #(<= 0 % 256))
+              (filter #(<= 0 % 255))
               count)))))
 
 (s/def ::health-component #(satisfies? -health/IServiceHealthTripSwitch %))
