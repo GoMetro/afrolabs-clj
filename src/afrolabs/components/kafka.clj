@@ -11,8 +11,9 @@
                      spy get-env]])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer]
+           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic]
            [java.util.concurrent Future]
-           [java.util Map Collection UUID]))
+           [java.util Map Collection UUID Optional]))
 
 
 (comment
@@ -21,6 +22,15 @@
 
   )
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprotocol ITopicNameProvider
+  "A protocol for providing topic names. Could be used for subscribing to topics or for asserting them."
+  (get-topic-names [_] "Returns a seq of names for kafka topics."))
+
+(s/def ::topic-name-provider #(satisfies? ITopicNameProvider %))
+(s/def ::topic-name-providers (s/coll-of ::topic-name-provider))
+
+;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol IProducer
   "Can produce records. To kafka, probably."
@@ -94,6 +104,12 @@
   "A Strategy protocol for modifying the configuration properties before the Consumer objects is created. Useful for things like serdes."
   (update-consumer-cfg-hook [this cfg] "Takes a config map and returns a (modified version of the) map."))
 
+(defprotocol IUpdateAdminClientConfigHook
+  "A Strategy protocol for modifying the configuration properties before the AdminClient is created. Useful for Confluent connections."
+  (update-admin-client-cfg-hook [this cfg] "Takes a config map and returns a modified version of the same map."))
+
+(s/def ::update-admin-client-config-hook #(satisfies? IUpdateAdminClientConfigHook %))
+
 (defprotocol IConsumerInitHook
   "A Strategy protocol for Kafka Object initialization. This hooks is called before the first .poll. Useful for assigning of or subscribing to partitions for consumers."
   (consumer-init-hook [this ^Consumer consumer] "Takes a Consumer or Producer Object. Results are ignored."))
@@ -125,7 +141,8 @@
                                                     IUpdateConsumerConfigHook
                                                     IUpdateProducerConfigHook
                                                     IConsumerMiddleware
-                                                    IConsumedResultsHandler]
+                                                    IConsumedResultsHandler
+                                                    IUpdateAdminClientConfigHook]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -256,6 +273,23 @@
       (cond-> cfg
         (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
+
+(defstrategy SubscribeWithTopicNameProvider
+  [& topic-name-providers]
+  (let [incorrect-type (into []
+                             (filter #(not (satisfies? ITopicNameProvider %)))
+                             topic-name-providers)]
+    (when (seq incorrect-type)
+      (throw (ex-info "The parameters to SubscribeWithTopicNameProvider must implement ITopicNameProvider protocol."
+                      {::non-complient-providers incorrect-type}))))
+
+  (reify
+    IConsumerInitHook
+    (consumer-init-hook
+        [_ consumer]
+      (.subscribe ^Consumer consumer
+                  (mapcat #(get-topic-names %)
+                          topic-name-providers)))))
 
 (defstrategy SubscribeWithTopicsCollection
   [^Collection topics]
@@ -404,7 +438,13 @@
         (-> cfg
             (merge-common)
             (merge {"acks"      "all"
-                    "linger.ms" "5"}))))))
+                    "linger.ms" "5"})))
+
+      IUpdateAdminClientConfigHook
+      (update-admin-client-cfg-hook
+          [_ cfg]
+        (merge (merge-common)
+               {"default.api.timeout.ms" "300000"})))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -629,3 +669,61 @@
 (-comp/defcomponent {::-comp/ig-kw       ::kafka-consumer
                      ::-comp/config-spec ::consumer-config}
   [cfg] (make-consumer cfg))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(s/def ::admin-client-cfg (s/keys :req-un [::bootstrap-server]
+                                  :opt-un [::update-admin-client-config-hook]))
+
+(defn make-admin-client
+  [{:keys [bootstrap-server
+           update-admin-client-config-hook]
+    :as   cfg}]
+
+  (s/assert ::admin-client-cfg cfg)
+
+  (let [admin-client-cfg {AdminClientConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
+        admin-client-cfg (if-not update-admin-client-config-hook admin-client-cfg
+                                 (update-admin-client-cfg-hook update-admin-client-config-hook admin-client-cfg))
+        ac (AdminClient/create admin-client-cfg)]
+    (reify
+      clojure.lang.IDeref
+      (deref [_] ac)
+
+      -comp/IHaltable
+      (halt [_] (.close ac)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(s/def ::topic-asserter-cfg (s/and ::topic-asserter-cfg
+                                   (s/keys :req-un [::topic-name-providers])))
+
+(-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
+                     ::-comp/config-spec ::topic-asserter-cfg}
+  [{:as cfg
+    :keys [topic-name-providers]}]
+
+  (let [ac (make-admin-client cfg)
+        new-topics (into []
+                         (comp
+                          (map (fn [topic-name]
+                                 (info (format "Creating topic '%s' with default nr-partitions and replication-factor..."
+                                               topic-name))
+                                 (NewTopic. topic-name
+                                            (Optional/empty)
+                                            (Optional/empty))))
+                          (mapcat #(get-topic-names %))
+                          topic-name-providers))
+        topic-create-result (.createTopics @ac new-topics)]
+
+    ;; wait for complete success
+    (-> topic-create-result
+        (.all)
+        (.get))
+
+    ;; stop the admin client
+    (-comp/halt ac)
+
+    ;; we need to return something for the component value, let's just use the config until something better comes about
+    cfg))
