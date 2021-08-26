@@ -713,14 +713,14 @@
   (let [ac (make-admin-client cfg)
         new-topics (into []
                          (comp
+                          (mapcat #(get-topic-names %))
                           (map (fn [topic-name]
                                  (info (format "Creating topic '%s' with default nr-partitions and replication-factor..."
                                                topic-name))
                                  (NewTopic. topic-name
                                             (Optional/empty)
-                                            (Optional/empty))))
-                          (mapcat #(get-topic-names %))
-                          topic-name-providers))
+                                            (Optional/empty)))))
+                         topic-name-providers)
         topic-create-result (.createTopics @ac new-topics)]
 
     ;; wait for complete success
