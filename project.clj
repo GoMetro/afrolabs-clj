@@ -43,6 +43,10 @@
                  ;; http server
                  [http-kit "2.5.3"]
 
+                 ;; https://github.com/metosin/ring-http-response
+                 ;; ring response helper fns
+                 [metosin/ring-http-response "0.9.3"]
+
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "0.3.2"]
 
