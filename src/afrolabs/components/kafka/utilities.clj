@@ -80,4 +80,19 @@
         (ig/halt! system)
         (info "Extraordinary system stop completed.")))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn forward-topics-between-clusters
+  [{:keys [bootstrap-server
+           topics
+           extra-strategies
+           msg-filter]
+    :or {msg-filter       identity
+         extra-strategies []}
+    :as from-cluster-cfg}
+   {:keys [bootstrap-server
+           extra-strategies]
+    :or {extra-strategies []}
+    :as to-cluster-cfg}])
+
 
