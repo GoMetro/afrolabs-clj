@@ -39,6 +39,8 @@
   (produce! [_ records]
     "Produces a collection of record maps. This is a side-effect!"))
 
+(s/def ::kafka-producer #(satisfies? IProducer %))
+
 (defprotocol IConsumer
   "The client interface for the kafka consumer component"
   (get-consumer [_] "Returns the actual kafka API consumer object (or mock)"))
@@ -711,9 +713,15 @@
     :keys [topic-name-providers]}]
 
   (let [ac (make-admin-client cfg)
+        existing-topics (-> @ac
+                            (.listTopics)
+                            (.names)
+                            (.get)
+                            (set))
         new-topics (into []
                          (comp
                           (mapcat #(get-topic-names %))
+                          (filter #(not (existing-topics %)))
                           (map (fn [topic-name]
                                  (info (format "Creating topic '%s' with default nr-partitions and replication-factor..."
                                                topic-name))
