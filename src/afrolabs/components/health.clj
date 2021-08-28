@@ -31,7 +31,8 @@
   (Thread/setDefaultUncaughtExceptionHandler
    (reify Thread$UncaughtExceptionHandler
      (uncaughtException [_ thread ex]
-       (log/fatal (str "Uncaught exception on" (.getName thread)) ex)
+       (log/fatal ex
+                  (str "Uncaught exception on" (.getName thread)))
        (csp/>!! @uncaught-exception-ch
                 [(.getName thread) ex])))))
 
