@@ -26,9 +26,9 @@
     ;; json-based logging output
     ;; needs a side-effect to install itself
     ;; so we do that up-front
-    (when gck-logging? (tas/install :level min-level))
-    (when logz-io-logging? (tas/install :level min-level
-                                        :msg-key :message))
+    (when gck-logging? (tas/install {:level min-level}))
+    (when logz-io-logging? (tas/install {:level   min-level
+                                         :msg-key :message}))
 
     (timbre/merge-config!
      (merge
