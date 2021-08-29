@@ -80,7 +80,7 @@
                  [com.fzakaria/slf4j-timbre "0.3.21"]
 
                  ;; possibility to log to json, for use in cloud environments like GCK
-                 [viesti/timbre-json-appender "0.2.2"]
+                 [viesti/timbre-json-appender "0.2.3"]
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
                  [org.apache.kafka/kafka-clients "2.8.0"]

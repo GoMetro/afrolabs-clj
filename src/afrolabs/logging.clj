@@ -12,16 +12,23 @@
 (defn configure-logging!
   [& {:keys [disable-stacktrace-colors
              min-level-maps
-             gck-logging?]
+             min-level
+             gck-logging?
+             logz-io-logging?
+             ]
       :or {disable-stacktrace-colors false
-           min-level-maps default-min-log-level-maps}}]
+           min-level-maps            default-min-log-level-maps
+           min-level                 :info}}]
 
-  (let [plain-logging? (not gck-logging?)]
+  (let [plain-logging? (not (or gck-logging?
+                                logz-io-logging?))]
 
     ;; json-based logging output
     ;; needs a side-effect to install itself
     ;; so we do that up-front
-    (when gck-logging? (tas/install))
+    (when gck-logging? (tas/install :level min-level))
+    (when logz-io-logging? (tas/install :level min-level
+                                        :msg-key :message))
 
     (timbre/merge-config!
      (merge
@@ -29,7 +36,7 @@
       (cond
         plain-logging?
         (cond-> {}
-          disable-stacktrace-colors (assoc :output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}}))
+          disable-stacktrace-colors       (assoc :output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}}))
           (not disable-stacktrace-colors) (assoc :output-fn timbre/default-output-fn)))))))
 
 (comment
