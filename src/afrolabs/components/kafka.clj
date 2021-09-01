@@ -5,6 +5,7 @@
             [clojure.spec.gen.alpha :as sgen]
             [integrant.core :as ig]
             [clojure.core.async :as csp]
+            [afrolabs.components.health :as -health]
             [taoensso.timbre :as timbre
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
@@ -549,7 +550,8 @@
 (s/def :consumer.poll/timeout pos-int?)
 (s/def :consumer/mock #(= MockConsumer (class %)))
 
-(s/def ::consumer-config (s/and (s/keys :req-un [::bootstrap-server]
+(s/def ::consumer-config (s/and (s/keys :req-un [::bootstrap-server
+                                                 ::-health/service-health-trip-switch]
                                         :req    [:consumer/client]
                                         :opt-un [::strategies]
                                         :opt    [:consumer.poll/timeout
@@ -617,7 +619,10 @@
 
 (defn- background-wait-on-stop-signal
   "Extracted only because the debugger chokes on core.async."
-  [consumer must-stop consumer-config consumer-properties has-stopped]
+  [consumer must-stop
+   {:as   consumer-config
+    :keys [background-wait-on-stop-signal]}
+   consumer-properties has-stopped]
   (csp/go
     (let [[status xtra :as thread-result]
           (csp/<! (csp/thread (-consumer-main consumer
@@ -626,7 +631,8 @@
                                               :consumer-properties consumer-properties)))]
       (when (= :error status)
         (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
-               "Kafka consumer main thread finished with exception."))
+               "Kafka consumer main thread finished with exception. Tripping the health switch...")
+        (-health/indicate-unhealthy! background-wait-on-stop-signal ::kafka-consumer))
 
       ;; Anyway deliver the value into the promise.
       ;; At the time this code is written, the return value is not used.

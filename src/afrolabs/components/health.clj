@@ -43,6 +43,8 @@
   (wait-while-healthy [_] "Returns when indicate-unhealth! has been called.")
   (healthy? [_] "Returns boolean indicating health."))
 
+(s/def ::service-health-trip-switch #(satisfies? IServiceHealthTripSwitch %))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn make-health-component
