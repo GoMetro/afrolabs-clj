@@ -1,8 +1,8 @@
 (ns afrolabs.components.aws
   (:require [afrolabs.components :as -comp]
             [cognitect.aws.credentials :as aws-creds]
-            [clojure.spec.alpha :as s])
-  )
+            [clojure.spec.alpha :as s]
+            [clojure.core.async :as csp]))
 
 (defn set-aws-creds!
   "Sets java system properties for AWS credentials. This works extremely well. Too well. There are better ways to pass credentials to AWS API's"
@@ -10,6 +10,15 @@
   (System/setProperty "aws.accessKeyId" access-key-id)
   (System/setProperty "aws.secretKey" secret-key)
   nil)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn rate-limit-wait
+  "Returns a channel that will time out after a number of milliseconds (X) have passed.
+
+  X is calculated to be the interval length to allow num-per-second operations per 1000 milliseconsd."
+  [num-per-second]
+  (csp/timeout (int (/ 1000 num-per-second))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
