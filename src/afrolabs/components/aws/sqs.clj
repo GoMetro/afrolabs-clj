@@ -31,6 +31,7 @@
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
 
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol ISqsClient)
@@ -64,6 +65,11 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defprotocol ISqsQueueProvider
+  "Can provide the QueueUrl. This is useful if the QueueUrl is not known a priori, and must be created by another component."
+  (get-sqs-queue-url [_] "Returns the queue url.")
+  (get-sqs-queue-arn [_] "Returns the queue arn."))
+
 (defprotocol ISqsConsumerClient
   "A protocol for a sqs message handler."
   (consume-message [_ msg delete-ch] "Consumes a single message. When the message may be deleted, deliver the original message to the delete-ch."))
@@ -71,14 +77,17 @@
 (s/def ::sqs-consumer-client #(satisfies? ISqsConsumerClient %))
 (s/def ::QueueUrl (s/and string?
                          #(pos-int? (count %))))
+(s/def ::queue-provider #(satisfies? ISqsQueueProvider %))
 (s/def ::wait-time-seconds int?)
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
-(s/def ::sqs-consumer-cfg (s/keys :req-un [::sqs-consumer-client
-                                           ::sqs-client
-                                           ::QueueUrl]
-                                  :opt-un [::wait-time-seconds
-                                           ::max-nr-of-messages]))
+(s/def ::sqs-consumer-cfg (s/and (s/keys :req-un [::sqs-consumer-client
+                                                  ::sqs-client
+                                                  ::QueueUrl]
+                                         :opt-un [::wait-time-seconds
+                                                  ::max-nr-of-messages])
+                                 #(or (:QueueUrl %)
+                                      (:queue-provider %))))
 
 (comment
 
@@ -91,13 +100,16 @@
    {:keys [sqs-client
            sqs-consumer-client
            QueueUrl
+           queue-provider
            wait-time-seconds
            max-nr-of-messages]
     :or   {wait-time-seconds  5 ;; 5 seconds is not really that long. could easily be 30 seconds and would save on compute resources
            max-nr-of-messages 5}
     :as   sqs-consumer-cfg}]
   (s/assert ::sqs-consumer-cfg sqs-consumer-cfg)
-  (let [delete-ch (csp/chan (* 2 max-nr-of-messages))
+  (let [QueueUrl (or QueueUrl
+                     (get-sqs-queue-url queue-provider))
+        delete-ch (csp/chan (* 2 max-nr-of-messages))
         message-delete-thread
         (csp/thread
           (loop [v (csp/<!! delete-ch)]
