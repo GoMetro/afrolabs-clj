@@ -20,13 +20,15 @@
            min-level-maps            default-min-log-level-maps
            min-level                 :info}}]
 
-  (cond
-    gck-logging?     (tas/install {:level min-level})
-    logz-io-logging? (tas/install {:level   min-level
-                                   :msg-key :message})
-    :else            (timbre/merge-config!
-                      (when disable-stacktrace-colors
-                        {:output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}})})))
+  (let [default-tas-config {:level               min-level
+                            :should-log-field-fn (constantly true)}]
+    (cond
+      gck-logging?     (tas/install default-tas-config)
+      logz-io-logging? (tas/install (assoc default-tas-config
+                                           :msg-key :message))
+      :else            (timbre/merge-config!
+                        (when disable-stacktrace-colors
+                          {:output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}})}))))
 
   (timbre/merge-config! {:min-level min-level-maps}))
 
