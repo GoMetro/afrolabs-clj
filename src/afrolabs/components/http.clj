@@ -100,8 +100,9 @@
   (reify
     IHttpRequestHandler
     (handle-http-request
-        [_ {:keys [uri]}]
-      (when (= uri endpoint)
+        [_ {:keys [uri request-method]}]
+      (when (and (= uri endpoint)
+                 (= :get request-method))
         (if (-health/healthy? health-component)
           (-> "Service is healthy."
               (http-response/ok)
