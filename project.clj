@@ -51,8 +51,9 @@
                  [clojure.java-time "0.3.3"]
 
                  ;; https://github.com/clj-commons/iapetos
-                 [clj-commons/iapetos "0.1.11"]
+                 [io.prometheus/simpleclient "0.12.0"]
                  [io.prometheus/simpleclient_hotspot "0.12.0"]
+                 [clj-commons/iapetos "0.1.11"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.515"]
