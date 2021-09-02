@@ -82,10 +82,11 @@
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
 (s/def ::sqs-consumer-cfg (s/and (s/keys :req-un [::sqs-consumer-client
-                                                  ::sqs-client
-                                                  ::QueueUrl]
+                                                  ::sqs-client]
                                          :opt-un [::wait-time-seconds
-                                                  ::max-nr-of-messages])
+                                                  ::max-nr-of-messages
+                                                  ::queue-provider
+                                                  ::QueueUrl])
                                  #(or (:QueueUrl %)
                                       (:queue-provider %))))
 
