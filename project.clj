@@ -48,14 +48,17 @@
                  [metosin/ring-http-response "0.9.3"]
 
                  ;; https://github.com/dm3/clojure.java-time
-                 [clojure.java-time "0.3.2"]
+                 [clojure.java-time "0.3.3"]
+
+                 ;; https://github.com/clj-commons/iapetos
+                 [clj-commons/iapetos "0.1.11"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.515"]
-                 [com.cognitect.aws/endpoints "1.1.12.51"]
+                 [com.cognitect.aws/endpoints "1.1.12.57"]
                  [com.cognitect.aws/sns "811.2.959.0"]
                  [com.cognitect.aws/sqs "811.2.958.0"]
-                 [com.cognitect.aws/s3 "813.2.972.0"]
+                 [com.cognitect.aws/s3 "814.2.978.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "5.1.2"]
@@ -104,8 +107,8 @@
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.12.4"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.12.4"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.12.5"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.12.5"]
                  ]
   :aot [afrolabs.components.kafka.json-serdes]
   :repl-options {}
