@@ -69,7 +69,7 @@
                                                        (if-not ex
                                                          (log/warn txt)
                                                          (log/warn ex txt)))
-                               :event-logger         (fn [event-name] (log/info event-name))
+                               :event-logger         (fn [event-name] (log/debug event-name))
                                :legacy-return-value? false
                                :port                 port
                                :ip                   ip})]
