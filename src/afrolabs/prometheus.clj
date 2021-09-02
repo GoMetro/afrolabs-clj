@@ -12,18 +12,43 @@
   (:import [afrolabs.components.http IHttpRequestHandler]))
 
 
-;; I'm done fighting trying to pretend the java SimpleClient is anything but a singleton...
-;; embrace and extend...
-;;
-;; in client code, have code in the top-level of your ns that defonce metrics.
-;; Have that defonce register the metric into this registry.
-;;
-;; if you introduce incompatible changes to the metrics, restart the repl.
-
 (defonce registry
-  (-> (p/collector-registry)
-      (iapetos.collector.jvm/initialize)))
+  (atom (-> (p/collector-registry)
+            (iapetos.collector.jvm/initialize))))
 
+;;;;;;;;;;;;;;;;;;;;
+
+(defmacro register-metric
+  "A helper macro to define and register metrics in the top-level of the namespace.
+
+  - Uses a defonce so that each metric is registered only once per JVM instance.
+  - Creates an accessor fn called \"get-\"<metric-type>\"-\"<metric-name>, which can be used with prometheus api fns.
+  - If you change the metric definition, you'll have to restart the JVM to see the effect.
+
+  (eg)
+  (register-metric (prometheus/counter ::test))
+  ...
+  (prometheus/inc (get-counter-test) 1)
+
+  OR
+
+  (register-metric (prometheus/counter ::test2 {:description \"d\" :labels [:label-name]}))
+  ...
+  (prometheus/inc (get-counter-test2 {:label-name \"label-value\"}))"
+  [iapetos-metric-definition]
+  (let [metric-name (second iapetos-metric-definition)
+        metric-type (-> iapetos-metric-definition first name)
+        metric-fn-name (name metric-name)]
+    `(defonce ~(symbol (str "get-" metric-type "-" metric-fn-name))
+       (do
+         (swap! registry
+                (fn [old-registry#]
+                  (p/register old-registry#
+                              ~iapetos-metric-definition)))
+         (fn [& [labels# & _#]]
+           (if labels#
+             (@registry ~metric-name labels#)
+             (@registry ~metric-name)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -49,15 +74,10 @@
         ;; give the prometheus write-text-format a writer that is based on the stream that will become the http response body
         ;;
         ;; lifted from: https://nelsonmorris.net/2015/04/22/streaming-responses-using-ring.html
-        #_(-> (ring-response/response
+        (-> (ring-response/response
                (ring-io/piped-input-stream
                 (fn [output-stream]
-                  (let [w (io/make-writer output-stream {})]
-                    (iapetos.export/write-text-format! w registry)
-                    (.flush w)))))
-              #_(ring-response/content-type "text/plain")
-              )
-        (-> (ring-response/response (iapetos.export/text-format registry))
-            (ring-response/content-type "text/plain"))
-        ))))
+                  (with-open [w (io/make-writer output-stream {})]
+                    (iapetos.export/write-text-format! w @registry)
+                    (.flush w))))))))))
 
