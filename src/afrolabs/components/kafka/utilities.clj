@@ -1,13 +1,15 @@
 (ns afrolabs.components.kafka.utilities
   (:require [afrolabs.components.kafka :as k]
+            [afrolabs.components.health :as -health]
             [integrant.core :as ig]
             [clojure.data.json :as json]
             [clojure.core.async :as csp]
-            [taoensso.timbre :as timbre
+            [taoensso.timbre :as log
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]
-            [java-time :as time]))
+            [java-time :as time])
+  (:import [afrolabs.components.health IServiceHealthTripSwitch]))
 
 (defn load-messages-from-confluent-topic
   [& {:keys [bootstrap-server
@@ -28,6 +30,22 @@
         _ (csp/go (csp/<! caught-up-ch)
                   (info "Caught up to the end of the subscribed topics, closing...")
                   (deliver loaded-enough-msgs true))
+
+        health-trip-switch
+        (reify
+          IServiceHealthTripSwitch
+          (indicate-unhealthy!
+              [_ _]
+
+            (log/error "load-messages-from-confluent-topic is unhealthy.")
+            (deliver loaded-enough-msgs true))
+          (wait-while-healthy
+              [_]
+            (log/warn "Cannot wait while the system is healthy..."))
+          (healthy?
+              [_]
+            (log/warn "Return constantly healthy...")
+            true))
 
         consumer-client
         (reify
@@ -57,6 +75,7 @@
         {::k/kafka-consumer
          {:bootstrap-server               bootstrap-server
           :consumer/client                consumer-client
+          :service-health-trip-switch     health-trip-switch
           :strategies                     (concat [(k/ConfluentCloud :api-key api-key :api-secret api-secret)
                                                    (k/SubscribeWithTopicsCollection topics)
                                                    (k/FreshConsumerGroup)
