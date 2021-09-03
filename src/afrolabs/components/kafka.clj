@@ -621,7 +621,7 @@
   "Extracted only because the debugger chokes on core.async."
   [consumer must-stop
    {:as   consumer-config
-    :keys [background-wait-on-stop-signal]}
+    :keys [service-health-trip-switch]}
    consumer-properties has-stopped]
   (csp/go
     (let [[status xtra :as thread-result]
@@ -632,7 +632,7 @@
       (when (= :error status)
         (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
                "Kafka consumer main thread finished with exception. Tripping the health switch...")
-        (-health/indicate-unhealthy! background-wait-on-stop-signal ::kafka-consumer))
+        (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
 
       ;; Anyway deliver the value into the promise.
       ;; At the time this code is written, the return value is not used.
