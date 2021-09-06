@@ -58,14 +58,19 @@
          :disable-stacktrace-colors true
          logging-params)
 
-  (let [{health-component ::-health/component
-         :as              ig-system}
-        (as-system cfg)]
+  (try
+    (let [{health-component ::-health/component
+           :as              ig-system}
+          (as-system cfg)]
 
-    (log/info "System started...")
-    (-health/wait-while-healthy health-component)
+      (log/info "System started...")
+      (-health/wait-while-healthy health-component)
 
-    (log/debug "Shutting down...")
-    (ig/halt! ig-system)
+      (log/debug "Shutting down...")
+      (ig/halt! ig-system)
 
-    (log/info "System completed orderly shutdown.")))
+      (log/info "System completed orderly shutdown."))
+
+    (catch Throwable t
+      (log/fatal t "An unrecoverable error occurred.")
+      (System/exit 1))))
