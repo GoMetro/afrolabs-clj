@@ -2,7 +2,8 @@
   (:require [afrolabs.components :as -comp]
             [cognitect.aws.credentials :as aws-creds]
             [clojure.spec.alpha :as s]
-            [clojure.core.async :as csp]))
+            [clojure.core.async :as csp]
+            [taoensso.timbre :as log]))
 
 (defn set-aws-creds!
   "Sets java system properties for AWS credentials. This works extremely well. Too well. There are better ways to pass credentials to AWS API's"
@@ -53,3 +54,57 @@
     (throw (ex-info (str "AWS operation returned an error: " err-category)
                     aws-response)))
   aws-response)
+
+(defmacro backoff-and-retry-on-rate-exceeded
+  ([request] `(backoff-and-retry-on-rate-exceeded {} ~request))
+  ([{:keys [max-retries]
+     :or   {max-retries 10}}
+    request]
+   `(loop [retries# 0
+           result# ~request]
+
+      (let [anomaly?#   (:cognitect.anomalies/category result#)
+            throttled?# (and anomaly?#
+                             (or (-> result#
+                                     :ErrorResponse
+                                     :Error
+                                     :Code
+                                     (= "Throttling"))
+                                 (= anomaly?# :cognitect.anomalies/busy)))]
+
+        (cond
+          (not anomaly?#)
+          result#
+
+          (and anomaly?#
+               (not throttled?#))
+          (do
+            (log/debugf "There was a problem ('%s') but it's not something we can do something about."
+                        anomaly?#)
+            result#)
+
+          (and throttled?#
+               (> retries# ~max-retries))
+          (do
+            (log/warnf "API was throttled, but retried (%d) more than the limit (%d)" retries# ~max-retries)
+            result#)
+
+          :else
+          (let [sleepies# (long (+ (rand-int 100)          ;; jitter
+                                   (* (+ 50 (rand-int 50)) ;; even more jitter
+                                      (Math/pow 2 retries#))))]
+            (log/warnf "Encountering throttling on AWS API call. Sleeping for %d ms, with retry %d"
+                       sleepies# retries#)
+            (Thread/sleep sleepies#)
+            (recur (inc retries#)
+                   ~request)))))))
+
+(comment
+
+  (backoff-and-retry-on-rate-exceeded {:max-retries 5}
+                                      (+ 1 2))
+
+  (backoff-and-retry-on-rate-exceeded (+ 1 2))
+
+  )
+

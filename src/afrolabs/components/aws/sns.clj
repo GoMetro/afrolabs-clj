@@ -13,16 +13,13 @@
    & {:keys [NextToken]}]
   (let [{:keys [Topics
                 NextToken]}
-        (aws/invoke @sns-client (cond-> {:op :ListTopics}
-                                  NextToken (assoc :request {:NextToken NextToken})))]
+        (-aws/backoff-and-retry-on-rate-exceeded
+         (aws/invoke @sns-client (cond-> {:op :ListTopics}
+                                   NextToken (assoc :request {:NextToken NextToken}))))]
     (if-not NextToken Topics
             (concat Topics
                     (lazy-seq (query-all-topics {:sns-client sns-client}
                                                 :NextToken NextToken))))))
-
-;;;;;;;;;;;;;;;;;;;;
-
-
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -32,23 +29,19 @@
   eg: (query-topic-subscriptions {:sns-client sns-client} :TopicArn \"topic-arn\")"
   [{:keys [sns-client] :as cfg}
    & {:keys [NextToken
-             TopicArn
-             rate-limit-calls-per-second]
-      :or {rate-limit-calls-per-second 30}}]
-
-  (let [forced-rate-limit-wait (-aws/rate-limit-wait rate-limit-calls-per-second)
-        {:keys [Subscriptions
-                NextToken]}    (-aws/throw-when-anomaly
-                                (aws/invoke @sns-client
-                                            {:op :ListSubscriptionsByTopic
-                                             :request (cond-> {:TopicArn TopicArn}
-                                                        NextToken (assoc :NextToken NextToken))}))]
+             TopicArn]}]
+  (let [{:keys [Subscriptions
+                NextToken]}      (-aws/throw-when-anomaly
+                                  (-aws/backoff-and-retry-on-rate-exceeded
+                                   (aws/invoke @sns-client
+                                               {:op :ListSubscriptionsByTopic
+                                                :request (cond-> {:TopicArn TopicArn}
+                                                           NextToken (assoc :NextToken NextToken))})))]
     (if-not NextToken Subscriptions
             (concat Subscriptions
-                    (lazy-seq (do (csp/<!! forced-rate-limit-wait)
-                                  (query-topic-subscriptions cfg
-                                                             :TopicArn  TopicArn
-                                                             :NextToken NextToken)))))))
+                    (lazy-seq (query-topic-subscriptions cfg
+                                                         :TopicArn  TopicArn
+                                                         :NextToken NextToken))))))
 
 (comment
 
