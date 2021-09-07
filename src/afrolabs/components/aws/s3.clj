@@ -12,7 +12,7 @@
   [^String s]
   (let [md5-algo (MessageDigest/getInstance "MD5")]
     (as-> s $
-        (.getBytes $)
+        (.getBytes $ "UTF-8")
         (.digest md5-algo $)
         (.encodeToString (Base64/getEncoder) $))))
 
@@ -21,7 +21,7 @@
 (defn put-string-object
   "One simple implementation of AWS PutObject call, for uploading Strings to S3 keys."
   [s3-client bucket key ^String content content-type]
-  (let [content-bytes (.getBytes content)]
+  (let [content-bytes (.getBytes content "UTF-8")]
     (-aws/throw-when-anomaly
      (aws/invoke @s3-client
                  {:op      :PutObject
