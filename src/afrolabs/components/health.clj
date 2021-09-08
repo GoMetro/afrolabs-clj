@@ -17,8 +17,9 @@
 (defn init-signals!
   []
   (beckon/reinit-all!)
-  (reset! (beckon/signal-atom "INT")
-          #{(fn [] (csp/>!! @signal-ch "INT"))}))
+  (doseq [signal #{"INT" "TERM"}]
+    (reset! (beckon/signal-atom signal)
+            #{(fn [] (csp/>!! @signal-ch signal))})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Default JVM-wide uncaught exception handler.
