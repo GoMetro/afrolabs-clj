@@ -22,6 +22,7 @@
 (defn as-system
   [{:keys [cli-args
            config-file
+           dotenv-file
            profile
            ig-cfg-ks]
     :or {config-file (*ns*-as-config-file-path)}}]
@@ -29,6 +30,7 @@
   (log/debug (str "Attempting to read config file at: " config-file))
 
   (let [ig-cfg (-config/read-config config-file
+                                    :dotenv-file dotenv-file
                                     :profile (or profile :prod)
                                     :cli-args cli-args)
 
