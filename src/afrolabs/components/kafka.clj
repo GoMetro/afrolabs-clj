@@ -291,8 +291,11 @@
     (consumer-init-hook
         [_ consumer]
       (.subscribe ^Consumer consumer
-                  (mapcat #(get-topic-names %)
-                          topic-name-providers)))))
+                  (into []
+                        (comp
+                         (mapcat #(get-topic-names %))
+                         (distinct))
+                        topic-name-providers)))))
 
 (defstrategy SubscribeWithTopicsCollection
   [^Collection topics]
@@ -737,6 +740,7 @@
         new-topics (into []
                          (comp
                           (mapcat #(get-topic-names %))
+                          (distinct)
                           (filter #(not (existing-topics %)))
                           (map (fn [topic-name]
                                  (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
