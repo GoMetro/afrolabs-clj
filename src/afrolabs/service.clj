@@ -29,7 +29,8 @@
 
   (log/debug (str "Attempting to read config file at: " config-file))
 
-  (let [ig-cfg (-config/read-config config-file
+  (let [dotenv-file (or dotenv-file ".env")
+        ig-cfg (-config/read-config config-file
                                     :dotenv-file dotenv-file
                                     :profile (or profile :prod)
                                     :cli-args cli-args)
