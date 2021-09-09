@@ -710,15 +710,25 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(s/def ::nr-of-partitions (s/or :nil nil?
+                                :i   pos-int?
+                                :s   #(try (Integer/parseInt %)
+                                           (catch NumberFormatException _ false))))
 (s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
-                                   (s/keys :req-un [::topic-name-providers])))
+                                   (s/keys :req-un [::topic-name-providers]
+                                           :opt-un [::nr-of-partitions])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
                      ::-comp/config-spec ::topic-asserter-cfg}
   [{:as cfg
-    :keys [topic-name-providers]}]
+    :keys [topic-name-providers
+           nr-of-partitions]}]
 
-  (let [ac (make-admin-client cfg)
+  (let [nr-of-partitions (or (when (and nr-of-partitions
+                                        (string? nr-of-partitions))
+                               (Integer/parseInt nr-of-partitions))
+                             nr-of-partitions)
+        ac (make-admin-client cfg)
         existing-topics (-> @ac
                             (.listTopics)
                             (.names)
@@ -729,10 +739,14 @@
                           (mapcat #(get-topic-names %))
                           (filter #(not (existing-topics %)))
                           (map (fn [topic-name]
-                                 (info (format "Creating topic '%s' with default nr-partitions and replication-factor..."
-                                               topic-name))
+                                 (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                               topic-name
+                                               (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                               "CLUSTER_DEFAULT"))
                                  (NewTopic. topic-name
-                                            (Optional/empty)
+                                            (if nr-of-partitions
+                                              (Optional/of nr-of-partitions)
+                                              (Optional/empty))
                                             (Optional/empty)))))
                          topic-name-providers)
         topic-create-result (.createTopics @ac new-topics)]
