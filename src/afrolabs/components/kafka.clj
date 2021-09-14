@@ -779,3 +779,16 @@
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(s/def ::topics (s/coll-of (s/and string?
+                                  #(pos-int? (count %)))))
+(s/def ::list-of-topics-cfg (s/keys :req-un [::topics]))
+
+(-comp/defcomponent {::-comp/config-spec ::list-of-topics-cfg
+                     ::-comp/ig-kw       ::list-of-topics}
+  [{:keys [topics]}]
+  (reify
+    ITopicNameProvider
+    (get-topic-names [_] topics)))
