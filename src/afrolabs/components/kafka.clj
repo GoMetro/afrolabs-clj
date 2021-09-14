@@ -185,7 +185,9 @@
 ;;;;;;;;;;;;;;;;;;;;
 
 (defstrategy ConfluentJSONSchema
-  [& {:keys [schema-registry-url]
+  [& {:keys [schema-registry-url
+             sr-api-key
+             sr-api-secret]
       producer-option :producer
       consumer-option :consumer
       :or {producer-option :value
@@ -202,20 +204,31 @@
                        ::consumer-option consumer-option
                        ::producer-option producer-option}))))
 
-  (reify
-    IUpdateProducerConfigHook
-    (update-producer-cfg-hook
-        [_ cfg]
-      (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
-        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")
-        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")))
+  (letfn [(update-with-credentials
+            [cfg]
+            (if-not (and sr-api-key sr-api-secret)
+              (do
+                (debug "Setting up schema registry config without api-key and api-secret.")
+                cfg)
+              (assoc cfg
+                     "basic.auth.credentials.source"        "USER_INFO"
+                     "schema.registry.basic.auth.user.info" (str sr-api-key ":" sr-api-secret))))]
+    (reify
+      IUpdateProducerConfigHook
+      (update-producer-cfg-hook
+          [_ cfg]
+        (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
+          true                               update-with-credentials
+          (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")
+          (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")))
 
-    IUpdateConsumerConfigHook
-    (update-consumer-cfg-hook
-        [_ cfg]
-      (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")))))
+      IUpdateConsumerConfigHook
+      (update-consumer-cfg-hook
+          [_ cfg]
+        (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
+          true                               update-with-credentials
+          (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
+          (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer"))))))
 
 (defstrategy StringSerializer
   [& {producer-option :producer
@@ -413,22 +426,23 @@
   ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
   [& {:keys [api-key api-secret]}]
 
-  ;; some validation
-  (when-not (and api-key api-secret)
-    (throw (ex-info "You must specify the api-key and api-secret for configuration with ConfluentCloud strategy." {})))
+  (letfn [(merge-common
+            [cfg]
+            (cond-> cfg
+              true
+              (merge {"client.dns.lookup"        "use_all_dns_ips"
+                      "reconnect.backoff.max.ms" "10000"
+                      "request.timeout.ms"       "30000"})
 
-  (letfn [(merge-common [cfg]
-            (merge cfg
-                   {"sasl.mechanism"           "PLAIN"
-                    "sasl.jaas.config"         (format (str "org.apache.kafka.common.security.plain.PlainLoginModule required "
-                                                            "username=\"%s\" "
-                                                            "password=\"%s\" "
-                                                            ";")
-                                                       api-key api-secret)
-                    "security.protocol"        "SASL_SSL"
-                    "client.dns.lookup"        "use_all_dns_ips"
-                    "reconnect.backoff.max.ms" "10000"
-                    "request.timeout.ms"       "30000"}))]
+              (and api-key
+                   api-secret)
+              (merge {"sasl.mechanism"           "PLAIN"
+                      "sasl.jaas.config"         (format (str "org.apache.kafka.common.security.plain.PlainLoginModule required "
+                                                              "username=\"%s\" "
+                                                              "password=\"%s\" "
+                                                              ";")
+                                                         api-key api-secret)
+                      "security.protocol"        "SASL_SSL"})))]
 
     (reify
       IUpdateConsumerConfigHook
