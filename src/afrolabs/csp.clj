@@ -34,7 +34,8 @@
                    (if xform
                      (csp/<! ;; wait for onto-chan! to finish
                       (csp/onto-chan! output-ch
-                                      (sequence xform data)
+                                      (sequence xform
+                                                (reverse data))
                                       false))
                      (csp/>! output-ch (reverse data)))
                    (recur)))))]
