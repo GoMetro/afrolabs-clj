@@ -112,6 +112,10 @@
                  [io.confluent/kafka-json-serializer "6.2.0"  :exclusions []]
                  [io.confluent/kafka-json-schema-serializer "6.2.0" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
+
+                 ;; for use with ksqld, the java client
+                 [io.confluent.ksql/ksqldb-api-client "6.2.0"]
+
                  [org.slf4j/slf4j-api "1.7.32"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
