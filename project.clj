@@ -14,6 +14,8 @@
                  [org.eclipse.jetty/jetty-util "9.4.39.v20210325" :upgrade false]
                  [org.eclipse.jetty/jetty-http "9.4.39.v20210325" :upgrade false]
 
+                 [metosin/jsonista "0.3.3" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+
                  ;; monadic utilities for validation, failure and error checking
                  ;; https://github.com/adambard/failjure
                  [failjure "2.2.0"]
@@ -21,7 +23,7 @@
                  ;; facilities for asynchronous programming
                  ;; aka golang channels for clojure
                  ;; https://clojure.org/news/2013/06/28/clojure-clore-async-channels
-                 [org.clojure/core.async "1.3.618"]
+                 [org.clojure/core.async "1.3.622"]
 
                  ;; https://github.com/cgrand/xforms ; sometimes useful extra transducers - data transformation
                  [net.cgrand/xforms "0.19.2"]
@@ -47,6 +49,11 @@
                  ;; ring response helper fns
                  [metosin/ring-http-response "0.9.3"]
 
+                 ;; http routing library
+                 ;; https://github.com/metosin/reitit
+                 [metosin/reitit "0.5.15" :exclusions [com.fasterxml.jackson.core/jackson-core
+                                                       ]]
+
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "0.3.3"]
 
@@ -57,9 +64,9 @@
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.515"]
-                 [com.cognitect.aws/endpoints "1.1.12.57"]
+                 [com.cognitect.aws/endpoints "1.1.12.65"]
                  [com.cognitect.aws/sns "811.2.959.0"]
-                 [com.cognitect.aws/sqs "811.2.958.0"]
+                 [com.cognitect.aws/sqs "814.2.986.0"]
                  [com.cognitect.aws/s3 "814.2.978.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
