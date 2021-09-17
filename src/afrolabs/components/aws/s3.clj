@@ -32,7 +32,29 @@
                             :ContentMD5    (aws-contentmd5 content)
                             :Body          content}}))))
 
+(defn put-object-streaming
+  "Uploads an inputstream to a key in S3."
+  [s3-client bucket key input-stream content-type]
+  (-aws/throw-when-anomaly
+   (aws/invoke @s3-client
+               {:op      :PutObject
+                :request {:Bucket      bucket
+                          :Key         key
+                          :ContentType content-type
+                          :Body        input-stream
+                          ;; TODO - If you stream to a file first, you can calculate the length and the md5
+                          ;; but if you just want to stream directly (eg you are creating the stream as you go)
+                          ;; then you cannot calculate the md5 and the length in advance
+                          ;; :ContentLength (count content-bytes)
+                          ;; :ContentMD5    (aws-contentmd5 content)
+                          }})))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (comment
+
+  (aws/doc @(yoco.sns2kafka.core/s3-client) :PutObject   )
 
   (-aws/throw-when-anomaly
    (put-string-object (yoco.sns2kafka.core/s3-client)
