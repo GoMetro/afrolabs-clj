@@ -4,7 +4,8 @@
             [cognitect.aws.client.api :as aws]
             [clojure.spec.alpha :as s]
             [clojure.core.async :as csp]
-            [taoensso.timbre :as log]))
+            [taoensso.timbre :as log]
+            [afrolabs.components.health :as -health]))
 
 (def default-visibility-time-seconds 30)
 
@@ -82,7 +83,8 @@
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
 (s/def ::sqs-consumer-cfg (s/and (s/keys :req-un [::sqs-consumer-client
-                                                  ::sqs-client]
+                                                  ::sqs-client
+                                                  ::-health/service-health-trip-switch]
                                          :opt-un [::wait-time-seconds
                                                   ::max-nr-of-messages
                                                   ::queue-provider
@@ -103,42 +105,48 @@
            QueueUrl
            queue-provider
            wait-time-seconds
-           max-nr-of-messages]
+           max-nr-of-messages
+           service-health-trip-switch]
     :or   {wait-time-seconds  5 ;; 5 seconds is not really that long. could easily be 30 seconds and would save on compute resources
            max-nr-of-messages 5}
     :as   sqs-consumer-cfg}]
   (s/assert ::sqs-consumer-cfg sqs-consumer-cfg)
   (let [QueueUrl (or QueueUrl
                      (get-sqs-queue-url queue-provider))
-        delete-ch (csp/chan (* 2 max-nr-of-messages))
+        delete-ch (csp/chan max-nr-of-messages)
         message-delete-thread
         (csp/thread
-          (loop [v (csp/<!! delete-ch)]
-            (when-let [{receipt-handle :ReceiptHandle} v] ;; v is nil only when channel is closed
-              (log/tracef "deleting sqs message: %s" receipt-handle)
+          (loop []
+            (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
+              (log/trace (format "deleting sqs message: %s" receipt-handle))
               (aws/invoke @sqs-client
                           {:op      :DeleteMessage
                            :request {:QueueUrl      QueueUrl
                                      :ReceiptHandle receipt-handle}})
-              (recur (csp/<!! delete-ch))))
+              (recur)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
 
-    (while @must-run
-      (let [{msgs :Messages
-             :as  sqs-invoke-result} ;; TODO do something intelligent with failures.
-            (aws/invoke @sqs-client
-                        {:op      :ReceiveMessage
-                         :request {:QueueUrl            QueueUrl
-                                   :WaitTimeSeconds     wait-time-seconds
-                                   :MaxNumberOfMessages max-nr-of-messages}})]
+    (try
+      (while @must-run
+        (let [{msgs :Messages}
+              (-aws/throw-when-anomaly
+               (aws/invoke @sqs-client
+                           {:op      :ReceiveMessage
+                            :request {:QueueUrl            QueueUrl
+                                      :WaitTimeSeconds     wait-time-seconds
+                                      :MaxNumberOfMessages max-nr-of-messages}}))]
 
 
-        ;; pass on every message to the consumer client (business code)
-        ;; back-pressure comes from the pace at which the consumer client access the messages
-        (doseq [msg msgs]
-          (consume-message sqs-consumer-client
-                           msg
-                           delete-ch))))
+          ;; pass on every message to the consumer client (business code)
+          ;; back-pressure comes from the pace at which the consumer client access the messages
+          (doseq [msg msgs]
+            (consume-message sqs-consumer-client
+                             msg
+                             delete-ch))))
+      (catch Throwable t
+        (log/error t "Uncaught exception in sqs consumer loop. Indicating unhealthy.")
+        (-health/indicate-unhealthy! service-health-trip-switch ::sqs-consumer)))
+
     (log/trace "Done with sqs consumer-main loop. Closing delete-ch...")
 
     ;; when the outer loop is done because of not @must-run, close the delete-ch so the deleting thread can stop too
