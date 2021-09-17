@@ -13,6 +13,7 @@
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic]
+           [org.apache.kafka.common.header Header]
            [java.util.concurrent Future]
            [java.util Map Collection UUID Optional]))
 
@@ -57,20 +58,55 @@
 (s/def :producer.msg/key any?)
 (s/def :producer.msg/value any?)
 (s/def :producer.msg/delivered-ch any?) ;; if csp/chan? existed, we'd have used that
+(s/def :producer.msg/headers (s/map-of (s/and string?
+                                              (comp pos-int? count))
+                                       any?))
 (s/def :producer/msg (s/keys :req-un [:producer.msg/topic
                                       :producer.msg/value]
                              :opt-un [:producer.msg/delivered-ch
-                                      :producer.msg/key]))
+                                      :producer.msg/key
+                                      :producer.msg/headers]))
 (s/def :producer/msgs (s/coll-of :producer/msg))
+
+(defmulti serialize-producer-record-header
+  "Knowledge of how to serialize header values into byte[] values."
+  type)
+
+(defmethod serialize-producer-record-header java.lang.String
+  [x] (.getBytes x "UTF-8"))
+
+(defonce default-serialize-producer-record-header-used (atom #{}))
+
+(defmethod serialize-producer-record-header :default
+  [x]
+  (let [t (type x)]
+    (when-not (@default-serialize-producer-record-header-used t)
+      (warnf "Using the default Kafka header value serializer for type: '%s'. defmethod on '%s' to silence this warning and provide better serialization."
+             (str t)
+             (str `serialize-producer-record-header))
+      (swap! default-serialize-producer-record-header-used conj t)))
+  (serialize-producer-record-header (str x)))
 
 (defn- producer-produce
   [^Producer producer msgs]
   (s/assert :producer/msgs msgs)
   (->> msgs
        (map (juxt identity
-                  #(ProducerRecord. (:topic %)
-                                    (:key %)
-                                    (:value %))))
+                  #(let [hs (:headers %)]
+                     (if hs
+                       (ProducerRecord. (:topic %)
+                                        (when-let [p (:partition %)] p)
+                                        (:key %)
+                                        (:value %)
+                                        (map (fn [[hn hv]]
+                                               (reify
+                                                 Header
+                                                 (^String key [_] hn)
+                                                 (^bytes value [_] (serialize-producer-record-header hv))))
+                                             hs))
+                       (ProducerRecord. (:topic %)
+                                        (:key %)
+                                        (:value %))))))
        (map (fn [[{:keys [delivered-ch]
                    :as   msg}
                   producer-record]]
