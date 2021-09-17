@@ -5,37 +5,54 @@
             [clojure.spec.alpha :as s]
             [beckon]
             [taoensso.timbre :as log])
- (:import [java.lang Thread]))
+  (:import [java.lang Thread System]
+           [afrolabs.components IHaltable]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; OS signals, Like when you press Ctrl-C (SIGINT)
 
-;; SIGINT or such will post into this channel
-(defonce signal-ch (atom (csp/chan (csp/dropping-buffer 1))))
+;; signal-callbacks is an atom that contains a set of callbacks.
+;; the callback-fn's must accept one parameter, a string value of the signal eg "INT" or "TERM"
+;; it is intended that this callack mechanism is only accessed via the health-component
+(defonce signal-callbacks
+  (let [callbacks (atom #{})]
+    (beckon/reinit-all!)
+    (doseq [signal #{"INT" "TERM"}]
+      (reset! (beckon/signal-atom signal)
+              #{(fn []
+                  (let [effective-callbacks @callbacks]
+                    (log/warnf "Intercepted OS Signal '%s'. Calling '%d' callbacks..." signal (count effective-callbacks))
+                    (doseq [cb effective-callbacks]
+                      (try
+                        (cb signal)
+                        (catch Throwable t
+                          (log/error t "Uncaught exception on the OS Signals callback :("))))))}))
+    callbacks))
 
-;; resets the process' signal handling to be a concern of this namespace
-(defn init-signals!
-  []
-  (beckon/reinit-all!)
-  (doseq [signal #{"INT" "TERM"}]
-    (reset! (beckon/signal-atom signal)
-            #{(fn [] (csp/>!! @signal-ch signal))})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Default JVM-wide uncaught exception handler.
 ;; This triggers on any thread where the exception is uncaught.
+;; the symbol uncaught-exception-handlers contains a set of callback-fn's
+;; each callback must accept 2 params: the thread object, and the exception object
 
-(defonce uncaught-exception-ch (atom (csp/chan (csp/dropping-buffer 1))))
+(defonce uncaught-exception-handlers
+  (let [callbacks (atom #{})]
+    (Thread/setDefaultUncaughtExceptionHandler
+     (reify Thread$UncaughtExceptionHandler
+       (uncaughtException [_ thread ex]
+         (let [effective-callbacks @callbacks]
+           (log/warn ex
+                     (format "Uncaught exception on thread '%s'. Invoking %d callbacks..."
+                             (.getName thread)
+                             (count effective-callbacks)))
+           (doseq [cb effective-callbacks]
+             (try
+               (cb thread ex)
+               (catch Throwable t
+                 (log/warn t "Uncaught exception on the uncaught exception handler. Booooooooo."))))))))
 
-(defn init-uncaught-exception-handler!
-  []
-  (Thread/setDefaultUncaughtExceptionHandler
-   (reify Thread$UncaughtExceptionHandler
-     (uncaughtException [_ thread ex]
-       (log/fatal ex
-                  (str "Uncaught exception on" (.getName thread)))
-       (csp/>!! @uncaught-exception-ch
-                [(.getName thread) ex])))))
+    callbacks))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -48,64 +65,97 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn make-health-component
-  [{:keys [intercept-signals
-           intercept-uncaught-exceptions]}]
-  (let [health-ch (csp/chan)
-        -healthy? (atom true)
-        -indicate-unhealthy #(do (csp/close! health-ch)
-                                 (reset! -healthy? false))]
-
-    ;; in prod, interept-signals must be true
-    ;; so the ServireHealthTripSwitch can be triggerd when the process receives SIGINT
-    ;; in dev, we don't want to use signals.
-    (if-not intercept-signals (log/warn "Not listening for SIGINT.")
-            (do
-              (log/info "Setting up SIGINT listener...")
-              (init-signals!)
-              (csp/go
-                (let [sigint-ch @signal-ch
-                      [v ch] (csp/alts! [health-ch sigint-ch])]
-                  (when (= ch sigint-ch)
-                    (log/fatal (str "Intercepted an OS signal: '" v "'. Marking the system as unhealthy..."))
-                    (-indicate-unhealthy))))))
-
-    ;; do we want this component do think it's unhealthy if some thread somewher has lost itself
-    ;; in the throws of a violent exception? Yes... yes we want that.
-    (if-not intercept-uncaught-exceptions (log/warn "Not paying attention to uncaught exceptions.")
-            (do
-              (log/info "Listening for uncaught exceptions...")
-              (init-uncaught-exception-handler!)
-              (csp/go
-                (let [uncaught-exs-ch @uncaught-exception-ch
-                      [_ ch] (csp/alts! [health-ch uncaught-exs-ch])]
-                  (when (= ch uncaught-exception-ch)
-                    (log/fatal (str "Found an uncaught exception handler on another thread: Marking the system as unhealthy..."))
-                    (-indicate-unhealthy))))))
-
-    ;; this is the implementation that's being returned as a component.
-    (reify
-      ;;;;;;;;;;
-      IServiceHealthTripSwitch
-      (indicate-unhealthy!
-          [_ p]
-        (log/warn (str "A subsystem has indicated that it is unhealthy: " p))
-        (-indicate-unhealthy))
-
-      (wait-while-healthy [_] (csp/<!! health-ch))
-      (healthy? [_] @-healthy?)
-
-      ;;;;;;;;;;
-      -comp/IHaltable
-      (halt
-          [_]
-        (csp/close! health-ch)))))
-
-
 (s/def ::intercept-signals boolean?)
 (s/def ::intercept-uncaught-exceptions boolean?)
+(s/def ::trigger-self-destruct-timer-seconds (s/or :n nil?
+                                                   :i pos-int?))
 (s/def ::health-cfg (s/keys :opt-un [::intercept-signals
-                                     ::intercept-uncaught-exceptions]))
+                                     ::intercept-uncaught-exceptions
+                                     ::trigger-self-destruct-timer-seconds]))
+
+(defn make-health-component
+  [{:keys [intercept-signals
+           intercept-uncaught-exceptions
+           trigger-self-destruct-timer-seconds]
+    :as cfg}]
+
+  (s/assert ::health-cfg cfg)
+
+  (let [healthy? (atom true)
+        not-healthy-any-longer? (promise)
+
+        ;; when something/somebody sets the state to unhealthy
+        ;; we will automatically deliver the promise
+        ;; which any wait-while-healthy might be depending on
+        _ (add-watch healthy? ::healthy-watcher
+                     (fn [_ _ _ new-healthy-state]
+                       (when (false? new-healthy-state)
+                         (deliver not-healthy-any-longer? true)
+                         (remove-watch healthy? ::healthy-watcher))))
+
+        ;; helper callback
+        indicate-unhealthy (fn [] (reset! healthy? false))]
+
+    (letfn [(self-destruct
+              [& _]
+              (when trigger-self-destruct-timer-seconds
+                (let [t (Thread. (do
+                                   (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
+                                     (log/warnf "Self destructing in %d seconds..." i)
+                                     (Thread/sleep (* i 1000)))
+                                   (System/exit 1)))]
+                  (.start t))))
+
+            (os-signal-handler
+              [signal]
+              (log/fatalf "Health cobmponent received OS signal '%s', marking the system as unhealthy."
+                          signal)
+              (indicate-unhealthy)
+              (when trigger-self-destruct-timer-seconds
+                (log/warn "Triggering the self-destruct timer if another OS signal arrives.")
+                (swap! signal-callbacks conj self-destruct)))
+
+            (uncaught-exception-handler
+              [thread exception]
+              (log/fatalf exception
+                          "Health component handling uncaught exception, marking system as unhealthy. Thread: '%s', Exception:\n%s"
+                          (str thread) (str exception))
+              (indicate-unhealthy)
+              (when trigger-self-destruct-timer-seconds
+                (log/warn "Triggering the self-destruct timer if another uncaught exception arrives.")
+                (swap! uncaught-exception-handlers conj self-destruct)))]
+
+      (when intercept-signals
+        (log/info "Setting up the OS signal handler...")
+        (swap! signal-callbacks conj os-signal-handler))
+
+      (when intercept-uncaught-exceptions
+        (log/info "Setting up uncaught exceptions handler...")
+        (swap! uncaught-exception-handlers conj uncaught-exception-handler))
+
+      (reify
+        IServiceHealthTripSwitch
+        (indicate-unhealthy!
+            [_ subsystem]
+          (log/fatalf "The subsystem '%s' has indicated that the system is now unhealthy!"
+                      (str subsystem))
+          (indicate-unhealthy))
+
+        (wait-while-healthy [_]
+          ;; this is a promise. will block the thread until it delivers
+          @not-healthy-any-longer?)
+
+        (healthy? [_]
+          ;; this is an atom, will not block, will instead return the value
+          @healthy?)
+
+        IHaltable
+        (halt [_]
+          (indicate-unhealthy)
+          (when intercept-signals             (swap! signal-callbacks            disj os-signal-handler))
+          (when intercept-uncaught-exceptions (swap! uncaught-exception-handlers disj uncaught-exception-handler))
+          nil)))))
+
 
 (-comp/defcomponent {::-comp/config-spec ::health-cfg
                      ::-comp/ig-kw       ::component}
