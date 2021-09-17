@@ -108,7 +108,7 @@
 
             (os-signal-handler
               [signal]
-              (log/fatalf "Health cobmponent received OS signal '%s', marking the system as unhealthy."
+              (log/fatalf "Health component received OS signal '%s', marking the system as unhealthy."
                           signal)
               (indicate-unhealthy)
               (when trigger-self-destruct-timer-seconds
