@@ -11,10 +11,15 @@
 
                  ;; dependency conflict resolution, also edn reader
                  [org.clojure/tools.reader "1.3.6"]
-                 [org.eclipse.jetty/jetty-util "9.4.39.v20210325" :upgrade false]
-                 [org.eclipse.jetty/jetty-http "9.4.39.v20210325" :upgrade false]
+                 ;; [org.eclipse.jetty/jetty-util "9.4.39.v20210325" :upgrade true]
+                 ;;[org.eclipse.jetty/jetty-http "9.4.39.v20210325" :upgrade true]
+                 [org.eclipse.jetty/jetty-util "9.4.43.v20210629"]
+                 [org.eclipse.jetty/jetty-http "9.4.43.v20210629"]
 
-                 [metosin/jsonista "0.3.3" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+
+
+
+                 [metosin/jsonista "0.3.4" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; monadic utilities for validation, failure and error checking
                  ;; https://github.com/adambard/failjure
