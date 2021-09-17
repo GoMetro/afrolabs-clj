@@ -114,7 +114,7 @@
                                                                                  org.glassfish.jersey.core/jersey-common]]
 
                  ;; for use with ksqld, the java client
-                 [io.confluent.ksql/ksqldb-api-client "6.2.0"]
+                 [io.confluent.ksql/ksqldb-api-client "6.2.0" :exclusions [org.slf4j/slf4j-log4j12]]
 
                  [org.slf4j/slf4j-api "1.7.32"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
