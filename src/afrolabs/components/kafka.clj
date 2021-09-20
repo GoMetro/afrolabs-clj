@@ -437,7 +437,8 @@
                                        :partition (.partition tp)
                                        :offset o}))
                     (.endOffsets consumer
-                                 topic-partition-assignment))]
+                                 topic-partition-assignment))
+              ]
           (when (= end-offsets current-offsets)
             (csp/>!! caught-up-ch
                      current-offsets)))))))
@@ -1010,10 +1011,11 @@
                                 (UUID/randomUUID))
         _ (println consumer-group-id)
 
-        ;; caught-up-ch (csp/chan)
+        caught-up-ch (csp/chan)
         has-caught-up-once (promise)
-        ;; _ (csp/go (csp/<! caught-up-ch)
-        ;;           (deliver has-caught-up-once true))
+        _ (csp/go (csp/<! caught-up-ch)
+                  (deliver has-caught-up-once true)
+                  (csp/close! caught-up-ch))
 
         ktable-state (atom {})
         consumer-client (reify
@@ -1027,20 +1029,20 @@
         cfg (-> cfg
                 (update-in [:strategies] concat [(OffsetReset "earliest")
                                                  (ConsumerGroup consumer-group-id)
-                                                 ;;(CaughtUpNotifications caught-up-ch)
+                                                 (CaughtUpNotifications caught-up-ch)
                                                  ])
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
-
-    (deliver has-caught-up-once true)
 
     (reify
       IHaltable
       (halt [_] (-comp/halt consumer))
 
       IDeref
-      (deref [_] @ktable-state)
+      (deref [_]
+        @has-caught-up-once
+        @ktable-state)
 
       IRef
       (getValidator [this]  (.getValidator ktable-state))
