@@ -17,7 +17,9 @@
            [org.apache.kafka.common.header Header]
            [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
            [java.util.concurrent Future]
-           [java.util Map Collection UUID Optional]))
+           [java.util Map Collection UUID Optional]
+           [afrolabs.components IHaltable]
+           [clojure.lang IDeref IRef]))
 
 
 (comment
@@ -265,8 +267,8 @@
           [_ cfg]
         (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
           true                               update-with-credentials
-          (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
-          (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer"))))))
+          (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
+          (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer"))))))
 
 (defstrategy StringSerializer
   [& {producer-option :producer
@@ -295,8 +297,8 @@
     (update-consumer-cfg-hook
         [_ cfg]
       (cond-> cfg
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "org.apache.kafka.common.serialization.StringDeserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "org.apache.kafka.common.serialization.StringDeserializer")))))
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "org.apache.kafka.common.serialization.StringDeserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "org.apache.kafka.common.serialization.StringDeserializer")))))
 
 (defstrategy JsonSerializer
   [& {producer-option :producer
@@ -325,8 +327,8 @@
     (update-consumer-cfg-hook
         [_ cfg]
       (cond-> cfg
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
 
 (defstrategy SubscribeWithTopicNameProvider
   [& topic-name-providers]
@@ -589,7 +591,7 @@
                                 :single [xs-value]
                                 :more    xs-value)))))
 
-      -comp/IHaltable
+      IHaltable
       (halt [_] (.close ^Producer producer)))))
 
 ;;;;;;;;;;;;;;;;;;;;
@@ -605,12 +607,14 @@
 (s/def :consumer.poll/timeout pos-int?)
 (s/def :consumer/mock #(= MockConsumer (class %)))
 
-(s/def ::consumer-config (s/and (s/keys :req-un [::bootstrap-server
-                                                 ::-health/service-health-trip-switch]
-                                        :req    [:consumer/client]
-                                        :opt-un [::strategies]
-                                        :opt    [:consumer.poll/timeout
-                                                 :consumer/mock])))
+(s/def ::clientless-consumer (s/keys :req-un [::bootstrap-server
+                                              ::-health/service-health-trip-switch]
+                                     :opt-un [::strategies]
+                                     :opt    [:consumer.poll/timeout
+                                              :consumer/mock]))
+
+(s/def ::consumer-config (s/and ::clientless-consumer
+                                (s/keys :req    [:consumer/client])))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -724,7 +728,7 @@
       IConsumer
       (get-consumer [_] consumer)
 
-      -comp/IHaltable
+      IHaltable
       (halt [_]
         (reset! must-stop true)
         @has-stopped
@@ -760,7 +764,7 @@
       clojure.lang.IDeref
       (deref [_] ac)
 
-      -comp/IHaltable
+      IHaltable
       (halt [_] (.close ac)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -956,3 +960,90 @@
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn merge-updates-with-ktable
+  [old-ktable new-msgs]
+  (loop [old                      old-ktable
+         [{:as head
+           k :key
+           v :value
+           t :topic} & rest-msgs] new-msgs]
+    (let [next-old (cond
+                     ;; nothing is nil, save the value
+                     (not (or (nil? k)
+                              (nil? v)
+                              (nil? t)))
+                     (assoc-in old [t k] v)
+
+                     ;; value (only) is nil, remove the value (tombstone)
+                     (and (nil? v)
+                          (not (or (nil? t)
+                                   (nil? k))))
+                     (update old t #(dissoc % k))
+
+                     ;; default, return old value
+                     :else
+                     (do
+                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                     (str t) (str k) (str v)))
+                       old))]
+      (if (not rest-msgs)
+        next-old
+        (recur next-old
+               rest-msgs)))))
+
+(s/def ::ktable-id (s/and string?
+                          #(pos-int? (count %))))
+
+(s/def ::ktable-cfg (s/and ::clientless-consumer
+                           (s/keys :req-un [::ktable-id])))
+
+(-comp/defcomponent {::-comp/config-spec ::ktable-cfg
+                     ::-comp/ig-kw       ::ktable}
+  [{:as cfg
+    :keys [ktable-id]}]
+
+  (let [consumer-group-id (str  ktable-id
+                                "-"
+                                (UUID/randomUUID))
+        _ (println consumer-group-id)
+
+        ;; caught-up-ch (csp/chan)
+        has-caught-up-once (promise)
+        ;; _ (csp/go (csp/<! caught-up-ch)
+        ;;           (deliver has-caught-up-once true))
+
+        ktable-state (atom {})
+        consumer-client (reify
+                          IConsumerClient
+                          (consume-messages
+                              [_ msgs]
+                            (when (seq msgs)
+                              (swap! ktable-state
+                                     #(merge-updates-with-ktable % msgs)))))
+
+        cfg (-> cfg
+                (update-in [:strategies] concat [(OffsetReset "earliest")
+                                                 (ConsumerGroup consumer-group-id)
+                                                 ;;(CaughtUpNotifications caught-up-ch)
+                                                 ])
+                (assoc :consumer/client consumer-client))
+
+        consumer (make-consumer cfg)]
+
+    (deliver has-caught-up-once true)
+
+    (reify
+      IHaltable
+      (halt [_] (-comp/halt consumer))
+
+      IDeref
+      (deref [_] @ktable-state)
+
+      IRef
+      (getValidator [this]  (.getValidator ktable-state))
+      (getWatches [this]    (.getWatches ktable-state))
+      (addWatch [this k cb] (.addWatch ktable-state k cb))
+      (removeWatch [this k] (.removeWatch ktable-state k)))))
