@@ -6,14 +6,16 @@
             [integrant.core :as ig]
             [clojure.core.async :as csp]
             [afrolabs.components.health :as -health]
+            [clojure.set :as set]
             [taoensso.timbre :as timbre
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer]
-           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic]
+           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
            [org.apache.kafka.common.header Header]
+           [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
            [java.util.concurrent Future]
            [java.util Map Collection UUID Optional]))
 
@@ -828,3 +830,129 @@
   (reify
     ITopicNameProvider
     (get-topic-names [_] topics)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(comment
+
+  (let [cfg (-cfg/read-parameter-sources ".env")]
+    (def ^AdminClient ac (make-admin-client {:bootstrap-server (:kafka-bootstrap-server cfg)
+                                             :strategies [(ConfluentCloud :api-key (:confluent-api-key cfg)
+                                                                          :api-secret (:confluent-api-secret cfg))]})))
+
+  (-comp/halt ac)
+
+  (let [^AdminClient ac @ac
+        ^DescribeConfigsResult describe-config-result
+
+        (.describeConfigs ac [(ConfigResource. ConfigResource$Type/TOPIC
+                                               "log")])]
+    (->> (.all describe-config-result)
+         (.get)
+         (map (fn [[resource cfg]] 
+                [(.name resource)
+                 (.value (.get cfg "cleanup.policy"))]))))
+
+
+
+  )
+
+(s/def ::topic-delete-retention-ms (s/or :n nil?
+                                         :s (s/and string?
+                                                   #(pos-int? (count %))
+                                                   #(try (-> (Integer/parseInt %)
+                                                             (pos-int?))
+                                                         (catch NumberFormatException _ false)))
+                                         :i pos-int?))
+(s/def ::ktable-segment-ms ::topic-delete-retention-ms)
+(s/def ::ktable-min-cleanable-dirty-ratio (s/or :n nil?
+                                                :s (s/and string?
+                                                          #(pos-int? (count %))
+                                                          #(try (let [d (Double/parseDouble %)]
+                                                                  (< 0.0 d 1.0))
+                                                                (catch NumberFormatException _ false)))
+                                                :d (s/and double?
+                                                          #(< 0.0 % 1.0))))
+(s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
+                                    (s/keys :req-un [::topic-name-providers]
+                                            :opt-un [::nr-of-partitions
+                                                     ::topic-delete-retention-ms
+                                                     ::ktable-segment-ms
+                                                     ::ktable-min-cleanable-dirty-ratio])))
+
+(-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
+                     ::-comp/config-spec ::ktable-asserter-cfg}
+  [{:as cfg
+    :keys [topic-name-providers
+           nr-of-partitions
+           topic-delete-retention-ms
+           ktable-segment-ms
+           ktable-min-cleanable-dirty-ratio]}]
+
+  (let [nr-of-partitions (or (when (and nr-of-partitions
+                                        (string? nr-of-partitions))
+                               (Integer/parseInt nr-of-partitions))
+                             nr-of-partitions)
+        ac (make-admin-client cfg)
+        existing-topics (-> ^AdminClient @ac
+                            (.listTopics)
+                            (.names)
+                            (.get)
+                            (set))
+
+        ;; we can't CHANGE a topic that has been created the wrong way
+        ;; and neither can we let it be.
+        ;; The app is in a broken state if a topic that must be compacted is not.
+        topics-with-wrong-config (let [existing-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
+                                                            (distinct)
+                                                            (filter existing-topics))
+                                       topic-to-cleanup-policies (->> existing-topics
+                                                                      (map #(ConfigResource. ConfigResource$Type/TOPIC %))
+                                                                      (.describeConfigs ^AdminClient @ac)
+                                                                      (.all)
+                                                                      (.get)
+                                                                      (map (fn [[^ConfigResource resource ^Config cfg]]
+                                                                             [(.name resource)
+                                                                              (.value (.get cfg "cleanup.policy"))]))
+                                                                      (into {}))]
+                                   (->> topic-to-cleanup-policies
+                                        (filter (fn [[_ compaction-strategy]] (not= "compact" compaction-strategy)))
+                                        (map first)))
+        _ (when (pos-int? (count topics-with-wrong-config))
+            (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == 'compact', but they are not. Cannot continue.\n%s"
+                                    (str topics-with-wrong-config))
+                            {:topics topics-with-wrong-config})))
+
+        new-topics (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
+                                   existing-topics)
+        topic-create-result (->> new-topics
+                                 (map (fn [topic-name]
+                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                                      topic-name
+                                                      (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                                      "CLUSTER_DEFAULT"))
+                                        (let [new-topic (NewTopic. ^String   topic-name
+                                                                   ^Optional (if nr-of-partitions
+                                                                               (Optional/of nr-of-partitions)
+                                                                               (Optional/empty))
+                                                                   ^Optional (Optional/empty))
+                                              _ (.configs new-topic
+                                                          (cond-> {"cleanup.policy" "compact"}
+                                                            topic-delete-retention-ms (assoc "delete.retention.ms" (str topic-delete-retention-ms))
+                                                            ktable-segment-ms (assoc "segment.ms" (str ktable-segment-ms))
+                                                            ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty-ratio" (str ktable-min-cleanable-dirty-ratio))
+                                                            ))]
+                                          new-topic)))
+                                 (.createTopics ^AdminClient @ac))]
+
+    ;; wait for complete success
+    (-> topic-create-result
+        (.all)
+        (.get))
+
+    ;; stop the admin client
+    (-comp/halt ac)
+
+    ;; we need to return something for the component value, let's just use the config until something better comes about
+    cfg))
