@@ -69,6 +69,11 @@
   [_ _ value]
   (ig/ref value))
 
+(defmethod aero/reader 'regex
+  [_ _ value] (re-pattern value))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defonce static-parameter-sources (delay (merge (read-system-env)
                                                 (read-system-props))))
 
