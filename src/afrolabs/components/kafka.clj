@@ -270,6 +270,7 @@
           (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
           (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer"))))))
 
+
 (defstrategy StringSerializer
   [& {producer-option :producer
       consumer-option :consumer
@@ -1049,3 +1050,38 @@
       (getWatches [this]    (.getWatches ktable-state))
       (addWatch [this k cb] (.addWatch ktable-state k cb))
       (removeWatch [this k] (.removeWatch ktable-state k)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprotocol ITopicJSONSchemaProvider
+  "A protocol to provide a map between topic names and json schemas."
+  (get-topic-json-schemas [_] "Returns a map of topic names to JSON schemas."))
+
+(s/def ::topic-json-schema-provider #(satisfies? ITopicJSONSchemaProvider %))
+(s/def ::schema-registry-url (s/and string?
+                                    #(pos-int? (count %))))
+(s/def ::schema-registry-api-key (s/or :n nil?
+                                       :s (s/and string?
+                                                 #(pos-int? (count %)))))
+(s/def ::schema-registry-api-secret ::schema-registry-api-key)
+
+(s/def ::confluent-schema-asserter-cfg (s/keys :req-un [::topic-json-schema-provider
+                                                        ::schema-registry-url
+                                                        ::schema-registry-api-secret
+                                                        ::schema-registry-api-key]))
+
+(defprotocol IConfluentSchemaAsserter
+  "A protocol for using the schema registry, eg mapping from topic names to schema id's"
+  (get-schema-id [_ topic-name] "Returns the most recent known schema id for this topic name."))
+
+(-comp/defcomponent {::-comp/ig-kw       ::confluent-schema-asserter
+                     ::-comp/config-spec ::confluent-schema-asserter-cfg}
+  [{:as cfg}]
+  ;; upload schemas to confluent schema registry
+  ;; fail if schemas are incompatible (?)
+  (reify
+    IConfluentSchemaAsserter
+    (get-schema-id [_ topic-name]
+
+      0
+      )))
