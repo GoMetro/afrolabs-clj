@@ -32,14 +32,6 @@
 
 (defonce schema-asserter-registry (atom {}))
 
-;; this also means we will leak memory if we create large amounts of ConfluentJSONSchemaCompatibleSerializer
-;; we therefore have to remember to remove the context-guid from the schema-asserter-registry atom
-;; once the objects go out of scope. Normally, you would do this with the finalize() method, but that has been deprecated.
-;; we will use a cleaner instead.
-;; this is the reference used: https://medium.com/javarevisited/time-to-say-goodbye-to-the-finalize-method-in-java-a2f5b7e4f1b1
-
-(defonce cleaner (Cleaner/create))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (gen-class :name       "afrolabs.components.confluent.sr_compat_serdes.Serializer"
@@ -110,27 +102,16 @@
 
   (let [context-guid (str (UUID/randomUUID))]
     (swap! schema-asserter-registry assoc context-guid schema-asserter)
-    (let [result
-          (reify
-            IUpdateProducerConfigHook
-            (update-producer-cfg-hook
-                [_ cfg]
-              (cond->                       (assoc cfg                                          "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid" context-guid)
-                (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.sr_compat_serdes.Serializer")
-                (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer")))
+    (reify
+      IUpdateProducerConfigHook
+      (update-producer-cfg-hook
+          [_ cfg]
+        (cond->                       (assoc cfg                                          "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid" context-guid)
+          (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.sr_compat_serdes.Serializer")
+          (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer")))
 
-            IHaltable
-            (halt [_]
-              (swap! schema-asserter-registry
-                     dissoc context-guid)))]
-
-      ;; ask the cleaner to remove the context-guid from the schema-asserter-registry once this object goes out of scope
-      #_(.register ^Cleaner cleaner
-                 result (fn []
-                          (log/debug (str "In ConfluentJSONSchemaCompatibleSerializer; cleaning the reference for "
-                                          context-guid))
-                          (swap! schema-asserter-registry
-                                 dissoc context-guid)))
-
-      result)))
+      IHaltable
+      (halt [_]
+        (swap! schema-asserter-registry
+               dissoc context-guid)))))
 
