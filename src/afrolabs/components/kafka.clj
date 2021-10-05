@@ -550,7 +550,12 @@
                                 :more    xs-value)))))
 
       IHaltable
-      (halt [_] (.close ^Producer producer)))))
+      (halt [_]
+        (.close ^Producer producer)
+
+        (doseq [s strategies]
+          (when (satisfies? -comp/IHaltable s)
+            (-comp/halt s)))))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -690,6 +695,11 @@
       (halt [_]
         (reset! must-stop true)
         @has-stopped
+
+        (doseq [s strategies]
+          (when (satisfies? -comp/IHaltable s)
+            (-comp/halt s)))
+
         (.close ^Consumer consumer)))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::kafka-consumer

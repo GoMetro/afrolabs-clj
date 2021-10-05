@@ -6,12 +6,14 @@
             [afrolabs.components.kafka :as -kafka]
             [taoensso.timbre :as log]
             [clojure.java.io :as io]
-            [afrolabs.components.confluent.schema-registry :as -sr])
+            [afrolabs.components.confluent.schema-registry :as -sr]
+            [afrolabs.components :as -comp])
   (:import [org.apache.kafka.clients.producer ProducerConfig]
            [afrolabs.components.kafka IUpdateProducerConfigHook]
            [java.util UUID]
            [java.io ByteArrayOutputStream]
-           [java.lang.ref Cleaner]))
+           [java.lang.ref Cleaner]
+           [afrolabs.components IHaltable]))
 
 (comment
 
@@ -63,6 +65,7 @@
     (.putInt bb i)
     (.array bb)))
 
+(defonce zero-byte-array (bytes (byte-array [0])))
 (defn ser-serialize
   ([this topic data]
    (let [{:keys [context-guid
@@ -74,7 +77,7 @@
          schema-id-bytes     (int->4byte-array schema-id)]
 
      ;; write the 5 bytes header
-     (.write bytes-output-stream (byte 0))             ;; first byte is always 0
+     (.write bytes-output-stream zero-byte-array 0 1)  ;; first byte is always 0
      (.write bytes-output-stream schema-id-bytes 0 4)  ;; 4 bytes worth of schema-id integer
 
      ;; write the json string
@@ -114,10 +117,15 @@
                 [_ cfg]
               (cond->                       (assoc cfg                                          "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid" context-guid)
                 (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.sr_compat_serdes.Serializer")
-                (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer"))))]
+                (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer")))
+
+            IHaltable
+            (halt [_]
+              (swap! schema-asserter-registry
+                     dissoc context-guid)))]
 
       ;; ask the cleaner to remove the context-guid from the schema-asserter-registry once this object goes out of scope
-      (.register ^Cleaner cleaner
+      #_(.register ^Cleaner cleaner
                  result (fn []
                           (log/debug (str "In ConfluentJSONSchemaCompatibleSerializer; cleaning the reference for "
                                           context-guid))
