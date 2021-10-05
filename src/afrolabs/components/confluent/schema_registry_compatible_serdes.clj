@@ -44,6 +44,7 @@
            :prefix     "ser-"
            :main       false
            :init       "init"
+           :state      "state"
            :implements [org.apache.kafka.common.serialization.Serializer])
 
 (defn ser-init [] [[] (atom {})])
@@ -84,7 +85,8 @@
 
 (defn ser-close
   [this]
-  (swap! (.state this)
+  (println (str this))
+  #_(swap! (.state this)
          dissoc :context-guid))
 
 
