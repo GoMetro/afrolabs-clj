@@ -50,11 +50,11 @@
 (defn ser-init [] [[] (atom {})])
 
 (defn ser-configure
-  [this cfg _]
-  (log/debug (str "ser-configure; cfg= " cfg))
+  [this cfg key?]
   (swap! (.state this)
-         assoc :context-guid
-         (get cfg (str "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid"))))
+         assoc
+         :context-guid (get cfg (str "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid"))
+         :key?         key?))
 
 (defn int->4byte-array
   "Better way to do this... it may even work."
@@ -65,9 +65,11 @@
 
 (defn ser-serialize
   ([this topic data]
-   (let [context-guid        (:context-guid @(.state this))
+   (let [{:keys [context-guid
+                 key?]}      @(.state this)
          schema-asserter     (get @schema-asserter-registry context-guid)
-         schema-id           (-sr/get-schema-id schema-asserter topic)
+         schema-id           (-sr/get-schema-id schema-asserter
+                                                (str topic "-" (if key? "key" "value")))
          bytes-output-stream (ByteArrayOutputStream.)
          schema-id-bytes     (int->4byte-array schema-id)]
 
@@ -83,11 +85,7 @@
   ([this topic _headers data]
    (ser-serialize this topic data)))
 
-(defn ser-close
-  [this]
-  (println (str this))
-  #_(swap! (.state this)
-         dissoc :context-guid))
+(defn ser-close [this] nil)
 
 
 ;;;;;;;;;;;;;;;;;;;;
