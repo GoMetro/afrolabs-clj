@@ -117,3 +117,13 @@
     :as to-cluster-cfg}])
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn produce-and-wait!
+  "Intended for interactive use. Produces all of the records and wait for their delivery ack before returning."
+  [producer msgs]
+  (let [msgs (into []
+                   (map #(assoc % :delivered-ch (csp/chan)))
+                   msgs)]
+    (k/produce! producer msgs)
+    (doseq [{ch :delivered-ch} msgs] (csp/<!! ch))))
