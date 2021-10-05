@@ -1,5 +1,7 @@
 (ns afrolabs.components.kafka.utilities
   (:require [afrolabs.components.kafka :as k]
+            [afrolabs.components.confluent :as -confluent]
+            [afrolabs.components.confluent.schema-registry]
             [afrolabs.components.health :as -health]
             [integrant.core :as ig]
             [clojure.data.json :as json]
@@ -76,7 +78,7 @@
          {:bootstrap-server               bootstrap-server
           :consumer/client                consumer-client
           :service-health-trip-switch     health-trip-switch
-          :strategies                     (concat [(k/ConfluentCloud :api-key api-key :api-secret api-secret)
+          :strategies                     (concat [(-confluent/ConfluentCloud :api-key api-key :api-secret api-secret)
                                                    (k/SubscribeWithTopicsCollection topics)
                                                    (k/FreshConsumerGroup)
                                                    (k/OffsetReset "earliest")
