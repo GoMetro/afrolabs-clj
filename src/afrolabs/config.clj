@@ -111,3 +111,9 @@
                           ))
                       {:profile    profile
                        :parameters parameters})))
+
+(defn with-config
+  "Reads a dotenv-file and provides it to a callback. Useful in repl development testing scenarios."
+  ([dotenv-file callback]
+   (callback (read-parameter-sources dotenv-file)))
+  ([callback] (with-config ".env" callback)))
