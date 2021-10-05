@@ -463,53 +463,6 @@
         [_ cfg]
       (assoc cfg ConsumerConfig/GROUP_ID_CONFIG consumer-group-id))))
 
-(defstrategy ConfluentCloud
-  ;; "Sets the required and recommended config to connect to a kafka cluster in confluent cloud.
-  ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
-  [& {:keys [api-key api-secret]}]
-
-  (letfn [(merge-common
-            [cfg]
-            (cond-> cfg
-              true
-              (merge {"client.dns.lookup"        "use_all_dns_ips"
-                      "reconnect.backoff.max.ms" "10000"
-                      "request.timeout.ms"       "30000"})
-
-              (and api-key
-                   api-secret)
-              (merge {"sasl.mechanism"           "PLAIN"
-                      "sasl.jaas.config"         (format (str "org.apache.kafka.common.security.plain.PlainLoginModule required "
-                                                              "username=\"%s\" "
-                                                              "password=\"%s\" "
-                                                              ";")
-                                                         api-key api-secret)
-                      "security.protocol"        "SASL_SSL"})))]
-
-    (reify
-      IUpdateConsumerConfigHook
-      (update-consumer-cfg-hook
-          [_ cfg]
-        (-> cfg
-            (merge-common)
-            (merge {"session.timeout.ms" "45000"})))
-
-      IUpdateProducerConfigHook
-      (update-producer-cfg-hook
-          [_ cfg]
-        (-> cfg
-            (merge-common)
-            (merge {"acks"      "all"
-                    "linger.ms" "5"})))
-
-      IUpdateAdminClientConfigHook
-      (update-admin-client-cfg-hook
-          [_ cfg]
-        (-> cfg
-            (merge-common)
-            (merge {"default.api.timeout.ms" "300000"}))))))
-
-;;;;;;;;;;;;;;;;;;;;
 
 (defn normalize-strategies
   "Takes a collection of strategy-protocol-implementing-objects or strategy-keyword-declaration-vectors and turns the strategy-keyword-declaration-vectors into strategy-protocol-implementing-objects."
@@ -522,12 +475,15 @@
 (comment
 
   (normalize-strategies [(StringSerializer)
-                         (ConfluentJSONSchema :schema-registry-url "")
+                         (AutoCommitOffsets)
                          [:strategy/FreshConsumerGroup]
                          [:strategy/SubscribeWithTopicsCollection ["test"]]])
-  ;; [#object[afrolabs.components.kafka$StringSerializer$reify__27765 0x3e1f8c0a "afrolabs.components.kafka$StringSerializer$reify__27765@3e1f8c0a"]
-  ;;  #object[afrolabs.components.kafka$ConfluentJSONSchema$reify__27753 0x24337527 "afrolabs.components.kafka$ConfluentJSONSchema$reify__27753@24337527"]
-  ;;  #object[afrolabs.components.kafka$FreshConsumerGroup$reify__27820 0x2257b42a "afrolabs.components.kafka$FreshConsumerGroup$reify__27820@2257b42a"]]
+  ;; [
+  ;;  #object[afrolabs.components.kafka$StringSerializer$reify__692 0x264ce7ec "afrolabs.components.kafka$StringSerializer$reify__692@264ce7ec"]
+  ;;  #object[afrolabs.components.kafka$AutoCommitOffsets$reify__751 0x29b9be3b "afrolabs.components.kafka$AutoCommitOffsets$reify__751@29b9be3b"]
+  ;;  #object[afrolabs.components.kafka$FreshConsumerGroup$reify__781 0x75b65fb "afrolabs.components.kafka$FreshConsumerGroup$reify__781@75b65fb"]
+  ;;  #object[afrolabs.components.kafka$SubscribeWithTopicsCollection$reify__727 0x44362059 "afrolabs.components.kafka$SubscribeWithTopicsCollection$reify__727@44362059"]
+  ;; ]
 
   )
 
@@ -839,31 +795,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
-(comment
-
-  (let [cfg (-cfg/read-parameter-sources ".env")]
-    (def ^AdminClient ac (make-admin-client {:bootstrap-server (:kafka-bootstrap-server cfg)
-                                             :strategies [(ConfluentCloud :api-key (:confluent-api-key cfg)
-                                                                          :api-secret (:confluent-api-secret cfg))]})))
-
-  (-comp/halt ac)
-
-  (let [^AdminClient ac @ac
-        ^DescribeConfigsResult describe-config-result
-
-        (.describeConfigs ac [(ConfigResource. ConfigResource$Type/TOPIC
-                                               "log")])]
-    (->> (.all describe-config-result)
-         (.get)
-         (map (fn [[resource cfg]] 
-                [(.name resource)
-                 (.value (.get cfg "cleanup.policy"))]))))
-
-
-
-  )
-
 (s/def ::topic-delete-retention-ms (s/or :n nil?
                                          :s (s/and string?
                                                    #(pos-int? (count %))
@@ -1053,35 +984,4 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defprotocol ITopicJSONSchemaProvider
-  "A protocol to provide a map between topic names and json schemas."
-  (get-topic-json-schemas [_] "Returns a map of topic names to JSON schemas."))
 
-(s/def ::topic-json-schema-provider #(satisfies? ITopicJSONSchemaProvider %))
-(s/def ::schema-registry-url (s/and string?
-                                    #(pos-int? (count %))))
-(s/def ::schema-registry-api-key (s/or :n nil?
-                                       :s (s/and string?
-                                                 #(pos-int? (count %)))))
-(s/def ::schema-registry-api-secret ::schema-registry-api-key)
-
-(s/def ::confluent-schema-asserter-cfg (s/keys :req-un [::topic-json-schema-provider
-                                                        ::schema-registry-url
-                                                        ::schema-registry-api-secret
-                                                        ::schema-registry-api-key]))
-
-(defprotocol IConfluentSchemaAsserter
-  "A protocol for using the schema registry, eg mapping from topic names to schema id's"
-  (get-schema-id [_ topic-name] "Returns the most recent known schema id for this topic name."))
-
-(-comp/defcomponent {::-comp/ig-kw       ::confluent-schema-asserter
-                     ::-comp/config-spec ::confluent-schema-asserter-cfg}
-  [{:as cfg}]
-  ;; upload schemas to confluent schema registry
-  ;; fail if schemas are incompatible (?)
-  (reify
-    IConfluentSchemaAsserter
-    (get-schema-id [_ topic-name]
-
-      0
-      )))

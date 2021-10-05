@@ -5,7 +5,8 @@
   (:require [clojure.data.json :as json]
             [afrolabs.components.kafka :as -kafka]
             [taoensso.timbre :as log]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [afrolabs.components.confluent.schema-registry :as -sr])
   (:import [org.apache.kafka.clients.producer ProducerConfig]
            [afrolabs.components.kafka IUpdateProducerConfigHook]
            [java.util UUID]
@@ -65,7 +66,7 @@
   ([this topic data]
    (let [context-guid        (:context-guid @(.state this))
          schema-asserter     (get @schema-asserter-registry context-guid)
-         schema-id           (-kafka/get-schema-id schema-asserter topic)
+         schema-id           (-sr/get-schema-id schema-asserter topic)
          bytes-output-stream (ByteArrayOutputStream.)
          schema-id-bytes     (int->4byte-array schema-id)]
 

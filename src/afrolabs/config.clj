@@ -79,9 +79,9 @@
 
 (defn read-parameter-sources
   [dotenv-file]
-  (merge (if-not dotenv-file {}
-                 (read-dotenv-file dotenv-file))
-         @static-parameter-sources))
+  (merge @static-parameter-sources
+         (if-not dotenv-file {}
+                 (read-dotenv-file dotenv-file))))
 
 (defn read-config
   [config-file-location
