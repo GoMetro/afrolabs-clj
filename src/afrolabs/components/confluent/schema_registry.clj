@@ -97,7 +97,7 @@
 ;;;;;;;;;;;;;;;;;;;;
 
 (s/def ::subject-json-schema-provider #(satisfies? ISubjectJSONSchemaProvider %))
-(s/def ::subject-json-schema-providers (s/coll-of ::topic-json-schema-provider))
+(s/def ::subject-json-schema-providers (s/coll-of ::subject-json-schema-provider))
 
 (s/def ::schema-registry-url (s/and string?
                                     #(pos-int? (count %))))
@@ -376,6 +376,8 @@
   (def simple-schema-json (malli-json/transform simple-schema))
   (def simple-schema-json-2 (malli-json/transform simple-schema-2))
   (def simple-schema-json-4 (malli-json/transform simple-schema-4))
+
+  
 
   )
 
