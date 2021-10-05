@@ -11,11 +11,9 @@
 
                  ;; dependency conflict resolution, also edn reader
                  [org.clojure/tools.reader "1.3.6"]
-                 ;; [org.eclipse.jetty/jetty-util "9.4.39.v20210325" :upgrade true]
-                 ;;[org.eclipse.jetty/jetty-http "9.4.39.v20210325" :upgrade true]
+
                  [org.eclipse.jetty/jetty-util "9.4.43.v20210629"]
                  [org.eclipse.jetty/jetty-http "9.4.43.v20210629"]
-
 
                  ;; conversions between different kinds of casing
                  ;; camelCase -> snake_case -> kebab-case -> PascalCase
