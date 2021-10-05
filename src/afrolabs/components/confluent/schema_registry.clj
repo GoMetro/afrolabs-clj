@@ -4,11 +4,14 @@
              [clojure.spec.alpha :as s]
              [reitit.core :as reitit]
              [org.httpkit.client :as http-client]
-             [clojure.data.json :as json])
+             [clojure.data.json :as json]
+             [net.cgrand.xforms :as x]
+             [taoensso.timbre :as log])
   (:import [afrolabs.components.kafka
             IUpdateConsumerConfigHook
             IUpdateProducerConfigHook
-            IUpdateAdminClientConfigHook]))
+            IUpdateAdminClientConfigHook]
+           [clojure.lang ExceptionInfo]))
 
 (-kafka/defstrategy ConfluentCloud
   ;; "Sets the required and recommended config to connect to a kafka cluster in confluent cloud.
@@ -63,45 +66,38 @@
     (json/read-str s)
     (catch Throwable _ false)))
 
-(s/def :provided-schema/key (s/and string?
-                                   #(pos-int? (count %))
-                                   valid-json?))
-(s/def :provided-schema/value :provided-schema/key)
-(s/def :provided-schema/topic (s/and string?
-                                     #(pos-int? (count %))))
+(s/def :provided-schema/schema (s/and string?
+                                      #(pos-int? (count %))
+                                      valid-json?))
+(s/def :provided-schema/subject (s/and string?
+                                       #(pos-int? (count %))))
 
-(s/def ::provided-topic-schema (s/and (s/keys :opt-un [:provided-schema/key
-                                                       :providec-schema/value])
-                                      #(or (:provided-schema/key %)
-                                           (:provided-schema/value %))))
-
-(s/def ::get-topic-json-schemas (s/map-of :provided-schema/topic
-                                          ::provided-topic-schema))
+(s/def ::get-subject-json-schemas (s/coll-of (s/keys :req-un [:provided-schema/subject
+                                                              :provided-schema/schema])))
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(defprotocol ITopicJSONSchemaProvider
-  "A client protocol to provide a map between topic names and json schemas. The confluent schema asserter will consume this protocol against the schema registry.
+(defprotocol ISubjectJSONSchemaProvider
+  "A client protocol to provide a map between SUBJECT names and json schemas. The confluent schema asserter will consume this protocol against the schema registry.
 
-  The result must conform to ::get-topic-json-schemas
+  The result must conform to ::get-subject-json-schemas, which conforms on a collection of maps, each contains a :subject & :schema.
 
-  - Schemas are JSON-valued strings
-  - either key, or value (or both) must be specified
+  - Schemas are JSON-encoded strings
 
-  Eg1: {\"topic-with-key-only\"   {:key \"<JSON Schema>\"}}
-  Eg2: {\"topic-with-value-only\" {:value \"<JSON Schema>\"}}
-  Eg3: {\"topic-with-key-value\"  {:key \"<JSON Schema>\"
-                                   :value \"<JSON Schema\"}} "
-  (get-topic-json-schemas [_] "Returns a map of topic names to JSON schemas."))
+  Eg1: [{:subject \"topic-key\"    :schema \"<JSON Schema 1>\"}]
+  Eg2: [{:subject \"topic-value\"  :schema \"<JSON Schema 2>\"}]
+  Eg3: [{:subject \"some-subject\" :schema \"<JSON Schema 3>\"}
+        {:subject \"moar-subject\" :schema \"<JSON Schema 4>\"}] "
+  (get-subject-json-schemas [_] "Returns a collection of subject names with JSON schemas in string format."))
 
 (defprotocol IConfluentSchemaAsserter
-  "A protocol for using the schema registry, eg mapping from topic names to schema id's"
-  (get-schema-id [_ topic-name] "Returns the most recent known schema id for this topic name."))
+  "A protocol for using the schema registry, eg mapping from subject names to schema id's"
+  (get-schema-id [_ subject-name] "Returns the most recent known schema id for this SUBJECT."))
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::topic-json-schema-provider #(satisfies? ITopicJSONSchemaProvider %))
-(s/def ::topic-json-schema-providers (s/coll-of ::topic-json-schema-provider))
+(s/def ::subject-json-schema-provider #(satisfies? ISubjectJSONSchemaProvider %))
+(s/def ::subject-json-schema-providers (s/coll-of ::topic-json-schema-provider))
 
 (s/def ::schema-registry-url (s/and string?
                                     #(pos-int? (count %))))
@@ -110,7 +106,7 @@
                                                  #(pos-int? (count %)))))
 (s/def ::schema-registry-api-secret ::schema-registry-api-key)
 
-(s/def ::confluent-schema-asserter-cfg (s/keys :req-un [::topic-json-schema-providers
+(s/def ::confluent-schema-asserter-cfg (s/keys :req-un [::subject-json-schema-providers
                                                         ::schema-registry-url
                                                         ::schema-registry-api-secret
                                                         ::schema-registry-api-key]))
@@ -119,8 +115,7 @@
 ;; HTTP/REST utilities for confluent schema registry API
 
 (defn make-default-http-options
-  [{:as   cfg
-    :keys [schema-registry-api-key
+  [{:keys [schema-registry-api-key
            schema-registry-api-secret]}]
   (cond->
       {:user-agent (format "Afrolabs Confluent Schema Registry API Client")
@@ -148,8 +143,8 @@
     ]))
 
 (defn make-url-fn
-  "Creates an fn that Adds the (confluent) url to the options map, based on the name of the route. "
-  [{:keys [schema-registry-url]}]
+  "Creates an fn that returns the URL to a Confluent REST API based on the ::route-name and optional URL parameters."
+  [schema-registry-url]
   (fn url
     ([route-name]
      (url route-name nil))
@@ -176,28 +171,34 @@
 
   (reitit/match-by-name confluent-api-router ::schema-by-id)
 
-  (let [make-url (make-url-fn {:schema-registry-url "https://confluent.schema.registry.com"})]
+  (let [make-url (make-url-fn "https://confluent.schema.registry.com")]
     (make-url ::schema-by-id {:id 1}))
 
-  (let [make-url (make-url-fn {:schema-registry-url "https://confluent.schema.registry.com"})]
+  (let [make-url (make-url-fn "https://confluent.schema.registry.com")]
     (make-url ::schema-types {}))
 
-  (let [make-url (make-url-fn {:schema-registry-url "https://confluent.schema.registry.com"})]
+  (let [make-url (make-url-fn "https://confluent.schema.registry.com")]
     (make-url ::schema-versions {:id 1}))
 
-  (let [make-url (make-url-fn {:schema-registry-url "https://confluent.schema.registry.com"})]
+  (let [make-url (make-url-fn "https://confluent.schema.registry.com")]
     [(make-url ::subjects {:deleted true})
      (make-url ::subjects {})
      (make-url ::subjects)])
 
   )
 
-(defn cleanup-api-result [result]
+(defn- cleanup-api-result
+  "Helper fn; clears out auth data and decodes json strings."
+  [result]
   (cond-> result
-    (get-in result [:opts :body]) (update-in [:opts :body] json/read-str)
-    true (update :opts dissoc :basic-auth)))
+    (get-in result [:opts :body])
+    (update-in [:opts :body] json/read-str)
+
+    true
+    (update :opts dissoc :basic-auth)))
 
 (defn api-result
+  "Throws on API errors, cleans up the results."
   [http-result]
   (let [result @http-result
         expected-types #{"application/vnd.schemaregistry.v1+json"
@@ -215,10 +216,11 @@
         (throw (ex-info (format "Schema Registry Error: Code='%d', Message='%s'"
                                 (get-in result [:body "error_code"])
                                 (get-in result [:body "message"]))
-                        {:body (:body result)
-                         :request (-> result
-                                      (dissoc :body)
-                                      cleanup-api-result)})))
+                        {:response (:body result)
+                         :request  (-> result
+                                       (dissoc :body)
+                                       cleanup-api-result)
+                         :http-status (:status result)})))
 
 
       (cleanup-api-result result))))
@@ -236,33 +238,22 @@
       (throw (ex-info (format "Schema Registry not configured to use '%s'" schema-type)
                       {:supported-schema-types body})))))
 
-(defn get-subjects-in-schema-registry
-  [make-url options]
-  (-> (make-url ::subjects)
-      (http-client/get options)
-      api-result
-      :body
-      set))
-
-(defn upload-new-subject-schema
+(defn upload-subject-schema
+  "Uploads a schema to a subject. Both subject and schema must be strings."
   [make-url options subject schema]
   (api-result (http-client/post (make-url ::subject-versions {:subject subject})
                                 (assoc options
-                                       :body (json/write-str {:schema schema
+                                       :body (json/write-str {:schema     schema
                                                               :schemaType "JSON"})))))
-
-(defn get-subject-compatibility
-  [make-url options subject]
-  #_(api-result (http-client/get )))
 
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn make-component
   [{:as   cfg
-    :keys [schema-registry-url
-           topic-json-schema-providers]}]
+    :keys [subject-json-schema-providers
+           schema-registry-url]}]
   (s/assert ::confluent-schema-asserter-cfg cfg)
-  (let [make-url             (make-url-fn cfg)
+  (let [make-url             (make-url-fn schema-registry-url)
         def-opts             (make-default-http-options cfg)]
 
     ;; verify that the schema-registry supports jsonschema
@@ -270,59 +261,65 @@
                                         def-opts
                                         "JSON")
 
-    ;; get schemas; test if they were passed correctly
-    ;; throw if not
-    (let [all-provided-schemas (map #(get-topic-json-schemas %)
-                                    topic-json-schema-providers)
-          invalid-schemas (into []
-                                (filter #(s/valid? ::get-topic-json-schemas %))
-                                all-provided-schemas)]
+    ;; get schemas; test if they were passed into this component correctly
+    (let [all-provided-schemas (mapcat #(get-subject-json-schemas %)
+                                       subject-json-schema-providers)]
 
       ;; throw an error to the developer if ITopicJSONSchemaProvider was implemented incorrectly
-      (when (seq invalid-schemas)
+      (when (not (s/valid? ::get-subject-json-schemas all-provided-schemas))
         (throw (ex-info "JSON Schemas were provided in the wrong format."
-                        {:errors (into []
-                                       (map #(hash-map :str (s/explain-str ::get-topic-json-schemas %)
-                                                       :data (s/explain-data ::get-topic-json-schemas %)))
-                                       invalid-schemas)})))
+                        {:explanation-str  (s/explain-str ::get-subject-json-schemas all-provided-schemas)
+                         :explanation-data (s/explain-data ::get-subject-json-schemas all-provided-schemas)})))
 
-      (let [subjects-in-sr  nil
+      ;; We can upload the schemas we have to the endpoint for a subject.
+      ;; If the schema is exactly the same, we'll get the existing/old schema-id back.
+      ;; If it's brand new, it will similarly work, with a new id.
+      ;; If the schema is new and compatible, we'll get the new id.
+      ;; If the schema is IN-compatible, we'll get an exception.
+      ;; This must prevent the app from starting up because an intervention is required to resolve the schema incompatibility.
+      (let [{:keys [error
+                    success]}
+            (into {}
+                  (comp
+                   ;; upload schemas to schema registry
+                   (map (fn [{:keys [subject schema]}]
+                          (try
+                            [:success
+                             {:subject subject
+                              :schema-id (get-in
+                                          (upload-subject-schema make-url
+                                                                 def-opts
+                                                                 subject
+                                                                 schema)
+                                          [:body "id"])}]
+                            (catch ExceptionInfo ei
+                              [:error
+                               (assoc (ex-data ei)
+                                      :subject subject)]))))
 
-            provided-subject-schemas (into {}
-                                           (mapcat (fn [[topic {:keys [key value]}]]
-                                                     (concat (when key   [(str topic "-key")   key])
-                                                             (when value [(str topic "-value") value]))))
-                                           all-provided-schemas)
+                   ;; sort according to error/success status
+                   ;; collect only the result of the api call
+                   (x/by-key first (comp
+                                    (map second)
+                                    (map (fn [{:as x :keys [subject]}]
+                                           [subject x]))
+                                    (x/into {}))))
+                  all-provided-schemas)]
 
-            ;; sort by those subjects that exist and have to be tested for compat
-            ;; and those subjects which does not exist yet and have to be uploaded
-            {must-be-checked-for-compat true
-             must-be-uploaded           false} (group-by subjects-in-sr (keys provided-subject-schemas))
+        ;; throw when schema uploads produced errors
+        (when (seq error)
+          (let [err-msg (format "The Schema Registry asserting component cannot start because of incompatible JSONSchemas.\nThese subjects failed: %s"
+                                (->> error
+                                     keys
+                                     sort
+                                     (into [])))]
+            (log/error err-msg)
+            (throw (ex-info err-msg {:incompatible-schemas (into [] error)}))))
 
-
-            topic-with-schemas ()])
-
-      ;; now check if the schemas are compatible with the subjects if they exist
-      ;; upload if they do not
-      (doseq [provided-schemas all-provided-schemas]
-
-
-
-        ))
-
-
-
-
-
-
-    
-    ;; fail if schemas are incompatible (?)
-    (reify
-      IConfluentSchemaAsserter
-      (get-schema-id [_ topic-name]
-
-        0
-        ))))
+        (reify
+          IConfluentSchemaAsserter
+          (get-schema-id [_ subject]
+            (get-in success [subject :schema-id])))))))
 
 (comment
 
@@ -340,12 +337,25 @@
 
   (def schema-asserter
     (let [cfg-source (-config/read-parameter-sources ".env")]
-      (make-component {:schema-registry-url         (:confluent-schema-registry-url cfg-source)
-                       :schema-registry-api-key     (:confluent-schema-registry-api-key cfg-source)
-                       :schema-registry-api-secret  (:confluent-schema-registry-api-secret cfg-source)
-                       :topic-json-schema-providers []})))
+      (make-component {:schema-registry-url           (:confluent-schema-registry-url cfg-source)
+                       :schema-registry-api-key       (:confluent-schema-registry-api-key cfg-source)
+                       :schema-registry-api-secret    (:confluent-schema-registry-api-secret cfg-source)
+                       :subject-json-schema-providers [(reify
+                                                         ISubjectJSONSchemaProvider
+                                                         (get-subject-json-schemas [_]
+                                                           [{:subject "test-topic-key"
+                                                             :schema  (json/write-str {:type                 "object",
+                                                                                       :properties           {:b {:type "boolean"}
+                                                                                                              :s {:type "string"}}
+                                                                                       :required             [:b :s]})}]
+                                                           ))]})))
 
-  (-comp/halt schema-asserter)
+  (get-schema-id schema-asserter "test-topic-value")
+
+  (upload-subject-schema make-url
+                         def-opts
+                         "test-topic-key"
+                         simple-schema-json)
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -366,7 +376,6 @@
   (def simple-schema-json (malli-json/transform simple-schema))
   (def simple-schema-json-2 (malli-json/transform simple-schema-2))
   (def simple-schema-json-4 (malli-json/transform simple-schema-4))
-
 
   )
 

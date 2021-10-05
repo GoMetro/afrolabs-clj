@@ -17,6 +17,9 @@
                  [org.eclipse.jetty/jetty-http "9.4.43.v20210629"]
 
 
+                 ;; conversions between different kinds of casing
+                 ;; camelCase -> snake_case -> kebab-case -> PascalCase
+                 [camel-snake-kebab "0.4.2"]
 
 
                  [metosin/jsonista "0.3.4" :exclusions [com.fasterxml.jackson.core/jackson-core]]
