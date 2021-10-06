@@ -1024,8 +1024,8 @@
                              literal-fn
                              (do
                                (warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
-                                          literal))
-                               (eval literal)))]
+                                          literal-fn))
+                               (eval literal-fn)))]
     (reify
       IConsumedResultsHandler
       (handle-consumption-results [_ xs]
