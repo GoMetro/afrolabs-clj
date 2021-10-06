@@ -329,9 +329,15 @@
                         [:s string?]
                         [:ss {:optional true} string?]])
 
-  (def simple-schema-json (malli-json/transform simple-schema))
+  (defn two-way [js] (-> js
+                         json/write-str
+                         json/read-str))
+
+  (def simple-schema-json (two-way (malli-json/transform simple-schema)))
   (def simple-schema-json-2 (malli-json/transform simple-schema-2))
   (def simple-schema-json-4 (malli-json/transform simple-schema-4))
+
+  
 
   
 
