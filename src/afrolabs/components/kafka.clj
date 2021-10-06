@@ -994,5 +994,42 @@
       (removeWatch [this k] (.removeWatch ktable-state k)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; create a forwarder; a forwarder is configured with:
+;; - a producer
+;; - a fn
+;; It implements the IConsumedResultsHandler
+;; by applying the fn to the consumed results, and forwarding it to the producer
 
+(s/def :consumed-result-forwarder/producer ::kafka-producer)
+
+;; we will allow the app developer to specify a function literal in the edn
+;; and eval it to transform it into an actual fn?.
+;; this is incredibly dangerous...
+;; also note the literal will be eval'd more than once
+(s/def :consumed-result-forwarder.transformer/literal-fn
+  #(try (let [fn (eval %)]
+          (fn? fn))
+        (catch Throwable _ false)))
+(s/def ::consumed-result-forwarder-cfg
+  (s/and (s/keys :req-un [:consumed-result-forwarder/producer]
+                 :opt-un [:consumed-result-forwarder.transformer/literal-fn])
+         #(or (:consumed-result-forwarder.transformer/literal-fn %))))
+
+(-comp/defcomponent {::-comp/config-spec ::consumed-result-forwarder-cfg
+                     ::-comp/ig-kw       ::consumed-result-forwarder}
+  [{:as cfg
+    :keys [producer
+           literal-fn]}]
+  (let [transformer-actual (cond
+                             literal-fn
+                             (do
+                               (warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
+                                          literal))
+                               (eval literal)))]
+    (reify
+      IConsumedResultsHandler
+      (handle-consumption-results [_ xs]
+        (when-let [forwarded (transformer-actual xs)]
+          (produce! producer
+                    forwarded))))))
 
