@@ -1013,7 +1013,7 @@
 (s/def ::consumed-result-forwarder-cfg
   (s/and (s/keys :req-un [:consumed-result-forwarder/producer]
                  :opt-un [:consumed-result-forwarder.transformer/literal-fn])
-         #(or (:consumed-result-forwarder.transformer/literal-fn %))))
+         #(or (:literal-fn %))))
 
 (-comp/defcomponent {::-comp/config-spec ::consumed-result-forwarder-cfg
                      ::-comp/ig-kw       ::consumed-result-forwarder}
