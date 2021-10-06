@@ -624,11 +624,12 @@
                                                (.poll consumer ^long poll-timeout))
               consumption-results        (consume-messages client consumed-records)]
 
-          (combined-consumed-results-handler consumption-results)
+          (when consumption-results
+            (combined-consumed-results-handler consumption-results))
 
           (combined-post-consume-hook consumer consumed-records)))
 
-      ;; we're done .poll'ing and shutting down
+      ;; we're done poll'ing and shutting down
       ;; give shutdown hooks a chance
       (doseq [s (filter (partial satisfies? IShutdownHook)
                         strategies)]
