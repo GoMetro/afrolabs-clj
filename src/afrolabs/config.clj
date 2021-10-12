@@ -1,9 +1,10 @@
 (ns afrolabs.config
   (:require [aero.core :as aero]
-            [clojure.java.io]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [integrant.core :as ig]
-            [taoensso.timbre :as log]))
+            [taoensso.timbre :as log]
+            [clojure.data.csv :as csv]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -51,6 +52,8 @@
                              (subs s (inc i))])))
                    (into {}))))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defmethod aero/reader 'parameter
   [{ps :parameters} _ value]
   (when-not ps
@@ -71,6 +74,10 @@
 
 (defmethod aero/reader 'regex
   [_ _ value] (re-pattern value))
+
+(defmethod aero/reader 'csv-array
+  [_ _ value]
+  (first (csv/read-csv (java.io.StringReader. value))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
