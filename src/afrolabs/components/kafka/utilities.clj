@@ -14,15 +14,43 @@
   (:import [afrolabs.components.health IServiceHealthTripSwitch]))
 
 (defn load-messages-from-confluent-topic
+  "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
+
+  Intended for interactive use.
+
+  - Specify :topics (a collection of strings) for which topics to subscribe to.
+  - If you want to limit the number of messages you load, use :nr-msgs to specify a lower bound of loaded messages. You will get at least this many, unless there are too few messages in the topic, in which case you will get everything in the topic.
+  - Use the :msg-filter to keep a subset of messages of the ones in the topic(s)
+  - Optionally specify consumer-group-id, otherwise a fresh and unique consumer-group-id will be used.
+  - Optionally specify :offset-reset (one of #{\"earliest\" \"latest\"}. Default \"earliest\".)
+  - ConfluentCloud specific: when :api-key and :api-secret are both nil, the ConfluentCloud strategy will not be used.
+
+  - use :extra-strategies is useful for specifying deserialization settings.
+
+
+  eg (def invalid-msgs
+       (afrolabs.config/with-config \".env\"
+         #(-kafka-utils/load-messages-from-confluent-topic :bootstrap-server (:kafka-bootstrap-server %)
+                                                           :topics           [\"test-topic\"]
+                                                           :api-key          (:kafka-api-key %)
+                                                           :api-secret       (:kafka-api-secret %)
+                                                           :extra-strategies [[:strategy/StringSerializer :consumer :key]
+                                                                              [:strategy/JsonSerializer :consumer :value]]
+                                                           )))
+
+  "
   [& {:keys [bootstrap-server
              topics
              nr-msgs
              api-key api-secret
              extra-strategies
-             msg-filter]
-      :or {nr-msgs          10
+             msg-filter
+             consumer-group-id
+             offset-reset]
+      :or {nr-msgs          :all
            msg-filter       identity
-           extra-strategies []}}]
+           extra-strategies []
+           offset-reset     "earliest"}}]
   (let [loaded-msgs (atom nil)
         loaded-enough-msgs (promise)
 
@@ -59,7 +87,7 @@
                   how-many (count new-state)]
 
               ;; do we have enough yet? is anything ever enough?
-              (when (and nr-msgs
+              (when (and (not= nr-msgs :all)
                          (< nr-msgs how-many))
                 (info "Indicating that we've received enough messages...")
                 (deliver loaded-enough-msgs true))
@@ -78,11 +106,16 @@
          {:bootstrap-server               bootstrap-server
           :consumer/client                consumer-client
           :service-health-trip-switch     health-trip-switch
-          :strategies                     (concat [(-confluent/ConfluentCloud :api-key api-key :api-secret api-secret)
-                                                   (k/SubscribeWithTopicsCollection topics)
-                                                   (k/FreshConsumerGroup)
-                                                   (k/OffsetReset "earliest")
-                                                   (k/CaughtUpNotifications caught-up-ch)]
+          :strategies                     (concat (keep identity
+                                                        [(when (and api-key api-secret)
+                                                           (-confluent/ConfluentCloud :api-key api-key :api-secret api-secret))
+                                                         (when topics
+                                                           (k/SubscribeWithTopicsCollection topics))
+                                                         (if-not consumer-group-id
+                                                           (k/FreshConsumerGroup)
+                                                           (k/ConsumerGroup consumer-group-id))
+                                                         (k/OffsetReset offset-reset)
+                                                         (k/CaughtUpNotifications caught-up-ch)])
                                                   extra-strategies)}}
 
         system (ig/init ig-cfg)]
@@ -99,7 +132,8 @@
       (catch Throwable t
         (warn t "Caught a throwable while waiting for messages to load. Stopping the system...")
         (ig/halt! system)
-        (info "Extraordinary system stop completed.")))))
+        (info "Extraordinary system stop completed.")
+        @loaded-msgs))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
