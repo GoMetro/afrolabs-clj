@@ -406,7 +406,7 @@
                ConsumerConfig/AUTO_COMMIT_INTERVAL_MS_CONFIG commit-interval-ms)))))
 
 (defstrategy ClientId
-  [& client-id]
+  [client-id]
   (reify
     IUpdateConsumerConfigHook
     (update-consumer-cfg-hook
