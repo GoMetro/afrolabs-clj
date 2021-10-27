@@ -97,12 +97,11 @@
         indicate-unhealthy (fn [] (reset! healthy? false))
 
         self-destruct-singleton (delay
-                                  (let [t (Thread. (do
+                                  (.start (Thread. (do
                                                      (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
                                                        (log/warnf "Self destructing in %d seconds..." i)
                                                        (Thread/sleep (* i 1000)))
-                                                     (System/exit 1)))]
-                                    (.start t)))]
+                                                     (System/exit 1)))))]
 
     (letfn [(self-destruct
               [& _]
