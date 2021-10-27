@@ -94,17 +94,20 @@
                          (remove-watch healthy? ::healthy-watcher))))
 
         ;; helper callback
-        indicate-unhealthy (fn [] (reset! healthy? false))]
+        indicate-unhealthy (fn [] (reset! healthy? false))
+
+        self-destruct-singleton (delay
+                                  (let [t (Thread. (do
+                                                     (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
+                                                       (log/warnf "Self destructing in %d seconds..." i)
+                                                       (Thread/sleep (* i 1000)))
+                                                     (System/exit 1)))]
+                                    (.start t)))]
 
     (letfn [(self-destruct
               [& _]
               (when trigger-self-destruct-timer-seconds
-                (let [t (Thread. (do
-                                   (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
-                                     (log/warnf "Self destructing in %d seconds..." i)
-                                     (Thread/sleep (* i 1000)))
-                                   (System/exit 1)))]
-                  (.start t))))
+                @self-destruct-singleton))
 
             (os-signal-handler
               [signal]
