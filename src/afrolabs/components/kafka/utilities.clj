@@ -1,6 +1,7 @@
 (ns afrolabs.components.kafka.utilities
   (:require [afrolabs.components.kafka :as k]
             [afrolabs.components.confluent :as -confluent]
+            [afrolabs.components.kafka.utilities.topic-forwarder :as -topic-forwarder]
             [afrolabs.components.confluent.schema-registry]
             [afrolabs.components.health :as -health]
             [integrant.core :as ig]
@@ -10,8 +11,14 @@
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]
-            [java-time :as time])
-  (:import [afrolabs.components.health IServiceHealthTripSwitch]))
+            [java-time :as time]
+            [afrolabs.csp :as -csp]
+            [net.cgrand.xforms :as x])
+  (:import [afrolabs.components.health IServiceHealthTripSwitch ]
+           [afrolabs.components IHaltable]
+           [afrolabs.components.health IServiceHealthTripSwitch]
+           [java.util UUID]
+           [afrolabs.components.kafka IPostConsumeHook]))
 
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
@@ -138,17 +145,60 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn forward-topics-between-clusters
-  [{:keys [bootstrap-server
-           topics
-           extra-strategies
-           msg-filter]
-    :or {msg-filter       identity
-         extra-strategies []}
-    :as from-cluster-cfg}
-   {:keys [bootstrap-server
-           extra-strategies]
-    :or {extra-strategies []}
-    :as to-cluster-cfg}])
+  "This fn will forward messages between different kafka clusters. It is indended for interactive use. The return value is an IHaltable (afrolabs.components/halt <return-value) which will terminate the process."
+  ([consumer-group-id src-cluster-cfg dest-cluster-cfg ]
+   (forward-topics-between-clusters (-> src-cluster-cfg
+                                        (update :strategies concat [[:strategy/AutoCommitOffsets]
+                                                                    [:strategy/ConsumerGroup consumer-group-id]]))
+                                    dest-cluster-cfg))
+  ([src-cluster-cfg dest-cluster-cfg]
+   (let [log-metrics-input-ch (csp/chan)
+         log-metrics-output-ch (csp/chan)
+         _ (-csp/partition-by-interval log-metrics-input-ch
+                                       (x/reduce (fn
+                                                   ([x] x)
+                                                   ([acc x]
+                                                    (merge-with + acc x)))
+                                                 {})
+                                       log-metrics-output-ch
+                                       30000)
+         _ (csp/go-loop [stats (csp/<! log-metrics-output-ch)]
+             (when stats
+               (log/info (str "Forwarded messages to these topics: " stats))
+               (recur (csp/<! log-metrics-output-ch))))
+
+         system (atom (ig/init (-topic-forwarder/create-system-config
+                                (-> src-cluster-cfg
+                                    (update :strategies concat [(reify
+                                                                  IPostConsumeHook
+                                                                  (post-consume-hook [_ _ msgs]
+                                                                    (when (seq msgs)
+                                                                      (csp/go (csp/>! log-metrics-input-ch
+                                                                                      (into {}
+                                                                                            (x/by-key :topic x/count)
+                                                                                            msgs))))))]))
+                                dest-cluster-cfg)))
+         halted? (promise)
+         do-halt (fn []
+                   (swap! system
+                          (fn [old-system]
+                            (when old-system
+                              (ig/halt! old-system))
+                            nil))
+                   (csp/close! log-metrics-input-ch)
+                   (csp/close! log-metrics-output-ch)
+                   (deliver halted? true))
+
+]
+
+     (csp/thread
+       (-health/wait-while-healthy (-> system deref :afrolabs.components.health/component))
+       (do-halt))
+     (reify
+       IHaltable
+       (halt [_]
+         (do-halt)
+         @halted?)))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
