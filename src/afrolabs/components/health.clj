@@ -101,7 +101,15 @@
                                                      (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
                                                        (log/warnf "Self destructing in %d seconds..." i)
                                                        (Thread/sleep (* i 1000)))
-                                                     (System/exit 1)))))]
+                                                     (System/exit 1)))))
+
+        os-signal-handler-self-destruct-log-msg
+        (delay
+          (log/warn "Triggering the self-destruct timer if another OS signal arrives."))
+
+        uncaught-exception-handler-self-destruct-log-msg
+        (delay
+          (log/warn "Triggering the self-destruct timer if another uncaught exception arrives."))]
 
     (letfn [(self-destruct
               [& _]
@@ -114,7 +122,7 @@
                           signal)
               (indicate-unhealthy)
               (when trigger-self-destruct-timer-seconds
-                (log/warn "Triggering the self-destruct timer if another OS signal arrives.")
+                @os-signal-handler-self-destruct-log-msg
                 (swap! signal-callbacks conj self-destruct)))
 
             (uncaught-exception-handler
@@ -124,7 +132,7 @@
                           (str thread) (str exception))
               (indicate-unhealthy)
               (when trigger-self-destruct-timer-seconds
-                (log/warn "Triggering the self-destruct timer if another uncaught exception arrives.")
+                @uncaught-exception-handler-self-destruct-log-msg
                 (swap! uncaught-exception-handlers conj self-destruct)))]
 
       (when intercept-signals
