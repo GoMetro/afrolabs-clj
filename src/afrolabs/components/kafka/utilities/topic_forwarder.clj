@@ -94,8 +94,8 @@
                                   :consumer/client  (reify
                                                       IConsumerClient
                                                       (consume-messages [_ msgs]
-                                                        (sequence (comp
-                                                                   (filter (comp src-msg-filter :value))
-                                                                   (map #(select-keys % [:topic :key :value]))
-                                                                   (map #(update % :value dest-msg-transform)))
-                                                                  msgs)))}}))))
+                                                        (into [] (comp
+                                                                  (filter (comp src-msg-filter :value))
+                                                                  (map #(select-keys % [:topic :key :value]))
+                                                                  (map #(update % :value dest-msg-transform)))
+                                                              msgs)))}}))))
