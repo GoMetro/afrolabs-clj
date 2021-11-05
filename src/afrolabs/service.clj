@@ -45,12 +45,14 @@
         ;; thus if every component is a ::keyword then all the required code will by loaded at the correct time
         ;; before the components need to be initialized.
         _ (ig/load-namespaces ig-cfg
-                              ig-cfg-ks)
+                              ig-cfg-ks)]
 
-        ig-system
-        (ig/init ig-cfg ig-cfg-ks)]
-
-    ig-system))
+    (try
+      (ig/init ig-cfg ig-cfg-ks)
+      (catch Throwable t
+        (log/error t "Error while initializing system. Shutting down the components that were started already...")
+        (ig/halt! (-> t ex-data :system))
+        nil))))
 
 (defn as-service
   "A service that /does logging/ is not an interactive terminal in prod and should not be writing ANSI color codes."
