@@ -124,3 +124,9 @@
   ([dotenv-file callback]
    (callback (read-parameter-sources dotenv-file)))
   ([callback] (with-config ".env" callback)))
+
+(defn load-config
+  "Reads a dotenv-file and returns it with the static parameter context."
+  ([] (load-config ".env"))
+  ([dotenv-file]
+   (read-parameter-sources dotenv-file)))
