@@ -14,9 +14,8 @@
             [java-time :as time]
             [afrolabs.csp :as -csp]
             [net.cgrand.xforms :as x])
-  (:import [afrolabs.components.health IServiceHealthTripSwitch ]
+  (:import [afrolabs.components.health IServiceHealthTripSwitch]
            [afrolabs.components IHaltable]
-           [afrolabs.components.health IServiceHealthTripSwitch]
            [java.util UUID]
            [afrolabs.components.kafka IPostConsumeHook]))
 
@@ -134,7 +133,8 @@
       (info "System done shutting down.")
 
       ;; return value
-      @loaded-msgs
+      (or (when nr-msgs (take nr-msgs @loaded-msgs))
+          @loaded-msgs)
 
       (catch Throwable t
         (warn t "Caught a throwable while waiting for messages to load. Stopping the system...")
