@@ -133,7 +133,7 @@
       (info "System done shutting down.")
 
       ;; return value
-      (or (when nr-msgs (take nr-msgs @loaded-msgs))
+      (or (when nr-msgs (vec (take nr-msgs @loaded-msgs)))
           @loaded-msgs)
 
       (catch Throwable t
