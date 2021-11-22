@@ -7,6 +7,7 @@
             [clojure.core.async :as csp]
             [afrolabs.components.health :as -health]
             [clojure.set :as set]
+            [java-time :as t]
             [taoensso.timbre :as timbre
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
@@ -369,6 +370,31 @@
     (consumer-init-hook
         [_ consumer]
       (.subscribe ^Consumer consumer regex))))
+
+(defstrategy SeekToTimestampOffset
+  [offset]
+  (let [offset (cond
+                 (integer? offset)
+                 offset
+
+                 (string? offset)
+                 (-> offset
+                     (t/instant)
+                     (t/to-millis-from-epoch))
+
+                 (= java.time.Instant (type offset))
+                 (t/to-millis-from-epoch offset))]
+    (reify
+      IConsumerInitHook
+      (consumer-init-hook
+          [_ consumer]
+
+        (doseq [[topic-partition offset-and-timestamp]
+                (.offsetsForTimes consumer
+                                  (into {}
+                                        (map #(vector % offset))
+                                        (.assignment consumer)))]
+          (.seek consumer topic-partition (.offset offset-and-timestamp)))))))
 
 (defstrategy OffsetReset
   [strategy]
