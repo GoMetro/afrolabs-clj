@@ -19,8 +19,8 @@
                       "reconnect.backoff.max.ms" "10000"
                       "request.timeout.ms"       "30000"})
 
-              (and api-key
-                   api-secret)
+              (and api-key    (seq api-key)
+                   api-secret (seq api-secret))
               (merge {"sasl.mechanism"           "PLAIN"
                       "sasl.jaas.config"         (format (str "org.apache.kafka.common.security.plain.PlainLoginModule required "
                                                               "username=\"%s\" "

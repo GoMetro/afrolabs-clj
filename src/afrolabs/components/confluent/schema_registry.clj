@@ -57,7 +57,9 @@
 
 (s/def ::schema-registry-url (s/and string?
                                     #(pos-int? (count %))))
-(s/def ::schema-registry-api-key (s/or :n nil?
+(s/def ::schema-registry-api-key (s/or :n #(or (nil? %)
+                                               (when (string? %)
+                                                 (zero? (count %))))
                                        :s (s/and string?
                                                  #(pos-int? (count %)))))
 (s/def ::schema-registry-api-secret ::schema-registry-api-key)
