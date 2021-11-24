@@ -187,9 +187,7 @@
                             nil))
                    (csp/close! log-metrics-input-ch)
                    (csp/close! log-metrics-output-ch)
-                   (deliver halted? true))
-
-]
+                   (deliver halted? true))]
 
      (csp/thread
        (-health/wait-while-healthy (-> system deref :afrolabs.components.health/component))
