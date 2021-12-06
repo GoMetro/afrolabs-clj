@@ -7,7 +7,7 @@
   :dependencies [[org.clojure/clojure "1.10.3"]
 
                  ;; property-based testing, generative testing
-                 [org.clojure/test.check "1.1.0"]
+                 [org.clojure/test.check "1.1.1"]
 
                  ;; dependency conflict resolution, also edn reader
                  [org.clojure/tools.reader "1.3.6"]
@@ -29,7 +29,7 @@
                  ;; facilities for asynchronous programming
                  ;; aka golang channels for clojure
                  ;; https://clojure.org/news/2013/06/28/clojure-clore-async-channels
-                 [org.clojure/core.async "1.3.622"]
+                 [org.clojure/core.async "1.5.640"]
 
                  ;; https://github.com/cgrand/xforms ; sometimes useful extra transducers - data transformation
                  [net.cgrand/xforms "0.19.2"]
@@ -62,18 +62,19 @@
 
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "0.3.3"]
+                 [org.threeten/threeten-extra "1.7.0"]
 
                  ;; https://github.com/clj-commons/iapetos
                  [io.prometheus/simpleclient "0.12.0"]
                  [io.prometheus/simpleclient_hotspot "0.12.0"]
-                 [clj-commons/iapetos "0.1.11"]
+                 [clj-commons/iapetos "0.1.12"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
-                 [com.cognitect.aws/api "0.8.515"]
-                 [com.cognitect.aws/endpoints "1.1.12.65"]
+                 [com.cognitect.aws/api "0.8.524"]
+                 [com.cognitect.aws/endpoints "1.1.12.110"]
                  [com.cognitect.aws/sns "811.2.959.0"]
                  [com.cognitect.aws/sqs "814.2.986.0"]
-                 [com.cognitect.aws/s3 "814.2.978.0"]
+                 [com.cognitect.aws/s3 "814.2.991.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "5.1.2"]
@@ -85,7 +86,7 @@
                  [org.clojure/data.csv "1.0.0"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.6.1"]
+                 [metosin/malli "0.6.2"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
                  [org.slf4j/log4j-over-slf4j "1.7.32"]
@@ -98,7 +99,7 @@
                  [com.fzakaria/slf4j-timbre "0.3.21"]
 
                  ;; possibility to log to json, for use in cloud environments like GCK
-                 [viesti/timbre-json-appender "0.2.3"]
+                 [viesti/timbre-json-appender "0.2.5"]
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
                  [org.apache.kafka/kafka-clients "2.8.0"]

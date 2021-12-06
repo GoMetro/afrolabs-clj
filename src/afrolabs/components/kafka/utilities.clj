@@ -146,7 +146,7 @@
 
 (defn forward-topics-between-clusters
   "This fn will forward messages between different kafka clusters. It is indended for interactive use. The return value is an IHaltable (afrolabs.components/halt <return-value) which will terminate the process."
-  ([consumer-group-id src-cluster-cfg dest-cluster-cfg ]
+  ([consumer-group-id src-cluster-cfg dest-cluster-cfg]
    (forward-topics-between-clusters (-> src-cluster-cfg
                                         (update :strategies concat [[:strategy/AutoCommitOffsets]
                                                                     [:strategy/ConsumerGroup consumer-group-id]]))
