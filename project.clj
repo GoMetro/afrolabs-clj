@@ -12,15 +12,16 @@
                  ;; dependency conflict resolution, also edn reader
                  [org.clojure/tools.reader "1.3.6"]
 
-                 [org.eclipse.jetty/jetty-util "9.4.43.v20210629"]
-                 [org.eclipse.jetty/jetty-http "9.4.43.v20210629"]
+                 [org.eclipse.jetty/jetty-util "9.4.44.v20210927"]
+                 [org.eclipse.jetty/jetty-http "9.4.44.v20210927"]
+                 [org.eclipse.jetty/jetty-client "9.4.44.v20210927"]
 
                  ;; conversions between different kinds of casing
                  ;; camelCase -> snake_case -> kebab-case -> PascalCase
                  [camel-snake-kebab "0.4.2"]
 
 
-                 [metosin/jsonista "0.3.4" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+                 [metosin/jsonista "0.3.5" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; monadic utilities for validation, failure and error checking
                  ;; https://github.com/adambard/failjure
@@ -29,7 +30,7 @@
                  ;; facilities for asynchronous programming
                  ;; aka golang channels for clojure
                  ;; https://clojure.org/news/2013/06/28/clojure-clore-async-channels
-                 [org.clojure/core.async "1.5.640"]
+                 [org.clojure/core.async "1.5.644"]
 
                  ;; https://github.com/cgrand/xforms ; sometimes useful extra transducers - data transformation
                  [net.cgrand/xforms "0.19.2"]
@@ -70,7 +71,7 @@
                  [clj-commons/iapetos "0.1.12"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
-                 [com.cognitect.aws/api "0.8.524"]
+                 [com.cognitect.aws/api "0.8.536"]
                  [com.cognitect.aws/endpoints "1.1.12.110"]
                  [com.cognitect.aws/sns "811.2.959.0"]
                  [com.cognitect.aws/sqs "814.2.986.0"]
@@ -86,7 +87,7 @@
                  [org.clojure/data.csv "1.0.0"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.6.2"]
+                 [metosin/malli "0.7.2"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
                  [org.slf4j/log4j-over-slf4j "1.7.32"]
@@ -112,7 +113,7 @@
                  ;; dependency issue resolutions brought on by confluent
                  [org.javassist/javassist "3.26.0-GA"]
                  [jakarta.xml.bind/jakarta.xml.bind-api "2.3.3" :upgrade false]
-                 [joda-time "2.10.10"]
+                 [joda-time "2.10.13"]
 
                  ;; dependencies for confluent cloud
                  [org.apache.kafka/connect-runtime "2.8.0" :exclusions [org.slf4j/slf4j-log4j12]]
@@ -127,10 +128,11 @@
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.12.5"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.12.5"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.13.0"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.0"]
                  ]
   :aot [afrolabs.components.kafka.json-serdes
+        afrolabs.components.kafka.edn-serdes
         afrolabs.components.confluent.schema-registry-compatible-serdes]
   :repl-options {}
-  :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.0"]]}})
+  :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.1"]]}})
