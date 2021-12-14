@@ -394,13 +394,19 @@
 (defstrategy SubscribeWithTopicNameProvider
   [& {:keys [topic-name-providers
              consumer-rebalance-listeners]}]
+  (when (and topic-name-providers (not (coll? topic-name-providers)))
+    (throw (ex-info "topic-name-providers must be a collection." {})))
+
+  (when (and consumer-rebalance-listeners (not (coll? consumer-rebalance-listeners)))
+    (throw (ex-info "consumer-rebalance-listeners must be a collection." {})))
+
   (let [with-consumer-rebalance-listeners (combine-all-rebalance-listeners consumer-rebalance-listeners)]
     (when (or (some #(and (not (satisfies? IConsumerAwareRebalanceListener %))
                           (not (instance? ConsumerRebalanceListener %)))
                     consumer-rebalance-listeners)
               (some #(not (satisfies? ITopicNameProvider %))
                     topic-name-providers))
-      (throw (ex-info "The parameters to SubscribeWithTopicNameProvider must for :topic-name-providers implement ITopicNameProvider AND for :consumer-rebalance-listener IConsumerAwareRebalanceListener protocol or ConsumerRebalanceListener interface." {})))
+      (throw (ex-info "The parameters to SubscribeWithTopicNameProvider must for :topic-name-providers (list-of) implement ITopicNameProvider AND for :consumer-rebalance-listener (list-of) IConsumerAwareRebalanceListener protocol or ConsumerRebalanceListener interface." {})))
 
     (reify
       IConsumerInitHook
