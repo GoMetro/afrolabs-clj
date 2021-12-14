@@ -13,7 +13,7 @@
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
-           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer]
+           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
            [org.apache.kafka.common.header Header]
            [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
@@ -332,37 +332,116 @@
         (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
 
-(defstrategy SubscribeWithTopicNameProvider
-  [& topic-name-providers]
-  (let [incorrect-type (into []
-                             (filter #(not (satisfies? ITopicNameProvider %)))
-                             topic-name-providers)]
-    (when (seq incorrect-type)
-      (throw (ex-info "The parameters to SubscribeWithTopicNameProvider must implement ITopicNameProvider protocol."
-                      {::non-complient-providers incorrect-type}))))
+(defstrategy EdnSerializer
+  [& {producer-option :producer
+      consumer-option :consumer
+      :or {producer-option :none
+           consumer-option :none}}]
+
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "EdnSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (EdnSerializery :producer :both :consumer :key)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
 
   (reify
-    IConsumerInitHook
-    (consumer-init-hook
-        [_ consumer]
-      (.subscribe ^Consumer consumer
-                  (into []
-                        (comp
-                         (mapcat #(get-topic-names %))
-                         (distinct))
-                        topic-name-providers)))))
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.edn_serdes.Serializer")
+        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.edn_serdes.Serializer")))
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.edn_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer")))))
+
+(defprotocol IConsumerAwareRebalanceListener
+  "Wrapping ConsumerRebalanceListener; adds the consumer to the parameter list"
+  (on-partitions-revoked  [_ consumer partitions])
+  (on-partitions-lost     [_ consumer partitions])
+  (on-partitions-assigned [_ consumer partitions]))
+
+(defn combine-all-rebalance-listeners
+  [rebalance-listeners]
+  (let [;; wrap (kafka) ConsumerRebalanceListeners into IConsumerAwareRebalanceListeners
+        kafka-rebalance-listeners (into #{}
+                                  (comp (filter #(instance? ConsumerRebalanceListener %))
+                                        (map (fn [crbl]
+                                               (reify
+                                                 IConsumerAwareRebalanceListener
+                                                 (on-partitions-revoked  [_ _ p] (.onPartitionsRevoked  ^ConsumerRebalanceListener crbl p))
+                                                 (on-partitions-lost     [_ _ p] (.onPartitionsLost     ^ConsumerRebalanceListener crbl p))
+                                                 (on-partitions-assigned [_ _ p] (.onPartitionsAssigned ^ConsumerRebalanceListener crbl p))))))
+                                  rebalance-listeners)
+        consumer-aware-rebalance-listeners (into #{}
+                                                 (filter #(satisfies? IConsumerAwareRebalanceListener %))
+                                                 rebalance-listeners)
+        combined-listeners (set/union kafka-rebalance-listeners
+                                      consumer-aware-rebalance-listeners)]
+    (fn [consumer]
+      (reify
+        ConsumerRebalanceListener
+        (onPartitionsRevoked  [_ partitions] (doseq [l combined-listeners] (on-partitions-revoked  l consumer partitions)))
+        (onPartitionsLost     [_ partitions] (doseq [l combined-listeners] (on-partitions-lost     l consumer partitions)))
+        (onPartitionsAssigned [_ partitions] (doseq [l combined-listeners] (on-partitions-assigned l consumer partitions)))))))
+
+(defstrategy SubscribeWithTopicNameProvider
+  [& {:keys [topic-name-providers
+             consumer-rebalance-listeners]}]
+  (let [with-consumer-rebalance-listeners (combine-all-rebalance-listeners consumer-rebalance-listeners)]
+    (when (or (some #(and (not (satisfies? IConsumerAwareRebalanceListener %))
+                          (not (instance? ConsumerRebalanceListener %)))
+                    consumer-rebalance-listeners)
+              (some #(not (satisfies? ITopicNameProvider %))
+                    topic-name-providers))
+      (throw (ex-info "The parameters to SubscribeWithTopicNameProvider must for :topic-name-providers implement ITopicNameProvider AND for :consumer-rebalance-listener IConsumerAwareRebalanceListener protocol or ConsumerRebalanceListener interface." {})))
+
+    (reify
+      IConsumerInitHook
+      (consumer-init-hook
+          [_ consumer]
+        (.subscribe ^Consumer consumer
+                    ^Collection
+                    (into []
+                          (comp
+                           (mapcat #(get-topic-names %))
+                           (distinct))
+                          topic-name-providers)
+                    ^ConsumerRebalanceListener (with-consumer-rebalance-listeners consumer))))))
 
 (defstrategy SubscribeWithTopicsCollection
-  [^Collection topics]
-  (when-not (seq topics)
-    (throw (ex-info "Specify a collaction of topics to subscribe to." {})))
-  (reify
-    IConsumerInitHook
-    (consumer-init-hook
-        [_ consumer]
-      (.subscribe ^Consumer consumer topics))))
+  ([topics]
+   (when-not (seq topics)
+     (throw (ex-info "Specify a collection of topics to subscribe to." {})))
+   (reify
+     IConsumerInitHook
+     (consumer-init-hook
+         [_ consumer]
+       (.subscribe ^Consumer consumer
+                   ^Collection topics))))
+  ([topics
+    rebalance-listeners]
+   (when-not (seq topics)
+     (throw (ex-info "Specify a collection of topics to subscribe to." {})))
+   (when-not (seq rebalance-listeners)
+     (throw (ex-info "Specify a collection of at least one element for the rebalance-listeners" {})))
+   (let [with-consumer-rebalance-listener (combine-all-rebalance-listeners rebalance-listeners)]
+     (reify
+       IConsumerInitHook
+       (consumer-init-hook
+           [_ consumer]
+         (.subscribe ^Consumer consumer
+                     ^Collection topics
+                     ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
 
+;; TODO - Add an overload for ConsumerRebalanceListener
 (defstrategy SubscribeWithTopicsRegex
   [^java.util.regex.Pattern regex]
   (reify
