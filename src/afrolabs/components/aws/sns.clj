@@ -57,8 +57,7 @@
 (s/def ::sns-client-cfg (s/keys :req-un [::-aws/aws-creds-component
                                          ::-aws/aws-region-component]))
 
-(-comp/defcomponent {::-comp/config-spec ::sns-client-cfg
-                     ::-comp/ig-kw       ::sns-client}
+(defn make-sns-client
   [{:keys [aws-creds-component
            aws-region-component]}]
   (let [state (aws/client {:api                  :sns
@@ -70,3 +69,7 @@
 
       clojure.lang.IDeref
       (deref [_] state))))
+
+(-comp/defcomponent {::-comp/config-spec ::sns-client-cfg
+                     ::-comp/ig-kw       ::sns-client}
+  [cfg] (make-sns-client cfg))

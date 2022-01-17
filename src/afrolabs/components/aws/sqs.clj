@@ -5,24 +5,115 @@
             [clojure.spec.alpha :as s]
             [clojure.core.async :as csp]
             [taoensso.timbre :as log]
-            [afrolabs.components.health :as -health]))
+            [afrolabs.components.health :as -health]
+            [clojure.string :as str]
+            [clojure.data.json :as json]))
 
 (def default-visibility-time-seconds 30)
 
+(comment
+
+  (def cfg (afrolabs.config/load-config "../.env"))
+  (def sqs-client (make-sqs-client (-aws/make-creds-with-region (:sqs-aws-access-key-id cfg)
+                                                                (:sqs-aws-secret-access-key cfg)
+                                                                "eu-west-1")))
+
+  (require '[afrolabs.components.aws.sns :as -sns])
+
+  (def sns-client (-sns/make-sns-client (-aws/make-creds-with-region (:sns-aws-access-key-id cfg)
+                                                                     (:sns-aws-secret-access-key cfg)
+                                                                     "eu-west-1")))
+
+
+  (def all-topics (-sns/query-all-topics {:sns-client sns-client}))
+
+  (def fifo-topics (into []
+                         (comp (filter (comp #(str/ends-with? % ".fifo")
+                                             :TopicArn)))
+                         all-topics))
+
+  (aws/doc @sqs-client :CreateQueue)
+
+  (let [{:keys [QueueUrl
+                QueueArn]}
+        (upsert-fifo-queue! {:sqs-client sqs-client}
+                            :QueueName "pieter-test")]
+    (def queue-arn QueueArn)
+    (def queue-url QueueUrl))
+
+
+  ;; we need to set up the queue so that it can accept messages from sns
+  (let [topic-arn-wildcard-pattern (->> fifo-topics
+                                        (map :TopicArn)
+                                        (yoco.sns2kafka.sqs-config/find-sns-source-arn-pattern))
+        queue-policy {"Version"   "2012-10-17"
+                      "Statement" [{"Sid"       (str "policy-" (last (str/split queue-arn #":")))
+                                    "Effect"    "Allow"
+                                    "Action"    "sqs:SendMessage"
+                                    "Principal" {"AWS" "*"}
+                                    "Resource"  queue-arn
+                                    "Condition" {"ArnLike" {"aws:SourceArn" topic-arn-wildcard-pattern}}}]}]
+    (aws/invoke @sqs-client {:op      :SetQueueAttributes
+                             :request {:QueueUrl   queue-url
+                                       :Attributes {"Policy" (json/write-str queue-policy)}}}))
+
+
+  ;; actual subscription
+  (doseq [topic-arn (map :TopicArn fifo-topics)]
+    (aws/invoke @sns-client {:op      :Subscribe
+                             :request {:TopicArn topic-arn
+                                       :Protocol "sqs"
+                                       :Endpoint queue-arn}}))
+  )
+
 (defn upsert-queue!
-  "Upserts an AWS SQS queue."
+  "Upserts a standard/non-fifo AWS SQS queue."
   [{:keys [sqs-client]}
    & {:keys [QueueName
-             visibility-time-seconds
-             fifo?]}]
+             visibility-time-seconds]}]
 
   (let [{:keys [QueueUrl]}
         (aws/invoke @sqs-client
                     {:op      :CreateQueue
                      :request {:QueueName  QueueName
-                               :Attributes (cond-> {"VisibilityTimeout" (str (or visibility-time-seconds
-                                                                                 default-visibility-time-seconds))}
-                                             fifo? (assoc "FifoQueue" "true"))}})
+                               :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
+                                                                         default-visibility-time-seconds))}}})
+
+        {{:strs [QueueArn]} :Attributes}
+        (aws/invoke @sqs-client
+                    {:op      :GetQueueAttributes
+                     :request {:QueueUrl       QueueUrl
+                               :AttributeNames ["QueueArn"]}})]
+    {:QueueUrl QueueUrl
+     :QueueArn QueueArn}))
+
+(defn upsert-fifo-queue!
+  "Upserts a FIFO AWS SQS queue. QueueName may NOT with .fifo, as it will be added automatically if not already present."
+  [{:keys [sqs-client]}
+   & {:keys [QueueName
+             visibility-time-seconds
+             fifo-high-throughput?
+             content-based-deduplication?]
+      :or {fifo-high-throughput?        false
+           content-based-deduplication? false}}]
+  {:pre [(boolean? content-based-deduplication?)]}
+
+  (let [QueueName (if (str/ends-with? QueueName ".fifo") QueueName
+                      (str QueueName ".fifo"))
+        {:keys [QueueUrl]}
+        (aws/invoke @sqs-client
+                    {:op      :CreateQueue
+                     :request {:QueueName  QueueName
+                               :Attributes (cond-> {"VisibilityTimeout"         (str (or visibility-time-seconds
+                                                                                         default-visibility-time-seconds))
+                                                    "FifoQueue"                 "true"
+                                                    "ContentBasedDeduplication" (str content-based-deduplication?)}
+
+                                             fifo-high-throughput?
+                                             (assoc "DeduplicationScope"  "messageGroup"
+                                                    "FifoThroughputLimit" "perMessageGroupId")
+
+                                             )}})
 
         {{:strs [QueueArn]} :Attributes}
         (aws/invoke @sqs-client
@@ -43,12 +134,9 @@
 (s/def ::sqs-client-cfg (s/keys :req-un [::-aws/aws-creds-component
                                          ::-aws/aws-region-component]))
 
-(-comp/defcomponent {::-comp/config-spec ::sqs-client-cfg
-                     ::-comp/ig-kw       ::sqs-client}
-  [{:as cfg
-    :keys [aws-creds-component
+(defn make-sqs-client
+  [{:keys [aws-creds-component
            aws-region-component]}]
-
   (let [state (aws/client {:api                  :sqs
                            :credentials-provider aws-creds-component
                            :region               (:region aws-region-component)})]
@@ -62,6 +150,10 @@
 
       clojure.lang.IDeref
       (deref [_] state))))
+
+(-comp/defcomponent {::-comp/config-spec ::sqs-client-cfg
+                     ::-comp/ig-kw       ::sqs-client}
+  [cfg] (make-sqs-client cfg))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
