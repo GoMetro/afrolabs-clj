@@ -31,10 +31,13 @@
 ;; convenience for outside components that require a credentials provider
 (s/def ::aws-creds-component #(satisfies? aws-creds/CredentialsProvider %))
 
-(-comp/defcomponent {::-comp/config-spec ::basic-aws-creds-cfg
-                     ::-comp/ig-kw       ::basic-aws-creds}
+(defn make-basic-aws-creds
   [cfg]
   (aws-creds/basic-credentials-provider cfg))
+
+(-comp/defcomponent {::-comp/config-spec ::basic-aws-creds-cfg
+                     ::-comp/ig-kw       ::basic-aws-creds}
+  [cfg] (make-basic-aws-creds cfg))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -44,6 +47,22 @@
 (-comp/defcomponent {::-comp/config-spec ::aws-region-cfg
                      ::-comp/ig-kw       ::aws-region-component}
   [cfg] cfg)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn make-creds-with-region
+  "Support for ad-hoc REPL based access to a credential and region component. Eg
+
+  (-sns/make-sns-client (-aws/make-creds-with-region (:sns-aws-access-key-id cfg)
+                                                     (:sns-aws-secret-access-key cfg)
+                                                     \"eu-west-1\"))"
+  [access-key-id
+   secret-access-key
+   region]
+  {:aws-creds-component  (make-basic-aws-creds
+                          {:access-key-id     access-key-id
+                           :secret-access-key secret-access-key})
+   :aws-region-component {:region region}})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
