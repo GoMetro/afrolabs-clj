@@ -64,6 +64,18 @@
                              :request {:TopicArn topic-arn
                                        :Protocol "sqs"
                                        :Endpoint queue-arn}}))
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; queuery
+  (aws/doc @sqs-client :ReceiveMessage)
+  (aws/invoke @sqs-client
+              {:op      :ReceiveMessage
+               :request {:QueueUrl            queue-url
+                         :WaitTimeSeconds     10
+                         :MaxNumberOfMessages 1
+                         :AttributeNames ["MessageGroupId"]
+                         :MessageAttributeNames ["All"]}})
   )
 
 (defn upsert-queue!
@@ -174,13 +186,16 @@
 (s/def ::wait-time-seconds int?)
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
+(s/def ::AttributeNames (s/coll-of (s/and string?
+                                          #(pos-int? (count %)))))
 (s/def ::sqs-consumer-cfg (s/and (s/keys :req-un [::sqs-consumer-client
                                                   ::sqs-client
                                                   ::-health/service-health-trip-switch]
                                          :opt-un [::wait-time-seconds
                                                   ::max-nr-of-messages
                                                   ::queue-provider
-                                                  ::QueueUrl])
+                                                  ::QueueUrl
+                                                  ::AttributeNames])
                                  #(or (:QueueUrl %)
                                       (:queue-provider %))))
 
@@ -198,7 +213,8 @@
            queue-provider
            wait-time-seconds
            max-nr-of-messages
-           service-health-trip-switch]
+           service-health-trip-switch
+           AttributeNames]
     :or   {wait-time-seconds  5 ;; 5 seconds is not really that long. could easily be 30 seconds and would save on compute resources
            max-nr-of-messages 5}
     :as   sqs-consumer-cfg}]
@@ -213,8 +229,9 @@
               (log/trace (format "deleting sqs message: %s" receipt-handle))
               (aws/invoke @sqs-client
                           {:op      :DeleteMessage
-                           :request {:QueueUrl      QueueUrl
-                                     :ReceiptHandle receipt-handle}})
+                           :request (cond-> {:QueueUrl       QueueUrl
+                                             :ReceiptHandle  receipt-handle}
+                                      AttributeNames (assoc :AttributeNames AttributeNames))})
               (recur)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
 
