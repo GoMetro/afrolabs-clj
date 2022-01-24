@@ -71,7 +71,7 @@
       (log/info "System started...")
       (-health/wait-while-healthy health-component)
 
-      (log/debug "Shutting down...")
+      (log/info "Shutting down...")
       (ig/halt! ig-system)
 
       (log/info "System completed orderly shutdown."))
