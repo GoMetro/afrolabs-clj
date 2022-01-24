@@ -1,5 +1,6 @@
 (ns afrolabs.components.kafka.utilities
-  (:require [afrolabs.components.kafka :as k]
+  (:require [afrolabs.components :as -comp]
+            [afrolabs.components.kafka :as k]
             [afrolabs.components.confluent :as -confluent]
             [afrolabs.components.kafka.utilities.topic-forwarder :as -topic-forwarder]
             [afrolabs.components.confluent.schema-registry]
@@ -13,11 +14,14 @@
                      spy get-env]]
             [java-time :as time]
             [afrolabs.csp :as -csp]
-            [net.cgrand.xforms :as x])
+            [net.cgrand.xforms :as x]
+            [clojure.spec.alpha :as s]
+            [afrolabs.components.kafka :as -kafka])
   (:import [afrolabs.components.health IServiceHealthTripSwitch]
            [afrolabs.components IHaltable]
            [java.util UUID]
-           [afrolabs.components.kafka IPostConsumeHook]))
+           [afrolabs.components.kafka IPostConsumeHook]
+           [clojure.lang IDeref]))
 
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
@@ -198,6 +202,32 @@
          (do-halt)
          @halted?)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn delete-all-topics-on-cluster!
+  "This code backed up here from somewhere else. Not tested yet..."
+  [& {:keys [bootstrap-server
+             confluent-api-key confluent-api-secret ;; confluent
+             extra-strategies]
+      :or {extra-strategies []}}]
+  (let [admin-client-strategies (concat (keep identity
+                                              [(when (and confluent-api-key confluent-api-secret)
+                                                 (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
+                                        extra-strategies)
+        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
+                                           :strategies       admin-client-strategies})
+        existing-topics (-> @admin-client
+                            (.listTopics)
+                            (.names)
+                            (.get)
+                            (set))]
+
+    (when (seq existing-topics)
+      (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
+                           existing-topics)))
+
+    ;; to release the resources of the admin-client
+    (-comp/halt admin-client)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -209,3 +239,45 @@
                    msgs)]
     (k/produce! producer msgs)
     (doseq [{ch :delivered-ch} msgs] (csp/<!! ch))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(s/def ::load-ktable-cfg (s/keys :req-un [::-kafka/bootstrap-server
+                                          ::-kafka/topics]
+                                 :opt-un [::-kafka/strategies]))
+
+(defn load-ktable
+  [& {:as cfg
+      :keys [api-key api-secret
+             topics]}]
+  (let [extra-strategies (->> [(when (and (seq (:api-key cfg))
+                                          (seq (:api-secret cfg)))
+                                 [(-confluent/ConfluentCloud cfg)])
+                               (when topics
+                                 [(-kafka/SubscribeWithTopicsCollection topics)])]
+                              (keep identity)
+                              flatten)
+        system-cfg {:afrolabs.components.health/component
+                    {:intercept-signals                   false
+                     :intercept-uncaught-exceptions       false
+                     :trigger-self-destruct-timer-seconds nil}
+
+                    ::-kafka/ktable (-> cfg
+                                        (update :strategies
+                                                concat extra-strategies)
+                                        (assoc :service-health-trip-switch
+                                                (ig/ref :afrolabs.components.health/component)))}
+        system (ig/init system-cfg)
+        health-component (:afrolabs.components.health/component system)
+        ktable (::-kafka/ktable system)]
+
+    (reify
+      IDeref
+      (deref [_]
+        (when (not (-health/healthy? health-component))
+          (log/warn "The ktable utility is no longer healthy."))
+        @ktable)
+
+      IHaltable
+      (halt [_]
+        (ig/halt! system)))))
