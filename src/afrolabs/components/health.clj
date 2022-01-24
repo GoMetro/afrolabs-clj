@@ -90,14 +90,11 @@
         _ (add-watch healthy? ::healthy-watcher
                      (fn [_ _ _ new-healthy-state]
                        (when (false? new-healthy-state)
-                         (log/warn "In watcher; found new-healthy-state of not-healthy.")
                          (deliver not-healthy-any-longer? true)
-                         (log/warn "delivered...")
                          (remove-watch healthy? ::healthy-watcher))))
 
         ;; helper callback
         indicate-unhealthy (fn []
-                             (log/warn "Indicating inhealthy...")
                              (reset! healthy? false))
 
         self-destruct-singleton (delay
