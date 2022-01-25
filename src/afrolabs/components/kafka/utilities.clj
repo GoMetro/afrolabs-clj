@@ -204,8 +204,43 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+
+
+(defn delete-some-topics-on-cluster!
+  "This code will delete _some_ topics, based on a predicate."
+  [& {:keys [bootstrap-server
+             confluent-api-key confluent-api-secret ;; confluent
+             extra-strategies
+             topic-predicate]
+      :or {extra-strategies []}}]
+  (let [admin-client-strategies (concat (keep identity
+                                              [(when (and confluent-api-key confluent-api-secret)
+                                                 (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
+                                        extra-strategies)
+        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
+                                           :strategies       admin-client-strategies})
+        topics-to-be-deleted (set (filter topic-predicate
+                                          (-> @admin-client
+                                              (.listTopics)
+                                              (.names)
+                                              (.get))))]
+
+    (when (seq topics-to-be-deleted)
+      (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
+                           topics-to-be-deleted)))
+
+    ;; to release the resources of the admin-client
+    (-comp/halt admin-client)))
+
 (defn delete-all-topics-on-cluster!
-  "This code backed up here from somewhere else. Not tested yet..."
+  "Deletes ALL of the topics on a kafka cluster."
+  [& {:as cfg}]
+  (apply delete-some-topics-on-cluster! (->> (assoc cfg :topic-predicate (constantly true))
+                                             (mapcat identity))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn list-all-topics
   [& {:keys [bootstrap-server
              confluent-api-key confluent-api-secret ;; confluent
              extra-strategies]
@@ -216,18 +251,16 @@
                                         extra-strategies)
         admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
                                            :strategies       admin-client-strategies})
-        existing-topics (-> @admin-client
-                            (.listTopics)
-                            (.names)
-                            (.get)
-                            (set))]
 
-    (when (seq existing-topics)
-      (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
-                           existing-topics)))
+        topics-result (set (-> @admin-client
+                               (.listTopics)
+                               (.names)
+                               (.get)))]
 
     ;; to release the resources of the admin-client
-    (-comp/halt admin-client)))
+    (-comp/halt admin-client)
+
+    topics-result))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
