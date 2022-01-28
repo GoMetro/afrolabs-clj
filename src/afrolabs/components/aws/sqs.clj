@@ -268,8 +268,7 @@
 
     (log/debug "sqs consumer-main done.")))
 
-(-comp/defcomponent {::-comp/config-spec ::sqs-consumer-cfg
-                     ::-comp/ig-kw       ::sqs-consumer}
+(defn make-sqs-consumer
   [cfg]
   (let [must-run (atom true)
         worker (csp/thread (consumer-main must-run cfg)
@@ -283,3 +282,7 @@
         (log/trace "Waiting for worker thread to quit...")
         (csp/<!! worker)
         (log/info "SQS Consumer done.")))))
+
+(-comp/defcomponent {::-comp/config-spec ::sqs-consumer-cfg
+                     ::-comp/ig-kw       ::sqs-consumer}
+  [cfg] (make-sqs-consumer cfg))
