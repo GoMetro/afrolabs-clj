@@ -94,8 +94,6 @@
                                 :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
                                                                           default-visibility-time-seconds))}}}))
 
-        _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
-
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
@@ -103,8 +101,7 @@
                      {:op      :GetQueueAttributes
                       :request {:QueueUrl       QueueUrl
                                 :AttributeNames ["QueueArn"]}}))
-
-        _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))]
+        ]
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
 
@@ -138,8 +135,6 @@
 
                                               )}}))
 
-        _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
-
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
@@ -147,8 +142,6 @@
                      {:op      :GetQueueAttributes
                       :request {:QueueUrl       QueueUrl
                                 :AttributeNames ["QueueArn"]}}))
-
-        _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))
 
         ]
     {:QueueUrl QueueUrl
