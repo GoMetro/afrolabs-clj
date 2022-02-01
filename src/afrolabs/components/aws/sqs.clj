@@ -87,20 +87,22 @@
 
   (let [{:keys [QueueUrl]
          :as   create-queue-result}
-        (aws/invoke @sqs-client
-                    {:op      :CreateQueue
-                     :request {:QueueName  QueueName
-                               :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
-                                                                         default-visibility-time-seconds))}}})
+        (-aws/throw-when-anomaly
+         (aws/invoke @sqs-client
+                     {:op      :CreateQueue
+                      :request {:QueueName  QueueName
+                                :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
+                                                                          default-visibility-time-seconds))}}}))
 
         _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
 
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
-        (aws/invoke @sqs-client
-                    {:op      :GetQueueAttributes
-                     :request {:QueueUrl       QueueUrl
-                               :AttributeNames ["QueueArn"]}})
+        (-aws/throw-when-anomaly
+         (aws/invoke @sqs-client
+                     {:op      :GetQueueAttributes
+                      :request {:QueueUrl       QueueUrl
+                                :AttributeNames ["QueueArn"]}}))
 
         _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))]
     {:QueueUrl QueueUrl
@@ -121,28 +123,30 @@
                       (str QueueName ".fifo"))
         {:keys [QueueUrl]
          :as   create-queue-result}
-        (aws/invoke @sqs-client
-                    {:op      :CreateQueue
-                     :request {:QueueName  QueueName
-                               :Attributes (cond-> {"VisibilityTimeout"         (str (or visibility-time-seconds
-                                                                                         default-visibility-time-seconds))
-                                                    "FifoQueue"                 "true"
-                                                    "ContentBasedDeduplication" (str content-based-deduplication?)}
+        (-aws/throw-when-anomaly
+         (aws/invoke @sqs-client
+                     {:op      :CreateQueue
+                      :request {:QueueName  QueueName
+                                :Attributes (cond-> {"VisibilityTimeout"         (str (or visibility-time-seconds
+                                                                                          default-visibility-time-seconds))
+                                                     "FifoQueue"                 "true"
+                                                     "ContentBasedDeduplication" (str content-based-deduplication?)}
 
-                                             fifo-high-throughput?
-                                             (assoc "DeduplicationScope"  "messageGroup"
-                                                    "FifoThroughputLimit" "perMessageGroupId")
+                                              fifo-high-throughput?
+                                              (assoc "DeduplicationScope"  "messageGroup"
+                                                     "FifoThroughputLimit" "perMessageGroupId")
 
-                                             )}})
+                                              )}}))
 
         _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
 
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
-        (aws/invoke @sqs-client
-                    {:op      :GetQueueAttributes
-                     :request {:QueueUrl       QueueUrl
-                               :AttributeNames ["QueueArn"]}})
+        (-aws/throw-when-anomaly
+         (aws/invoke @sqs-client
+                     {:op      :GetQueueAttributes
+                      :request {:QueueUrl       QueueUrl
+                                :AttributeNames ["QueueArn"]}}))
 
         _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))
 
