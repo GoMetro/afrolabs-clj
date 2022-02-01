@@ -7,7 +7,8 @@
             [taoensso.timbre :as log]
             [afrolabs.components.health :as -health]
             [clojure.string :as str]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [clojure.pprint]))
 
 (def default-visibility-time-seconds 30)
 
@@ -84,18 +85,24 @@
    & {:keys [QueueName
              visibility-time-seconds]}]
 
-  (let [{:keys [QueueUrl]}
+  (let [{:keys [QueueUrl]
+         :as   create-queue-result}
         (aws/invoke @sqs-client
                     {:op      :CreateQueue
                      :request {:QueueName  QueueName
                                :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
                                                                          default-visibility-time-seconds))}}})
 
-        {{:strs [QueueArn]} :Attributes}
+        _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
+
+        {{:strs [QueueArn]} :Attributes
+         :as                get-queue-attributes-result}
         (aws/invoke @sqs-client
                     {:op      :GetQueueAttributes
                      :request {:QueueUrl       QueueUrl
-                               :AttributeNames ["QueueArn"]}})]
+                               :AttributeNames ["QueueArn"]}})
+
+        _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))]
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
 
@@ -112,7 +119,8 @@
 
   (let [QueueName (if (str/ends-with? QueueName ".fifo") QueueName
                       (str QueueName ".fifo"))
-        {:keys [QueueUrl]}
+        {:keys [QueueUrl]
+         :as   create-queue-result}
         (aws/invoke @sqs-client
                     {:op      :CreateQueue
                      :request {:QueueName  QueueName
@@ -127,11 +135,18 @@
 
                                              )}})
 
-        {{:strs [QueueArn]} :Attributes}
+        _ (log/infof "Create queue result:\n%s" (with-out-str (clojure.pprint/pprint create-queue-result)))
+
+        {{:strs [QueueArn]} :Attributes
+         :as                get-queue-attributes-result}
         (aws/invoke @sqs-client
                     {:op      :GetQueueAttributes
                      :request {:QueueUrl       QueueUrl
-                               :AttributeNames ["QueueArn"]}})]
+                               :AttributeNames ["QueueArn"]}})
+
+        _ (log/infof "get-queue-attributes-result:\n%s" (with-out-str (clojure.pprint/pprint get-queue-attributes-result)))
+
+        ]
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
 
