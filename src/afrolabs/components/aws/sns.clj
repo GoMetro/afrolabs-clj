@@ -13,9 +13,10 @@
    & {:keys [NextToken]}]
   (let [{:keys [Topics
                 NextToken]}
-        (-aws/backoff-and-retry-on-rate-exceeded
-         (aws/invoke @sns-client (cond-> {:op :ListTopics}
-                                   NextToken (assoc :request {:NextToken NextToken}))))]
+        (-aws/throw-when-anomaly
+         (-aws/backoff-and-retry-on-rate-exceeded
+          (aws/invoke @sns-client (cond-> {:op :ListTopics}
+                                    NextToken (assoc :request {:NextToken NextToken})))))]
     (if-not NextToken Topics
             (concat Topics
                     (lazy-seq (query-all-topics {:sns-client sns-client}
