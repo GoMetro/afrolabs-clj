@@ -239,11 +239,12 @@
           (loop []
             (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
               (log/trace (format "deleting sqs message: %s" receipt-handle))
-              (aws/invoke @sqs-client
-                          {:op      :DeleteMessage
-                           :request (cond-> {:QueueUrl       QueueUrl
-                                             :ReceiptHandle  receipt-handle}
-                                      AttributeNames (assoc :AttributeNames AttributeNames))})
+              (-aws/throw-when-anomaly
+               (aws/invoke @sqs-client
+                           {:op      :DeleteMessage
+                            :request (cond-> {:QueueUrl       QueueUrl
+                                              :ReceiptHandle  receipt-handle}
+                                       AttributeNames (assoc :AttributeNames AttributeNames))}))
               (recur)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
 
