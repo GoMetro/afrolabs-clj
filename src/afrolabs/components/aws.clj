@@ -98,7 +98,7 @@
           (and anomaly?#
                (not throttled?#))
           (do
-            (log/debugf "There was a problem ('%s') but it's not something we can do something about."
+            (log/warnf "There was a problem ('%s') but it's not something we can retry."
                         anomaly?#)
             result#)
 
@@ -112,7 +112,7 @@
           (let [sleepies# (long (+ (rand-int 100)          ;; jitter
                                    (* (+ 50 (rand-int 50)) ;; even more jitter
                                       (Math/pow 2 retries#))))]
-            (log/warnf "Encountering throttling on AWS API call. Sleeping for %d ms, with retry %d"
+            (log/infof "Encountering throttling on AWS API call. Sleeping for %d ms, with retry %d"
                        sleepies# retries#)
             (Thread/sleep sleepies#)
             (recur (inc retries#)
