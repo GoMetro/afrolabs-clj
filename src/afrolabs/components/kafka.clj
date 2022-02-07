@@ -587,21 +587,38 @@
         [_ cfg]
       (assoc cfg ConsumerConfig/GROUP_ID_CONFIG consumer-group-id))))
 
+(defstrategy RequestTimeout
+  [request-timeout-ms]
+  (reify
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (assoc cfg ConsumerConfig/REQUEST_TIMEOUT_MS_CONFIG (str request-timeout-ms)))
+
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (assoc cfg ProducerConfig/REQUEST_TIMEOUT_MS_CONFIG (str request-timeout-ms)))))
+
 
 (defn normalize-strategies
   "Takes a collection of strategy-protocol-implementing-objects or strategy-keyword-declaration-vectors and turns the strategy-keyword-declaration-vectors into strategy-protocol-implementing-objects."
   [ss]
-  (vec (concat (filter satisfies-some-of-the-strategy-protocols ss)
-               (->> ss
-                    (filter (complement satisfies-some-of-the-strategy-protocols))
-                    (map (partial create-strategy))))))
+  (into []
+        (map (fn [s]
+               (if (satisfies-some-of-the-strategy-protocols s) s
+                   (create-strategy s))))
+        ss))
 
 (comment
 
   (normalize-strategies [(StringSerializer)
                          (AutoCommitOffsets)
                          [:strategy/FreshConsumerGroup]
-                         [:strategy/SubscribeWithTopicsCollection ["test"]]])
+                         [:strategy/SubscribeWithTopicsCollection ["test"]]
+                         (JsonSerializer :subscriber :both)])
+
+  
   ;; [
   ;;  #object[afrolabs.components.kafka$StringSerializer$reify__692 0x264ce7ec "afrolabs.components.kafka$StringSerializer$reify__692@264ce7ec"]
   ;;  #object[afrolabs.components.kafka$AutoCommitOffsets$reify__751 0x29b9be3b "afrolabs.components.kafka$AutoCommitOffsets$reify__751@29b9be3b"]
@@ -649,6 +666,7 @@
         props ((->> strategies
                     (filter #(satisfies? IUpdateProducerConfigHook %))
                     (map #(partial update-producer-cfg-hook %))
+                    (reverse)
                     (apply comp)) starting-cfg)
         producer (KafkaProducer. ^Map props)]
     (reify
@@ -797,6 +815,7 @@
         consumer-properties ((->> strategies
                                   (filter #(satisfies? IUpdateConsumerConfigHook %))
                                   (map #(partial update-consumer-cfg-hook %))
+                                  (reverse) ;; we need to preserve the order the strategies were specified in (apply comp reverses the order)
                                   (apply comp)) consumer-properties)
         has-stopped         (promise)
         must-stop           (atom nil)
@@ -851,6 +870,7 @@
                                (map (fn [strat]
                                       (fn [cfg]
                                         (update-admin-client-cfg-hook strat cfg))))
+                               (reverse)
                                (apply comp)) admin-client-cfg)
         ac (AdminClient/create admin-client-cfg)]
     (reify
