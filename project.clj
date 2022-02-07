@@ -30,7 +30,7 @@
                  ;; facilities for asynchronous programming
                  ;; aka golang channels for clojure
                  ;; https://clojure.org/news/2013/06/28/clojure-clore-async-channels
-                 [org.clojure/core.async "1.5.644"]
+                 [org.clojure/core.async "1.5.648"]
 
                  ;; https://github.com/cgrand/xforms ; sometimes useful extra transducers - data transformation
                  [net.cgrand/xforms "0.19.2"]
@@ -66,16 +66,16 @@
                  [org.threeten/threeten-extra "1.7.0"]
 
                  ;; https://github.com/clj-commons/iapetos
-                 [io.prometheus/simpleclient "0.12.0"]
-                 [io.prometheus/simpleclient_hotspot "0.12.0"]
+                 [io.prometheus/simpleclient "0.15.0"]
+                 [io.prometheus/simpleclient_hotspot "0.15.0"]
                  [clj-commons/iapetos "0.1.12"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
-                 [com.cognitect.aws/api "0.8.536"]
-                 [com.cognitect.aws/endpoints "1.1.12.110"]
-                 [com.cognitect.aws/sns "811.2.959.0"]
-                 [com.cognitect.aws/sqs "814.2.986.0"]
-                 [com.cognitect.aws/s3 "814.2.991.0"]
+                 [com.cognitect.aws/api "0.8.539"]
+                 [com.cognitect.aws/endpoints "1.1.12.150"]
+                 [com.cognitect.aws/sns "814.2.1053.0"]
+                 [com.cognitect.aws/sqs "814.2.1053.0"]
+                 [com.cognitect.aws/s3 "814.2.1053.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "5.1.2"]
@@ -87,12 +87,12 @@
                  [org.clojure/data.csv "1.0.0"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.7.2"]
+                 [metosin/malli "0.8.1"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
-                 [org.slf4j/log4j-over-slf4j "1.7.32"]
-                 [org.slf4j/jul-to-slf4j "1.7.32"]
-                 [org.slf4j/jcl-over-slf4j "1.7.32"]
+                 [org.slf4j/log4j-over-slf4j "1.7.35"]
+                 [org.slf4j/jul-to-slf4j "1.7.35"]
+                 [org.slf4j/jcl-over-slf4j "1.7.35"]
 
                  ;; then routing slf4j to timbre
                  ;; This will allow us to receive, log (and configure) the logs provided by libraries
@@ -102,13 +102,16 @@
                  ;; possibility to log to json, for use in cloud environments like GCK
                  [viesti/timbre-json-appender "0.2.5"]
 
+                 [com.fasterxml.jackson.core/jackson-databind "2.13.1"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.1"]
+
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
-                 [org.apache.kafka/kafka-clients "2.8.0"]
+                 [org.apache.kafka/kafka-clients "3.1.0"]
 
 
                  ;; following dependencies loosely inspired by the confluent example java app
                  ;; https://github.com/confluentinc/examples/blob/6.1.1-post/clients/cloud/java/pom.xml
-                 [org.apache.kafka/kafka-streams "2.8.0" ]
+                 [org.apache.kafka/kafka-streams "3.1.0" ]
 
                  ;; dependency issue resolutions brought on by confluent
                  [org.javassist/javassist "3.26.0-GA"]
@@ -116,20 +119,19 @@
                  [joda-time "2.10.13"]
 
                  ;; dependencies for confluent cloud
-                 [org.apache.kafka/connect-runtime "2.8.0" :exclusions [org.slf4j/slf4j-log4j12]]
-                 [io.confluent/kafka-json-serializer "6.2.0"  :exclusions []]
-                 [io.confluent/kafka-json-schema-serializer "6.2.0" :exclusions [org.apache.kafka/kafka-clients
+                 [org.apache.kafka/connect-runtime "3.1.0" :exclusions [org.slf4j/slf4j-log4j12]]
+                 [io.confluent/kafka-json-serializer "7.0.1"  :exclusions []]
+                 [io.confluent/kafka-json-schema-serializer "7.0.1" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
 
                  ;; for use with ksqld, the java client
-                 [io.confluent.ksql/ksqldb-api-client "6.2.0" :exclusions [org.slf4j/slf4j-log4j12]]
+                 [io.confluent.ksql/ksqldb-api-client "7.0.1" :exclusions [org.slf4j/slf4j-log4j12]]
 
-                 [org.slf4j/slf4j-api "1.7.32"]
+                 [org.slf4j/slf4j-api "1.7.35"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.13.0"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.0"]
+                 
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes
