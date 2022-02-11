@@ -242,9 +242,8 @@
               (-aws/throw-when-anomaly
                (aws/invoke @sqs-client
                            {:op      :DeleteMessage
-                            :request (cond-> {:QueueUrl       QueueUrl
-                                              :ReceiptHandle  receipt-handle}
-                                       AttributeNames (assoc :AttributeNames AttributeNames))}))
+                            :request {:QueueUrl       QueueUrl
+                                      :ReceiptHandle  receipt-handle}}))
               (recur)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
 
@@ -254,9 +253,10 @@
               (-aws/throw-when-anomaly
                (aws/invoke @sqs-client
                            {:op      :ReceiveMessage
-                            :request {:QueueUrl            QueueUrl
-                                      :WaitTimeSeconds     wait-time-seconds
-                                      :MaxNumberOfMessages max-nr-of-messages}}))]
+                            :request (cond-> {:QueueUrl            QueueUrl
+                                              :WaitTimeSeconds     wait-time-seconds
+                                              :MaxNumberOfMessages max-nr-of-messages}
+                                       AttributeNames (assoc :AttributeNames AttributeNames))}))]
 
 
           ;; pass on every message to the consumer client (business code)
