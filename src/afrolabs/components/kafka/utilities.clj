@@ -16,7 +16,8 @@
             [afrolabs.csp :as -csp]
             [net.cgrand.xforms :as x]
             [clojure.spec.alpha :as s]
-            [afrolabs.components.kafka :as -kafka])
+            [afrolabs.components.kafka :as -kafka]
+            [clojure.string :as str])
   (:import [afrolabs.components.health IServiceHealthTripSwitch]
            [afrolabs.components IHaltable]
            [java.util UUID]
@@ -206,26 +207,33 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
-
 (defn delete-some-topics-on-cluster!
   "This code will delete _some_ topics, based on a predicate."
   [& {:keys [bootstrap-server
              confluent-api-key confluent-api-secret ;; confluent
              extra-strategies
-             topic-predicate]
-      :or {extra-strategies []}}]
+             topic-predicate
+             preserve-internal-and-confluent-topics]
+      :or {extra-strategies                       []
+           preserve-internal-and-confluent-topics true}}]
   (let [admin-client-strategies (concat (keep identity
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
                                         extra-strategies)
         admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
                                            :strategies       admin-client-strategies})
-        topics-to-be-deleted (set (filter topic-predicate
-                                          (-> @admin-client
-                                              (.listTopics)
-                                              (.names)
-                                              (.get))))]
+        extra-topic-predicate (if preserve-internal-and-confluent-topics
+                                (comp (filter (complement #(str/starts-with? % "_")))
+                                      (filter (comp pos-int? #(str/index-of % "ksql")))
+                                      (filter (comp pos-int? #(str/index-of % "connect"))))
+                                (constantly true))
+        topics-to-be-deleted (into #{}
+                                   (comp (filter topic-predicate)
+                                         extra-topic-predicate)
+                                   (-> @admin-client
+                                       (.listTopics)
+                                       (.names)
+                                       (.get)))]
 
     (when (seq topics-to-be-deleted)
       (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
