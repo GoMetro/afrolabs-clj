@@ -224,8 +224,8 @@
                                            :strategies       admin-client-strategies})
         extra-topic-predicate (if preserve-internal-and-confluent-topics
                                 (comp (filter (complement #(str/starts-with? % "_")))
-                                      (filter (comp pos-int? #(str/index-of % "ksql")))
-                                      (filter (comp pos-int? #(str/index-of % "connect"))))
+                                      (filter (complement #(str/index-of % "ksql")))
+                                      (filter (complement #(str/index-of % "connect"))))
                                 (constantly true))
         topics-to-be-deleted (into #{}
                                    (comp (filter topic-predicate)
@@ -236,6 +236,8 @@
                                        (.get)))]
 
     (when (seq topics-to-be-deleted)
+      (log/infof "Deleting these topics:\n%s"
+                 (str topics-to-be-deleted))
       (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
                            topics-to-be-deleted)))
 
