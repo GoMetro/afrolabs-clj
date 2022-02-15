@@ -131,10 +131,10 @@
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
-                 
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes
+        afrolabs.components.kafka.bytes-serdes
         afrolabs.components.confluent.schema-registry-compatible-serdes]
   :repl-options {}
   :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.1"]]}})
