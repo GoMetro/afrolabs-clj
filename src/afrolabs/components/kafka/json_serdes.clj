@@ -2,7 +2,8 @@
   (:gen-class
    :implements [org.apache.kafka.common.serialization.Serializer]
    :main false)
-  (:require [clojure.data.json :as json])
+  (:require [clojure.data.json :as json]
+            [taoensso.timbre :as log])
   (:import [org.apache.kafka.common.header Headers]))
 
 ;;;;;;;;;;;;;;;;;;;;
@@ -30,7 +31,10 @@
 
 (defn deser-deserialize
   ([_ _ byte-data]
-   (json/read-str (String. byte-data)))
+   (try
+     (json/read-str (String. byte-data))
+     (catch Throwable t
+       (log/error t "Unable to json deserialize."))))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
