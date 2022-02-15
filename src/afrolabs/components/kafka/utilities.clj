@@ -93,6 +93,7 @@
           k/IConsumerClient
           (consume-messages
               [_ msgs]
+            (log/debugf "Received '%d' messages in consume-messages...")
             (let [msgs (filter msg-filter msgs)
                   new-state (swap! loaded-msgs (partial apply conj) msgs)
                   how-many (count new-state)]
@@ -133,7 +134,7 @@
 
     (try
       @loaded-enough-msgs
-      (info "Done waiting, received enough messages.")
+      (infof "Done waiting, received a total of '%d' messages." (count @loaded-msgs))
       (ig/halt! system)
       (info "System done shutting down.")
 
