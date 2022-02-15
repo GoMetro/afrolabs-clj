@@ -1,9 +1,12 @@
 (ns afrolabs.components.confluent
-  (:require [afrolabs.components.kafka :as -kafka])
+  (:require [afrolabs.components.kafka :as -kafka]
+            [taoensso.timbre :as log])
   (:import [afrolabs.components.kafka
             IUpdateConsumerConfigHook
             IUpdateProducerConfigHook
-            IUpdateAdminClientConfigHook]))
+            IUpdateAdminClientConfigHook]
+           [org.apache.kafka.clients.producer ProducerConfig]
+           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer]))
 
 
 (-kafka/defstrategy ConfluentCloud
@@ -51,3 +54,51 @@
         (-> cfg
             (merge-common)
             (merge {"default.api.timeout.ms" "300000"}))))))
+
+(-kafka/defstrategy ConfluentJSONSchema
+  [& {:keys [schema-registry-url
+             sr-api-key
+             sr-api-secret]
+      producer-option :producer
+      consumer-option :consumer
+      :or {producer-option :value
+           consumer-option :value}}]
+
+  (when-not schema-registry-url
+    (throw (ex-info "ConfluentJsonSchema strategy requires the schema-registry-url to be set." {})))
+
+  (let [allowed-values #{:key :value :both}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "ConfluentJSONSchema expects one of #{:key :value :both} for each of :producer or :consumer, eg (ConfluentJSONSchema :schema-registry-url \"...\" :producer :both :consumer :key)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (letfn [(update-with-credentials
+            [cfg]
+            (if-not (and sr-api-key sr-api-secret)
+              (do
+                (log/debug "Setting up schema registry config without api-key and api-secret.")
+                cfg)
+              (assoc cfg
+                     "basic.auth.credentials.source"        "USER_INFO"
+                     "schema.registry.basic.auth.user.info" (str sr-api-key ":" sr-api-secret))))]
+    (reify
+      IUpdateProducerConfigHook
+      (update-producer-cfg-hook
+          [_ cfg]
+        (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
+          true                               update-with-credentials
+          (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")
+          (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "io.confluent.kafka.serializers.json.KafkaJsonSchemaSerializer")))
+
+      IUpdateConsumerConfigHook
+      (update-consumer-cfg-hook
+          [_ cfg]
+        (cond-> (assoc cfg "schema.registry.url" schema-registry-url)
+          true                               update-with-credentials
+          (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer")
+          (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer"))))))
+
+
