@@ -84,6 +84,9 @@
 (defmethod serialize-producer-record-header java.lang.String
   [x] (.getBytes x "UTF-8"))
 
+(defmethod serialize-producer-record-header (type (byte-array 0))
+  [x] x)
+
 (defonce default-serialize-producer-record-header-used (atom #{}))
 
 (defmethod serialize-producer-record-header :default
