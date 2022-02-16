@@ -11,7 +11,8 @@
             [taoensso.timbre :as timbre
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
-                     spy get-env]])
+                     spy get-env]]
+            [taoensso.timbre :as log])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
@@ -727,7 +728,10 @@
                                                        :partition (.partition r)
                                                        :offset    (.offset r)
                                                        :value     (.value r)
-                                                       :key       (.key r)}))
+                                                       :key       (.key r)
+                                                       :headers   (into []
+                                                                        (map (juxt #(.key %) #(.value %)))
+                                                                        (-> r (.headers) (.toArray)))}))
                                                (.poll consumer ^long poll-timeout))
               consumption-results        (consume-messages client consumed-records)]
 
