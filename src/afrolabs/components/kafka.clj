@@ -643,14 +643,14 @@
 
       IConsumedResultsHandler
       (handle-consumption-results
-          [_ xs]
+          [_ msgs]
 
-        (let [xs (s/conform ::producer-consumption-results-xs-spec xs)]
+        (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
           (when (= ::s/invalid xs)
             ;; horrible place to throw, but this is the best we've got.
             (throw (ex-info "The producer can only handle the result of consume-messages, if the value is either a single message to be produced, or a collection of messages to be produced."
-                            {::explain-str (s/explain-str ::producer-consumption-results-xs-spec xs)
-                             ::explain-data (s/explain-data ::producer-consumption-results-xs-spec xs)})))
+                            {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
+                             ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
           (let [[xs-type xs-value] xs]
             (producer-produce producer
                               (condp = xs-type
