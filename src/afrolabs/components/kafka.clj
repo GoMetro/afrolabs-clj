@@ -64,9 +64,12 @@
 (s/def :producer.msg/key any?)
 (s/def :producer.msg/value any?)
 (s/def :producer.msg/delivered-ch any?) ;; if csp/chan? existed, we'd have used that
-(s/def :producer.msg/headers (s/map-of (s/and string?
-                                              (comp pos-int? count))
-                                       any?))
+(s/def :producer.msg/headers (s/or :map (s/map-of (s/and string?
+                                                         (comp pos-int? count))
+                                                  any?)
+
+                                   :tuples (s/coll-of (s/and (s/coll-of any? :count 2)
+                                                             (comp string? first)))))
 (s/def :producer/msg (s/keys :req-un [:producer.msg/topic
                                       :producer.msg/value]
                              :opt-un [:producer.msg/delivered-ch
