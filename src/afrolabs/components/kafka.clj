@@ -724,14 +724,16 @@
       (while (not @must-stop)
         (let [consumed-records           (into []
                                                (map (fn [^ConsumerRecord r]
-                                                      {:topic     (.topic r)
-                                                       :partition (.partition r)
-                                                       :offset    (.offset r)
-                                                       :value     (.value r)
-                                                       :key       (.key r)
-                                                       :headers   (into []
-                                                                        (map (juxt #(.key %) #(.value %)))
-                                                                        (-> r (.headers) (.toArray)))}))
+                                                      (let [hdrs (into []
+                                                                       (map (juxt #(.key %) #(.value %)))
+                                                                       (-> r (.headers) (.toArray)))]
+                                                        (cond->
+                                                            {:topic     (.topic r)
+                                                             :partition (.partition r)
+                                                             :offset    (.offset r)
+                                                             :value     (.value r)
+                                                             :key       (.key r)}
+                                                          (seq hdrs) (assoc :headers hdrs)))))
                                                (.poll consumer ^long poll-timeout))
               consumption-results        (consume-messages client consumed-records)]
 
