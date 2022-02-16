@@ -57,6 +57,11 @@
     (.putInt bb i)
     (.array bb)))
 
+(defn four-byte-array->int
+  [four-byte-array]
+  (let [bb (java.nio.ByteBuffer/wrap four-byte-array)]
+    (.getInt bb)))
+
 (defonce zero-byte-array (bytes (byte-array [0])))
 (defn ser-serialize
   ([this topic data]
