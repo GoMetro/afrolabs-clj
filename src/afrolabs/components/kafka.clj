@@ -553,6 +553,18 @@
         [_ cfg]
       (assoc cfg ProducerConfig/REQUEST_TIMEOUT_MS_CONFIG (str request-timeout-ms)))))
 
+;; use :default to avoid setting this value in the ConsumerConfig
+(defstrategy ConsumerMaxPollRecords
+  [max-poll-records]
+  (reify
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (log/debug (str "ConsumerMaxPollRecords: " max-poll-records))
+      (cond-> cfg
+        (not= max-poll-records :default)
+        (assoc ConsumerConfig/MAX_POLL_RECORDS_CONFIG (str max-poll-records))))))
+
 
 (defn normalize-strategies
   "Takes a collection of strategy-protocol-implementing-objects or strategy-keyword-declaration-vectors and turns the strategy-keyword-declaration-vectors into strategy-protocol-implementing-objects."
