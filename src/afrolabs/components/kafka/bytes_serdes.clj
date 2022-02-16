@@ -15,7 +15,7 @@
   )
 
 
-(gen-class :name "afrolabs.components.kafka.json_serdes.Deserializer"
+(gen-class :name "afrolabs.components.kafka.bytes_serdes.Deserializer"
            :prefix "deser-"
            :main false
            :implements [org.apache.kafka.common.serialization.Deserializer])
