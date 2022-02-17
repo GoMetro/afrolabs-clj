@@ -93,7 +93,6 @@
           k/IConsumerClient
           (consume-messages
               [_ msgs]
-            (log/debugf "Received '%d' messages in consume-messages...")
             (let [msgs (filter msg-filter msgs)
                   new-state (swap! loaded-msgs (partial apply conj) msgs)
                   how-many (count new-state)]
