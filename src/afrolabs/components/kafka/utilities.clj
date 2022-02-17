@@ -287,6 +287,30 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn alter-topic-config
+  [& {:as   alter-cfg
+      :keys [topic-name
+             partition-count
+             confluent-api-key confluent-api-secret
+             bootstrap-server
+             extra-strategies]}]
+  (let [admin-client-strategies (concat (keep identity
+                                              [(when (and confluent-api-key confluent-api-secret)
+                                                 (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
+                                        extra-strategies)
+        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
+                                           :strategies       admin-client-strategies})]
+
+    (when partition-count
+      (-> @admin-client
+          (.createPartitions {topic-name (org.apache.kafka.clients.admin.NewPartitions/increaseTo partition-count)})
+          (.all)))
+
+    ;; to release the resources of the admin-client
+    (-comp/halt admin-client)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (s/def ::load-ktable-cfg (s/keys :req-un [::-kafka/bootstrap-server
                                           ::-kafka/topics]
                                  :opt-un [::-kafka/strategies]))
