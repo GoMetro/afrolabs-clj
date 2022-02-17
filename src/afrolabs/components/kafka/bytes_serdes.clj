@@ -1,7 +1,4 @@
 (ns afrolabs.components.kafka.bytes-serdes
-  (:gen-class
-   :implements [org.apache.kafka.common.serialization.Serializer]
-   :main false)
   (:require [taoensso.timbre :as log]
             [afrolabs.components.kafka :as -kafka])
   (:import [org.apache.kafka.common.header Headers]
@@ -22,8 +19,7 @@
 
 (defn deser-deserialize
   ([_ _ byte-data]
-   (try
-     (java.util.Arrays/copyOf byte-data (alength byte-data))))
+   (java.util.Arrays/copyOf byte-data (alength byte-data)))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
@@ -48,5 +44,5 @@
     (update-consumer-cfg-hook
         [_ cfg]
       (cond-> cfg
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.bytes_serdes.Deserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.bytes_serdes.Deserializer")))))
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.bytes_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.bytes_serdes.Deserializer")))))
