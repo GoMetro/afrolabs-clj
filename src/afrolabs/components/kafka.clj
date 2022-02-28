@@ -895,7 +895,7 @@
                                                "CLUSTER_DEFAULT"))
                                  (NewTopic. topic-name
                                             (if nr-of-partitions
-                                              (Optional/of nr-of-partitions)
+                                              (Optional/of (Integer. nr-of-partitions))
                                               (Optional/empty))
                                             (Optional/empty)))))
                          topic-name-providers)
