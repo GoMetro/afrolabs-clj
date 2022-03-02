@@ -52,13 +52,15 @@
                  ;; http server
                  [http-kit "2.5.3"]
 
+                 [ring/ring-core "1.9.5"]
+
                  ;; https://github.com/metosin/ring-http-response
                  ;; ring response helper fns
                  [metosin/ring-http-response "0.9.3"]
 
                  ;; http routing library
                  ;; https://github.com/metosin/reitit
-                 [metosin/reitit "0.5.15" :exclusions [com.fasterxml.jackson.core/jackson-core
+                 [metosin/reitit "0.5.16" :exclusions [com.fasterxml.jackson.core/jackson-core
                                                        ]]
 
                  ;; https://github.com/dm3/clojure.java-time
@@ -72,10 +74,13 @@
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.539"]
-                 [com.cognitect.aws/endpoints "1.1.12.150"]
-                 [com.cognitect.aws/sns "814.2.1053.0"]
+                 [com.cognitect.aws/endpoints "1.1.12.168"]
+                 [com.cognitect.aws/sns "820.2.1083.0"]
                  [com.cognitect.aws/sqs "814.2.1053.0"]
-                 [com.cognitect.aws/s3 "814.2.1053.0"]
+                 [com.cognitect.aws/s3 "820.2.1083.0"]
+
+                 ;; NREPL
+                 [nrepl "0.9.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "5.1.2"]
@@ -87,12 +92,12 @@
                  [org.clojure/data.csv "1.0.0"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.8.1"]
+                 [metosin/malli "0.8.4"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
-                 [org.slf4j/log4j-over-slf4j "1.7.35"]
-                 [org.slf4j/jul-to-slf4j "1.7.35"]
-                 [org.slf4j/jcl-over-slf4j "1.7.35"]
+                 [org.slf4j/log4j-over-slf4j "1.7.36"]
+                 [org.slf4j/jul-to-slf4j "1.7.36"]
+                 [org.slf4j/jcl-over-slf4j "1.7.36"]
 
                  ;; then routing slf4j to timbre
                  ;; This will allow us to receive, log (and configure) the logs provided by libraries
@@ -100,7 +105,7 @@
                  [com.fzakaria/slf4j-timbre "0.3.21"]
 
                  ;; possibility to log to json, for use in cloud environments like GCK
-                 [viesti/timbre-json-appender "0.2.5"]
+                 [viesti/timbre-json-appender "0.2.6"]
 
                  [com.fasterxml.jackson.core/jackson-databind "2.13.1"]
                  [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.1"]
@@ -127,9 +132,12 @@
                  ;; for use with ksqld, the java client
                  [io.confluent.ksql/ksqldb-api-client "7.0.1" :exclusions [org.slf4j/slf4j-log4j12]]
 
-                 [org.slf4j/slf4j-api "1.7.35"]
+                 [org.slf4j/slf4j-api "1.7.36"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
+
+                 
+                 [thheller/shadow-cljs "2.17.5"]
 
                  ]
   :aot [afrolabs.components.kafka.json-serdes
