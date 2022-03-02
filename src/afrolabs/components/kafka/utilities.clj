@@ -113,21 +113,23 @@
             nil))
 
         ig-cfg
-        {::k/kafka-consumer
-         {:bootstrap-server               bootstrap-server
-          :consumer/client                consumer-client
-          :service-health-trip-switch     health-trip-switch
-          :strategies                     (concat (keep identity
-                                                        [(when (and api-key api-secret)
-                                                           (-confluent/ConfluentCloud :api-key api-key :api-secret api-secret))
-                                                         (when topics
-                                                           (k/SubscribeWithTopicsCollection topics))
-                                                         (if-not consumer-group-id
-                                                           (k/FreshConsumerGroup)
-                                                           (k/ConsumerGroup consumer-group-id))
-                                                         (k/OffsetReset offset-reset)
-                                                         (k/CaughtUpNotifications caught-up-ch)])
-                                                  extra-strategies)}}
+        (let [strategies-result (concat (keep identity
+                                              [(when (and api-key api-secret)
+                                                 (-confluent/ConfluentCloud :api-key api-key :api-secret api-secret))
+                                               (when topics
+                                                 (k/SubscribeWithTopicsCollection topics))
+                                               (if-not consumer-group-id
+                                                 (k/FreshConsumerGroup)
+                                                 (k/ConsumerGroup consumer-group-id))
+                                               (k/OffsetReset offset-reset)
+                                               (k/CaughtUpNotifications caught-up-ch)])
+                                        extra-strategies)]
+          (log/debug (with-out-str (clojure.pprint/pprint strategies-result)))
+          {::k/kafka-consumer
+           {:bootstrap-server           bootstrap-server
+            :consumer/client            consumer-client
+            :service-health-trip-switch health-trip-switch
+            :strategies                 strategies-result}})
 
         system (ig/init ig-cfg)]
 

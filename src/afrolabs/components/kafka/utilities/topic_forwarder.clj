@@ -88,8 +88,7 @@
          ::-kafka/kafka-consumer {:bootstrap-server src-bootstrap-server
                                   :strategies       (concat (map second src-strategies)
                                                             [(ig/ref ::-kafka/kafka-producer)
-                                                             [:strategy/SubscribeWithTopicsCollection src-topics]
-                                                             [:strategy/OffsetReset "earliest"]])
+                                                             [:strategy/SubscribeWithTopicsCollection src-topics]])
                                   :service-health-trip-switch (ig/ref :afrolabs.components.health/component)
                                   :consumer/client  (reify
                                                       IConsumerClient

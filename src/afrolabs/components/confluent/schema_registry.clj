@@ -116,7 +116,11 @@
                      (reitit/partial-match? route)
                      (let [path-params  (or (when params (select-keys params (:required route)))
                                             {})
-                           query-params (or (when params (select-keys params (for [k (keys params) :when (not (contains? (:required route) k))] k)))
+                           query-params (or (when params
+                                              (select-keys params
+                                                           (for [k (keys params)
+                                                                 :when (not (contains? (:required route) k))]
+                                                             k)))
                                             {})
                            route (reitit/match-by-name! confluent-api-router route-name path-params)]
                        (reitit/match->path route query-params))
