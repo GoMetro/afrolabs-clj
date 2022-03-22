@@ -99,50 +99,43 @@
       (swap! default-serialize-producer-record-header-used conj t)))
   (serialize-producer-record-header (str x)))
 
+(deftype KafkaProducingHeader [key value]
+  Header
+  (^String key [_] key)
+  (^bytes value [_] (serialize-producer-record-header value)))
+
+(deftype KafkaProducingCompletionCallback [msg delivered-ch]
+  Callback
+  (onCompletion [_ _ ex]
+    (trace (str "Firing onCompletion for msg. "))
+    ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
+    (when ex
+      (warn ex "Error while getting confirmation of producing record."))
+    (when-not ex
+      (trace "Forwarding delivery notification...")
+      (csp/go
+        (csp/>! delivered-ch msg)
+        (csp/close! delivered-ch)
+        (trace "onCompletion done.")))))
+
 (defn- producer-produce
   [^Producer producer msgs]
   (s/assert :producer/msgs msgs)
-  (->> msgs
-       (map (juxt identity
-                  #(let [hs (:headers %)]
-                     (if hs
-                       (ProducerRecord. (:topic %)
-                                        (when-let [p (:partition %)] p)
-                                        (:key %)
-                                        (:value %)
-                                        (map (fn [[hn hv]]
-                                               (reify
-                                                 Header
-                                                 (^String key [_] hn)
-                                                 (^bytes value [_] (serialize-producer-record-header hv))))
-                                             hs))
-                       (ProducerRecord. (:topic %)
-                                        (:key %)
-                                        (:value %))))))
-       (map (fn [[{:keys [delivered-ch]
-                   :as   msg}
-                  producer-record]]
-              (if delivered-ch
-                (.send producer producer-record
-                       (reify
-                         Callback
-                         (onCompletion [_ _ ex]
-                           (trace (str "Firing onCompletion for msg. "))
-                           ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
-                           (when ex
-                             (warn ex "Error while getting confirmation of producing record."))
-                           (when-not ex
-                             (trace "Forwarding delivery notification...")
-                             (csp/go
-                               (csp/>! delivered-ch msg)
-                               (csp/close! delivered-ch)
-                               (trace "onCompletion done."))))))
-                (.send producer producer-record))))
-       ;; doall means evaluate the lazy list (do side-effcts) but keep the sequence
-       ;; this forces the send before the call returns
-       (doall))
-  ;; return value
-  nil)
+  (doseq [{:as msg
+           :keys [delivered-ch]} msgs]
+    (let [producer-record (ProducerRecord. (:topic msg)
+                                           (when-let [p (:partition msg)] p)
+                                           nil ;; timestamp, Long
+                                           (:key msg)
+                                           (:value msg)
+                                           (when-let [hs (:headers msg)]
+                                             (map (fn [[hn hv]] (->KafkaProducingHeader hn hv)) hs)))]
+
+      (if delivered-ch
+        (.send producer
+               producer-record
+               (->KafkaProducingCompletionCallback msg delivered-ch))
+        (.send producer producer-record)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Strategies
@@ -164,6 +157,10 @@
 (defprotocol IConsumerInitHook
   "A Strategy protocol for Kafka Object initialization. This hooks is called before the first .poll. Useful for assigning of or subscribing to partitions for consumers."
   (consumer-init-hook [this ^Consumer consumer] "Takes a Consumer or Producer Object. Results are ignored."))
+
+(defprotocol IConsumerPostInitHook
+  "A strategy protocol for the kafka consumer object. This is called after IConsumerInitHook (after subscription) but before the first .poll. Useful for getting info about partitions or topics before consumption starts."
+  (post-init-hook [this consumer] "Receives the consumer before the first call to .poll."))
 
 (defprotocol IPostConsumeHook
   "A Strategy protocol for getting access to the Consumer Object and the consumed records, after the consume logic has been invoked. Useful for things like detecting when the consumer has caught up to the end of the partitions."
@@ -193,7 +190,8 @@
                                                     IUpdateProducerConfigHook
                                                     IConsumerMiddleware
                                                     IConsumedResultsHandler
-                                                    IUpdateAdminClientConfigHook]
+                                                    IUpdateAdminClientConfigHook
+                                                    IConsumerPostInitHook]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -708,7 +706,17 @@
 
   (s/assert ::consumer-config consumer-config)
 
-  (let [post-consume-hooks
+  (let [post-init-hooks
+        (into []
+              (filter (partial satisfies? IConsumerPostInitHook))
+              strategies)
+
+        combined-post-init-hooks
+        (fn [consumer]
+          (doseq [s post-init-hooks]
+            (consumer-init-hook s consumer)))
+
+        post-consume-hooks
         (into []
               (filter (partial satisfies? IPostConsumeHook))
               strategies)
@@ -728,6 +736,8 @@
           (doseq [h consumed-results-handlers]
             (handle-consumption-results h xs)))]
     (try
+
+      (combined-post-init-hooks consumer)
 
       (while (not @must-stop)
         (let [consumed-records           (into []
