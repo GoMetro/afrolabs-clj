@@ -740,7 +740,8 @@
                                                              :partition (.partition r)
                                                              :offset    (.offset r)
                                                              :value     (.value r)
-                                                             :key       (.key r)}
+                                                             :key       (.key r)
+                                                             :timestamp (t/instant (.timestamp r))}
                                                           (seq hdrs) (assoc :headers hdrs)))))
                                                (.poll consumer ^long poll-timeout))
               consumption-results        (consume-messages client consumed-records)]
