@@ -612,10 +612,9 @@
 
 (s/def ::strategy (s/or :protocol satisfies-some-of-the-strategy-protocols
                         :strategy-keyword
-                        #(do (println (str "--- " %))
-                             (and (seq %1)
-                                  (keyword? (first %1))
-                                  (= "strategy" (namespace (first %1)))))))
+                        #(and (seq %1)
+                              (keyword? (first %1))
+                              (= "strategy" (namespace (first %1))))))
 (s/def ::strategies (s/coll-of ::strategy))
 
 ;;;;;;;;;;;;;;;;;;;;
