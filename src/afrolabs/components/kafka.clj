@@ -660,11 +660,11 @@
             (throw (ex-info "The producer can only handle the result of consume-messages, if the value is either a single message to be produced, or a collection of messages to be produced."
                             {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
                              ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
-          (let [[xs-type xs-value] xs]
+          (let [[xs-type _] xs]
             (producer-produce producer
                               (condp = xs-type
-                                :single [xs-value]
-                                :more    xs-value)))))
+                                :single [msgs]
+                                :more   msgs)))))
 
       IHaltable
       (halt [_]
