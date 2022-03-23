@@ -129,7 +129,8 @@
                                            (:key msg)
                                            (:value msg)
                                            (when-let [hs (:headers msg)]
-                                             (map (fn [[hn hv]] (->KafkaProducingHeader hn hv)) hs)))]
+                                             (map (fn [[hn hv]] (->KafkaProducingHeader hn hv))
+                                                  hs)))]
 
       (if delivered-ch
         (.send producer
