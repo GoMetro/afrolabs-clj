@@ -462,8 +462,10 @@
       (assoc cfg ConsumerConfig/AUTO_OFFSET_RESET_CONFIG strategy))))
 
 (defstrategy AutoCommitOffsets
-  [& {:keys [commit-interval-ms]
-      :or {commit-interval-ms (* 30 1000)}}]
+  [& {:keys [commit-interval-ms
+             disabled]
+      :or {commit-interval-ms (* 30 1000)
+           disabled           false}}]
   (let [commit-interval-ms (int commit-interval-ms)]
     (reify
 
@@ -471,7 +473,7 @@
       (update-consumer-cfg-hook
           [_ cfg]
         (assoc cfg
-               ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG true
+               ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG (not disabled)
                ConsumerConfig/AUTO_COMMIT_INTERVAL_MS_CONFIG commit-interval-ms)))))
 
 (defstrategy ClientId
