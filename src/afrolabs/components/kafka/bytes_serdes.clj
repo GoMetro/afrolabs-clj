@@ -2,8 +2,9 @@
   (:require [taoensso.timbre :as log]
             [afrolabs.components.kafka :as -kafka])
   (:import [org.apache.kafka.common.header Headers]
-           [afrolabs.components.kafka IUpdateConsumerConfigHook]
-           [org.apache.kafka.clients.consumer ConsumerConfig]))
+           [afrolabs.components.kafka IUpdateConsumerConfigHook IUpdateProducerConfigHook]
+           [org.apache.kafka.clients.consumer ConsumerConfig]
+           [org.apache.kafka.clients.producer ProducerConfig]))
 
 (comment
 
@@ -11,6 +12,23 @@
 
   )
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(gen-class :name "afrolabs.components.kafka.bytes_serdes.Serializer"
+           :prefix "ser-"
+           :main false
+           :implements [org.apache.kafka.common.serialization.Serializer])
+
+(defn ser-serialize
+  ([_ _ byte-data]
+   (java.util.Arrays/copyOf byte-data (alength byte-data)))
+  ([this _ _ byte-data]
+   (ser-serialize this nil byte-data)))
+
+(defn ser-close [_])
+(defn ser-configure [_ _ _])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (gen-class :name "afrolabs.components.kafka.bytes_serdes.Deserializer"
            :prefix "deser-"
@@ -28,16 +46,20 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(-kafka/defstrategy ByteArrayDeserializer
+(-kafka/defstrategy ByteArraySerializer
   [& {consumer-option :consumer
-      :or {consumer-option :none}}]
+      producer-option :producer
+      :or {consumer-option :none
+           producer-option :none}}]
 
   ;; validation of arguments, fail early
   (let [allowed-values #{:key :value :both :none}]
-    (when-not (allowed-values consumer-option)
-      (throw (ex-info "ByteArrayDeserializer can only be used for consumers."
+    (when-not (and (allowed-values consumer-option)
+                   (allowed-values producer-option))
+      (throw (ex-info "Specify proper values for :consumer and/or :producer for ByteArraySerializer."
                       {::allowed-values  allowed-values
-                       ::consumer-option consumer-option}))))
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
 
   (reify
     IUpdateConsumerConfigHook
@@ -45,4 +67,11 @@
         [_ cfg]
       (cond-> cfg
         (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.bytes_serdes.Deserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.bytes_serdes.Deserializer")))))
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.bytes_serdes.Deserializer")))
+
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option) (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG       "afrolabs.components.kafka.bytes_serdes.Serializer")
+        (#{:both :value} producer-option) (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG     "afrolabs.components.kafka.bytes_serdes.Serializer")))))
