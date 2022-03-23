@@ -472,9 +472,11 @@
       IUpdateConsumerConfigHook
       (update-consumer-cfg-hook
           [_ cfg]
-        (assoc cfg
-               ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG (not disabled)
-               ConsumerConfig/AUTO_COMMIT_INTERVAL_MS_CONFIG commit-interval-ms)))))
+        (if disabled
+          (assoc cfg ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG false)
+          (assoc cfg
+                 ConsumerConfig/ENABLE_AUTO_COMMIT_CONFIG true
+                 ConsumerConfig/AUTO_COMMIT_INTERVAL_MS_CONFIG commit-interval-ms))))))
 
 (defstrategy ClientId
   [client-id]
