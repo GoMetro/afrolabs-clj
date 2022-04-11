@@ -29,6 +29,7 @@
   (set! *warn-on-reflection* true)
 
   )
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol ITopicNameProvider
@@ -574,6 +575,25 @@
       (cond-> cfg
         (not= max-poll-records :default)
         (assoc ConsumerConfig/MAX_POLL_RECORDS_CONFIG (str max-poll-records))))))
+
+;; high default values
+(defstrategy Batching
+  [& {:keys [consumer-fetch-min-bytes
+             producer-batch-size]
+      :or   {consumer-fetch-min-bytes 1024 ;; default is 1...
+             producer-batch-size      131072}}] ;; 8 times more than default value
+  (reify
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (-> cfg
+          (assoc ConsumerConfig/FETCH_MIN_BYTES_CONFIG consumer-fetch-min-bytes)))
+
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (-> cfg
+          (assoc ProducerConfig/BATCH_SIZE_CONFIG producer-batch-size)))))
 
 
 (defn normalize-strategies
