@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>4ec75a70268bb71601f98fe4b16b7fd45179401c</tag>
+    <tag>d5f16419df960c0661a0f06c7dc0c6ae9c91164b</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -61,16 +61,6 @@
     <repository>
       <id>confluent</id>
       <url>https://packages.confluent.io/maven/</url>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-      <releases>
-        <enabled>true</enabled>
-      </releases>
-    </repository>
-    <repository>
-      <id>mulesoft</id>
-      <url>https://repository.mulesoft.org/nexus/content/repositories/public/</url>
       <snapshots>
         <enabled>true</enabled>
       </snapshots>
@@ -170,6 +160,11 @@
       <version>2.5.3</version>
     </dependency>
     <dependency>
+      <groupId>ring</groupId>
+      <artifactId>ring-core</artifactId>
+      <version>1.9.5</version>
+    </dependency>
+    <dependency>
       <groupId>metosin</groupId>
       <artifactId>ring-http-response</artifactId>
       <version>0.9.3</version>
@@ -177,7 +172,7 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>reitit</artifactId>
-      <version>0.5.15</version>
+      <version>0.5.16</version>
       <exclusions>
         <exclusion>
           <artifactId>jackson-core</artifactId>
@@ -218,12 +213,12 @@
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>endpoints</artifactId>
-      <version>1.1.12.150</version>
+      <version>1.1.12.168</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sns</artifactId>
-      <version>814.2.1053.0</version>
+      <version>820.2.1083.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
@@ -233,7 +228,12 @@
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>s3</artifactId>
-      <version>814.2.1053.0</version>
+      <version>820.2.1083.0</version>
+    </dependency>
+    <dependency>
+      <groupId>nrepl</groupId>
+      <artifactId>nrepl</artifactId>
+      <version>0.9.0</version>
     </dependency>
     <dependency>
       <groupId>com.taoensso</groupId>
@@ -253,22 +253,22 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>malli</artifactId>
-      <version>0.8.1</version>
+      <version>0.8.4</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>log4j-over-slf4j</artifactId>
-      <version>1.7.35</version>
+      <version>1.7.36</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jul-to-slf4j</artifactId>
-      <version>1.7.35</version>
+      <version>1.7.36</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jcl-over-slf4j</artifactId>
-      <version>1.7.35</version>
+      <version>1.7.36</version>
     </dependency>
     <dependency>
       <groupId>com.fzakaria</groupId>
@@ -278,7 +278,7 @@
     <dependency>
       <groupId>viesti</groupId>
       <artifactId>timbre-json-appender</artifactId>
-      <version>0.2.5</version>
+      <version>0.2.6</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
@@ -360,12 +360,17 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>1.7.35</version>
+      <version>1.7.36</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>confluent-log4j</artifactId>
       <version>1.2.17-cp2</version>
+    </dependency>
+    <dependency>
+      <groupId>thheller</groupId>
+      <artifactId>shadow-cljs</artifactId>
+      <version>2.17.5</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
