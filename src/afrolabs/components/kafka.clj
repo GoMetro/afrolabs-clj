@@ -589,11 +589,11 @@
       :or   {consumer-fetch-min-bytes   4096    ;; default is 1...
              consumer-fetch-max-wait-ms 1000    ;; default is 500
 
-             producer-batch-size       131072
-             producer-linger-ms        100
-             producer-acks             1
-             producer-buffer-memory    134217728
-             producer-compression-type "lz4"}}] ;; 8 times more than default value
+             producer-batch-size       131072    ;; ¯\_(ツ)_/¯
+             producer-linger-ms        100       ;; default 0
+             producer-acks             1         ;; this is probably less than the server's default
+             producer-buffer-memory    134217728 ;; 8 times more than default value
+             producer-compression-type "lz4"}}]  ;; lz4 is for "performance" ¯\_(ツ)_/¯
   (reify
     IUpdateConsumerConfigHook
     (update-consumer-cfg-hook
