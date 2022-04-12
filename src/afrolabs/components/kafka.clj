@@ -577,23 +577,40 @@
         (assoc ConsumerConfig/MAX_POLL_RECORDS_CONFIG (str max-poll-records))))))
 
 ;; high default values
-(defstrategy Batching
+(defstrategy HighThroughput
   [& {:keys [consumer-fetch-min-bytes
-             producer-batch-size]
-      :or   {consumer-fetch-min-bytes 1024 ;; default is 1...
-             producer-batch-size      131072}}] ;; 8 times more than default value
+             consumer-fetch-max-wait-ms
+
+             producer-batch-size
+             producer-linger-ms
+             producer-acks
+             producer-buffer-memory
+             producer-compression-type]
+      :or   {consumer-fetch-min-bytes   4096    ;; default is 1...
+             consumer-fetch-max-wait-ms 1000    ;; default is 500
+
+             producer-batch-size       131072
+             producer-linger-ms        100
+             producer-acks             1
+             producer-buffer-memory    134217728
+             producer-compression-type "lz4"}}] ;; 8 times more than default value
   (reify
     IUpdateConsumerConfigHook
     (update-consumer-cfg-hook
         [_ cfg]
       (-> cfg
-          (assoc ConsumerConfig/FETCH_MIN_BYTES_CONFIG consumer-fetch-min-bytes)))
+          (assoc ConsumerConfig/FETCH_MIN_BYTES_CONFIG (int consumer-fetch-min-bytes))
+          (assoc ConsumerConfig/FETCH_MAX_WAIT_MS_CONFIG (int consumer-fetch-max-wait-ms))))
 
     IUpdateProducerConfigHook
     (update-producer-cfg-hook
         [_ cfg]
       (-> cfg
-          (assoc ProducerConfig/BATCH_SIZE_CONFIG producer-batch-size)))))
+          (assoc ProducerConfig/BATCH_SIZE_CONFIG (int producer-batch-size))
+          (assoc ProducerConfig/LINGER_MS_CONFIG (int producer-linger-ms))
+          (assoc ProducerConfig/ACKS_CONFIG (int producer-acks))
+          (assoc ProducerConfig/BUFFER_MEMORY_CONFIG (int producer-buffer-memory))
+          (assoc ProducerConfig/COMPRESSION_TYPE_CONFIG producer-compression-type)))))
 
 
 (defn normalize-strategies
