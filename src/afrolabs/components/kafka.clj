@@ -608,7 +608,7 @@
       (-> cfg
           (assoc ProducerConfig/BATCH_SIZE_CONFIG (int producer-batch-size))
           (assoc ProducerConfig/LINGER_MS_CONFIG (int producer-linger-ms))
-          (assoc ProducerConfig/ACKS_CONFIG (int producer-acks))
+          (assoc ProducerConfig/ACKS_CONFIG (str producer-acks))
           (assoc ProducerConfig/BUFFER_MEMORY_CONFIG (int producer-buffer-memory))
           (assoc ProducerConfig/COMPRESSION_TYPE_CONFIG producer-compression-type)))))
 
