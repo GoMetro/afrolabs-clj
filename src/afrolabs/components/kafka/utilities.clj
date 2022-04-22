@@ -17,7 +17,8 @@
             [net.cgrand.xforms :as x]
             [clojure.spec.alpha :as s]
             [afrolabs.components.kafka :as -kafka]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [clojure.set :as set])
   (:import [afrolabs.components.health IServiceHealthTripSwitch]
            [afrolabs.components IHaltable]
            [java.util UUID]
@@ -352,3 +353,80 @@
       IHaltable
       (halt [_]
         (ig/halt! system)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; load partition data
+
+(defn node->data
+  [node]
+  (cond-> {:id        (.id node)
+           :id-str    (.idString node)
+           :is-empty  (.isEmpty node)
+           :port      (.port node)
+           :host      (.host node)}
+    (.hasRack node) (assoc :rack (.rack node))))
+
+(defn describe-topics
+  [admin-client topics]
+  (let [partitions-info (->> (let [topics (-> @admin-client
+                                              (.describeTopics topics)
+                                              (.allTopicNames)
+                                              (.get))]
+                               (->> topics
+                                    (mapcat (fn [[topic description]]
+                                              (map (fn [topic-partition-info]
+                                                     {:topic topic
+                                                      :is-internal (.isInternal description)
+                                                      :topic-id (.toString (.topicId description))
+                                                      :in-sync-replicas (apply list (map node->data (.isr topic-partition-info)))
+                                                      :leader (node->data (.leader topic-partition-info))
+                                                      :partition (.partition topic-partition-info)
+                                                      :replicas (apply list (map node->data (.replicas topic-partition-info)))})
+                                                   (.partitions description))))
+                                    (into [])))
+                             (reduce (fn [{:as acc
+                                           :keys [nodes]}
+                                          item]
+                                       (-> acc
+                                           (update :nodes set/union
+                                                   (->> [(:leader item)]
+                                                        (concat (:replicas item))
+                                                        (concat (:in-sync-replicas item))
+                                                        (into #{})))
+                                           (update :data conj
+                                                   (-> item
+                                                       (update :leader :id)
+                                                       (update :replicas #(map :id %))
+                                                       (update :in-sync-replicas #(map :id %))))))
+                                     {:nodes #{}
+                                      :data  []}))]
+    (-> partitions-info
+        (update :nodes #(apply sorted-set-by
+                               (fn [a b] (< (:id a) (:id b)))
+                               %))
+        (update :data #(sort-by :partition %)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; load consumer group info
+
+(defn describe-consumer-groups
+  [admin-client-component consumer-groups]
+  (let [r (-> @admin-client-component
+              (.describeConsumerGroups consumer-groups)
+              (.all)
+              (.get))]
+    (map (fn [[_ cgdesc]]
+           {:coordinator              (node->data (.coordinator cgdesc))
+            :group-id                 (.groupId cgdesc)
+            :is-simple-consumer-group (.isSimpleConsumerGroup cgdesc)
+            :members                  (->> (.members cgdesc)
+                                           (map (fn [membdesc]
+                                                  (let [gid (.groupInstanceId membdesc)]
+                                                    (cond-> {:client-id (.clientId membdesc)
+                                                             :consumer-id (.consumerId membdesc)
+                                                             :host (.host membdesc)
+                                                             }
+                                                      (.isPresent gid) (assoc :group-instance-id (.get gid)))))))
+            :partition-assignor       (.partitionAssignor cgdesc)
+            :state                    (.toString (.state cgdesc))})
+         r)))
