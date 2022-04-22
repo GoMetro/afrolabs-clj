@@ -622,14 +622,14 @@
   (let [heartbeat-interval-ms (or heartbeat-interval-ms
                                   (-> request-timeout-ms
                                       (/ 3)
-                                      (int)))])
-  (reify
-    IUpdateConsumerConfigHook
-    (update-consumer-cfg-hook
-        [_ cfg]
-      (-> cfg
-          (assoc ConsumerConfig/REQUEST_TIMEOUT_MS_CONFIG (str request-timeout-ms))
-          (assoc ConsumerConfig/HEARTBEAT_INTERVAL_MS_CONFIG (str heartbeat-interval-ms))))))
+                                      (int)))]
+    (reify
+      IUpdateConsumerConfigHook
+      (update-consumer-cfg-hook
+          [_ cfg]
+        (-> cfg
+            (assoc ConsumerConfig/REQUEST_TIMEOUT_MS_CONFIG (str request-timeout-ms))
+            (assoc ConsumerConfig/HEARTBEAT_INTERVAL_MS_CONFIG (str heartbeat-interval-ms)))))))
 
 (defn normalize-strategies
   "Takes a collection of strategy-protocol-implementing-objects or strategy-keyword-declaration-vectors and turns the strategy-keyword-declaration-vectors into strategy-protocol-implementing-objects."
