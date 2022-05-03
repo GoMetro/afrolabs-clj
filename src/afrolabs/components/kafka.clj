@@ -7,6 +7,7 @@
             [clojure.core.async :as csp]
             [afrolabs.components.health :as -health]
             [clojure.set :as set]
+            [clojure.string :as str]
             [java-time :as t]
             [taoensso.timbre :as timbre
              :refer [log  trace  debug  info  warn  error  fatal  report
@@ -231,6 +232,76 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;
+
+(defn- get-allowed-config-keys
+    [config-class]
+    (->> (.getDeclaredFields config-class)
+         ;; looking for public final fields static
+         (filter (fn [member]
+                   (let [mods (.getModifiers member)]
+                     (and (java.lang.reflect.Modifier/isStatic mods)
+                          (java.lang.reflect.Modifier/isFinal mods)
+                          (java.lang.reflect.Modifier/isPublic mods)))))
+         ;; looking only for members that end with _CONFIG
+         (filter (fn [member]
+                   (-> (.getName member)
+                       (str/split #"_")
+                       (last)
+                       (str/lower-case)
+                       (= "config"))))
+         (map (fn [field]
+                (.get field config-class)))))
+
+(let [producer-cfg-keys (set (get-allowed-config-keys ProducerConfig))
+      consumer-cfg-keys (set (get-allowed-config-keys ConsumerConfig))
+      admin-client-cfg-keys (set (get-allowed-config-keys AdminClientConfig))]
+
+  ;; AdhocConfig allows the user to specify a strategy for any allowed config keys.
+  ;; The strategy is somewhat smart, in that it "knows" which parameters apply to
+  ;; either Producer, Consumer or AdminClient config maps.
+
+  (defstrategy AdhocConfig
+    [& config-pairs]
+
+    (when-not (even? (count config-pairs))
+      (throw (ex-info "Specify pairs of parameters for AdhocConfig (ie groups of [config-key config-value])"
+                      {:config config-pairs})))
+
+    (let [config-pairs (partition 2 config-pairs)
+          invalid-config-keys (set/difference (->> config-pairs
+                                                   (map first)
+                                                   (set))
+                                              (set/union producer-cfg-keys
+                                                         consumer-cfg-keys
+                                                         admin-client-cfg-keys))]
+      (when (seq invalid-config-keys)
+        (log/warn (str "Found invalid config keys in AdhocConfig: " invalid-config-keys)))
+
+      (reify
+        IUpdateProducerConfigHook
+        (update-producer-cfg-hook
+            [_ cfg]
+          (->> config-pairs
+               (filter (fn [[config-key _]] (producer-cfg-keys config-key)))
+               (reduce (fn [acc [k v]] (assoc acc k v))
+                       cfg)))
+
+
+        IUpdateConsumerConfigHook
+        (update-consumer-cfg-hook
+            [_ cfg]
+          (->> config-pairs
+               (filter (fn [[config-key _]] (consumer-cfg-keys config-key)))
+               (reduce (fn [acc [k v]] (assoc acc k v))
+                       cfg)))
+
+        IUpdateAdminClientConfigHook
+        (update-admin-client-cfg-hook
+            [_ cfg]
+          (->> config-pairs
+               (filter (fn [[config-key _]] (admin-client-cfg-keys config-key)))
+               (reduce (fn [acc [k v]] (assoc acc k v))
+                       cfg)))))))
 
 (defstrategy StringSerializer
   [& {producer-option :producer
