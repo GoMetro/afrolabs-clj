@@ -4,7 +4,7 @@
   :license {:name "MIT"
             :url "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
-  :dependencies [[org.clojure/clojure "1.10.3"]
+  :dependencies [[org.clojure/clojure "1.11.1"]
 
                  ;; property-based testing, generative testing
                  [org.clojure/test.check "1.1.1"]
