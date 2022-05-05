@@ -1000,6 +1000,10 @@
       IHaltable
       (halt [_] (.close ac)))))
 
+(-comp/defcomponent {::-comp/ig-kw ::kafka-admin-client
+                     ::-comp/spec  ::admin-client-cfg}
+  [cfg] (make-admin-client cfg))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (s/def ::nr-of-partitions (s/or :nil nil?
