@@ -60,8 +60,7 @@
 
                  ;; http routing library
                  ;; https://github.com/metosin/reitit
-                 [metosin/reitit "0.5.16" :exclusions [com.fasterxml.jackson.core/jackson-core
-                                                       ]]
+                 [metosin/reitit "0.5.18" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "0.3.3"]
