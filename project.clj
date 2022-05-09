@@ -36,7 +36,7 @@
                  [net.cgrand/xforms "0.19.2"]
 
                  ;; https://github.com/redplanetlabs/specter, data transformation DSL
-                 [com.rpl/specter "1.1.3"]
+                 [com.rpl/specter "1.1.4"]
 
                  ;; https://github.com/weavejester/integrant
                  ;; similar to dependency injection
@@ -73,22 +73,22 @@
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.539"]
-                 [com.cognitect.aws/endpoints "1.1.12.168"]
-                 [com.cognitect.aws/sns "820.2.1083.0"]
-                 [com.cognitect.aws/sqs "814.2.1053.0"]
-                 [com.cognitect.aws/s3 "820.2.1083.0"]
+                 [com.cognitect.aws/endpoints "1.1.12.206"]
+                 [com.cognitect.aws/sns "822.2.1109.0"]
+                 [com.cognitect.aws/sqs "822.2.1109.0"]
+                 [com.cognitect.aws/s3 "822.2.1109.0"]
 
                  ;; NREPL
                  [nrepl "0.9.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
-                 [com.taoensso/timbre "5.1.2"]
+                 [com.taoensso/timbre "5.2.1"]
 
                  ;; https://github.com/clojure/data.json
                  [org.clojure/data.json "2.4.0"]
 
                  ;; https://github.com/clojure/data.csv
-                 [org.clojure/data.csv "1.0.0"]
+                 [org.clojure/data.csv "1.0.1"]
 
                  ;; malli; schema-driven development and utilities
                  [metosin/malli "0.8.4"]
@@ -106,8 +106,8 @@
                  ;; possibility to log to json, for use in cloud environments like GCK
                  [viesti/timbre-json-appender "0.2.6"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.13.1"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.1"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.13.2.2"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.2"]
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
                  [org.apache.kafka/kafka-clients "3.1.0"]
@@ -120,7 +120,7 @@
                  ;; dependency issue resolutions brought on by confluent
                  [org.javassist/javassist "3.26.0-GA"]
                  [jakarta.xml.bind/jakarta.xml.bind-api "2.3.3" :upgrade false]
-                 [joda-time "2.10.13"]
+                 [joda-time "2.10.14"]
 
                  ;; dependencies for confluent cloud
                  [org.apache.kafka/connect-runtime "3.1.0" :exclusions [org.slf4j/slf4j-log4j12]]
@@ -136,7 +136,7 @@
                  [io.confluent/confluent-log4j "1.2.17-cp2"]
 
                  
-                 [thheller/shadow-cljs "2.17.5"]
+                 [thheller/shadow-cljs "2.18.0"]
 
                  ]
   :aot [afrolabs.components.kafka.json-serdes
