@@ -52,6 +52,11 @@
                  ;; http server
                  [http-kit "2.5.3"]
 
+                 ;; password-hashing helpers
+                 [buddy/buddy-hashers "1.8.158"]
+                 [buddy/buddy-auth "3.0.323"]
+                 [buddy/buddy-sign "3.4.333"]
+
                  [ring/ring-core "1.9.5"]
 
                  ;; https://github.com/metosin/ring-http-response
