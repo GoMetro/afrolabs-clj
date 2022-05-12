@@ -19,6 +19,7 @@
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
            [org.apache.kafka.common.header Header]
            [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
+           [org.apache.kafka.common TopicPartition]
            [java.util.concurrent Future]
            [java.util Map Collection UUID Optional]
            [afrolabs.components IHaltable]
@@ -486,6 +487,21 @@
     (consumer-init-hook
         [_ consumer]
       (.subscribe ^Consumer consumer regex))))
+
+(defstrategy SeekToPartitionOffset
+  [topic-partition-offsets]
+  (reify
+    IConsumerInitHook
+    (consumer-init-hook
+        [_ consumer]
+      (doseq [[topic partition] (->> (.assignment ^KafkaConsumer consumer)
+                                     (map (fn [topic-partition]
+                                            [(.topic ^TopicPartition topic-partition)
+                                             (.partition ^TopicPartition topic-partition)])))]
+        (when-let [offset (get-in topic-partition-offsets [topic partition])]
+          (.seek ^KafkaConsumer consumer
+                 (TopicPartition. topic partition)
+                 ^long offset))))))
 
 (defstrategy SeekToTimestampOffset
   [offset]
