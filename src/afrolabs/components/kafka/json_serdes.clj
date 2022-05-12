@@ -15,7 +15,7 @@
 
 (defn ser-serialize
   ([_ _ data]
-   (.getBytes (json/write-str data)))
+   (.getBytes ^String (json/write-str data)))
   ([this _ _ data]
    (ser-serialize this nil data)))
 
@@ -32,7 +32,7 @@
 (defn deser-deserialize
   ([_ _ byte-data]
    (try
-     (json/read-str (String. byte-data))
+     (json/read-str (String. ^bytes byte-data))
      (catch Throwable t
        (log/error t "Unable to json deserialize."))))
   ([this _ _ byte-data]

@@ -28,7 +28,7 @@
 
 (defn deser-deserialize
   ([_ _ byte-data]
-   (edn/read-string (String. byte-data)))
+   (edn/read-string (String. ^bytes byte-data)))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 

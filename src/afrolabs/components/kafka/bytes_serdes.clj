@@ -22,7 +22,8 @@
 (defn ser-serialize
   ([_ _ byte-data]
    (when byte-data
-     (java.util.Arrays/copyOf byte-data (alength byte-data))))
+     (java.util.Arrays/copyOf ^bytes byte-data
+                              (alength ^bytes byte-data))))
   ([this _ _ byte-data]
    (ser-serialize this nil byte-data)))
 
@@ -39,7 +40,8 @@
 (defn deser-deserialize
   ([_ _ byte-data]
    (when byte-data
-     (java.util.Arrays/copyOf byte-data (alength byte-data))))
+     (java.util.Arrays/copyOf ^bytes byte-data
+                              (alength ^bytes byte-data))))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
