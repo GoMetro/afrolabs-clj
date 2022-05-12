@@ -201,9 +201,6 @@
 
 (comment
 
-  (satisfies-some-of-the-strategy-protocols (ConfluentJSONSchema {:schema-registry-url ""}))
-  ;; true
-
   (satisfies-some-of-the-strategy-protocols (StringSerializer))
   ;; true
 
