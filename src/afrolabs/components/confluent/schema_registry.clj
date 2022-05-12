@@ -165,6 +165,7 @@
   (let [result @http-result
         expected-types #{"application/vnd.schemaregistry.v1+json"
                          "application/vnd.schemaregistry+json"
+                         "application/json;charset=iso-8859-1"
                          "application/json"}
         actual-content-type (get-in result [:headers :content-type])]
 
