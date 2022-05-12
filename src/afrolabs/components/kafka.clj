@@ -488,8 +488,8 @@
 (defstrategy SeekToPartitionOffset
   [topic-partition-offsets]
   (reify
-    IConsumerInitHook
-    (consumer-init-hook
+    IConsumerPostInitHook
+    (post-init-hook
         [_ consumer]
       (doseq [[topic partition] (->> (.assignment ^KafkaConsumer consumer)
                                      (map (fn [topic-partition]
