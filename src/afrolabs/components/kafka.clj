@@ -517,8 +517,8 @@
                  (= java.time.Instant (type offset))
                  (t/to-millis-from-epoch offset))]
     (reify
-      IConsumerInitHook
-      (consumer-init-hook
+      IConsumerPostInitHook
+      (post-init-hook
           [_ consumer]
 
         (doseq [[topic-partition offset-and-timestamp]
@@ -860,7 +860,7 @@
         combined-post-init-hooks
         (fn [consumer]
           (doseq [s post-init-hooks]
-            (consumer-init-hook s consumer)))
+            (post-init-hook s consumer)))
 
         post-consume-hooks
         (into []
@@ -947,6 +947,7 @@
     :consumer/keys [mock]}]
   (s/assert ::consumer-config consumer-config)
   (let [strategies          (normalize-strategies strategies)
+        consumer-config     (assoc consumer-config :strategies strategies)
         consumer-properties {ConsumerConfig/BOOTSTRAP_SERVERS_CONFIG bootstrap-server}
         consumer-properties ((->> strategies
                                   (filter #(satisfies? IUpdateConsumerConfigHook %))
