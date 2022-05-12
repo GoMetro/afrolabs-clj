@@ -143,6 +143,9 @@
                  
                  [thheller/shadow-cljs "2.18.0"]
 
+                 ;; middleware that adds "X-Clacks-Overhead" to responses
+                 [gsnewmark/ring-pratchett "0.1.0"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes

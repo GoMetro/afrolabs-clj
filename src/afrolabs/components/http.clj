@@ -7,7 +7,7 @@
             [taoensso.timbre :as log]
             [afrolabs.components.health :as -health]
             [ring.util.http-response :as http-response]
-            )
+            [ring.middleware.pratchett])
   (:import [afrolabs.components IHaltable]
            [afrolabs.components.health IServiceHealthTripSwitch]))
 
@@ -59,6 +59,7 @@
                        (map #(partial handle-http-request
                                       %)
                             handlers))
+        handler (ring.middleware.pratchett/wrap-pratchett handler)
         s (httpkit/run-server handler
                               {:worker-name-prefix   worker-thread-name-prefix
                                :error-logger         (fn [txt ex]
