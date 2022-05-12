@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>2285953d1b0e0f665954fa8305dfd7a9484426fc</tag>
+    <tag>efe058f4e37004abdf896047a6c9518793835778</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -386,6 +386,11 @@
       <groupId>thheller</groupId>
       <artifactId>shadow-cljs</artifactId>
       <version>2.18.0</version>
+    </dependency>
+    <dependency>
+      <groupId>gsnewmark</groupId>
+      <artifactId>ring-pratchett</artifactId>
+      <version>0.1.0</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
