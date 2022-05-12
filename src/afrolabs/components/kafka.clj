@@ -15,9 +15,9 @@
                      spy get-env]]
             [taoensso.timbre :as log])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
-           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener]
+           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
-           [org.apache.kafka.common.header Header]
+           [org.apache.kafka.common.header Header Headers]
            [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
            [org.apache.kafka.common TopicPartition]
            [java.util.concurrent Future]
@@ -85,7 +85,7 @@
   type)
 
 (defmethod serialize-producer-record-header java.lang.String
-  [x] (.getBytes x "UTF-8"))
+  [x] (.getBytes ^java.lang.String x "UTF-8"))
 
 (defmethod serialize-producer-record-header (type (byte-array 0))
   [x] x)
@@ -233,22 +233,23 @@
 
 (defn- get-allowed-config-keys
     [config-class]
-    (->> (.getDeclaredFields config-class)
-         ;; looking for public final fields static
-         (filter (fn [member]
-                   (let [mods (.getModifiers member)]
-                     (and (java.lang.reflect.Modifier/isStatic mods)
-                          (java.lang.reflect.Modifier/isFinal mods)
-                          (java.lang.reflect.Modifier/isPublic mods)))))
-         ;; looking only for members that end with _CONFIG
-         (filter (fn [member]
-                   (-> (.getName member)
-                       (str/split #"_")
-                       (last)
-                       (str/lower-case)
-                       (= "config"))))
-         (map (fn [field]
-                (.get field config-class)))))
+  (->> (.getDeclaredFields ^Class config-class)
+       ;; looking for public final fields static
+       (filter (fn [field]
+                 (let [mods (.getModifiers ^java.lang.reflect.Field field)]
+                   (and (java.lang.reflect.Modifier/isStatic mods)
+                        (java.lang.reflect.Modifier/isFinal mods)
+                        (java.lang.reflect.Modifier/isPublic mods)))))
+       ;; looking only for members that end with _CONFIG
+       (filter (fn [field]
+                 (-> (.getName ^java.lang.reflect.Field field)
+                     (str/split #"_")
+                     (last)
+                     (str/lower-case)
+                     (= "config"))))
+       (map (fn [field]
+              (.get ^java.lang.reflect.Field field
+                    config-class)))))
 
 (let [producer-cfg-keys (set (get-allowed-config-keys ProducerConfig))
       consumer-cfg-keys (set (get-allowed-config-keys ConsumerConfig))
@@ -518,12 +519,15 @@
       (post-init-hook
           [_ consumer]
 
-        (doseq [[topic-partition offset-and-timestamp]
-                (.offsetsForTimes consumer
+        (doseq [[^TopicPartition topic-partition
+                 ^OffsetAndTimestamp offset-and-timestamp]
+                (.offsetsForTimes ^KafkaConsumer consumer
                                   (into {}
                                         (map #(vector % offset))
-                                        (.assignment consumer)))]
-          (.seek consumer topic-partition (.offset offset-and-timestamp)))))))
+                                        (.assignment ^KafkaConsumer consumer)))]
+          (.seek ^KafkaConsumer consumer
+                 topic-partition
+                 (.offset offset-and-timestamp)))))))
 
 (defstrategy OffsetReset
   [strategy]
@@ -595,21 +599,22 @@
       (post-consume-hook
           [_ consumer consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [topic-partition-assignment (.assignment consumer)
+        (let [topic-partition-assignment (.assignment ^KafkaConsumer consumer)
 
               current-offsets
               (into #{}
-                    (map (fn [tp] {:topic (.topic tp)
-                                   :partition (.partition tp)
-                                   :offset (.position consumer tp)}))
+                    (map (fn [tp] {:topic (.topic ^TopicPartition tp)
+                                   :partition (.partition ^TopicPartition tp)
+                                   :offset (.position ^KafkaConsumer consumer
+                                                      ^TopicPartition tp)}))
                     topic-partition-assignment)
 
               end-offsets
               (into #{}
-                    (map (fn [[tp o]] {:topic (.topic tp)
-                                       :partition (.partition tp)
+                    (map (fn [[tp o]] {:topic (.topic ^TopicPartition tp)
+                                       :partition (.partition ^TopicPartition tp)
                                        :offset o}))
-                    (.endOffsets consumer
+                    (.endOffsets ^KafkaConsumer consumer
                                  topic-partition-assignment))
               ]
           (when (= end-offsets current-offsets)
@@ -886,7 +891,7 @@
         (let [consumed-records           (into []
                                                (map (fn [^ConsumerRecord r]
                                                       (let [hdrs (into []
-                                                                       (map (juxt #(.key %) #(.value %)))
+                                                                       (map (juxt #(.key ^Header %) #(.value ^Header %)))
                                                                        (-> r (.headers) (.toArray)))]
                                                         (cond->
                                                             {:topic     (.topic r)
@@ -1006,7 +1011,7 @@
                                         (update-admin-client-cfg-hook strat cfg))))
                                (reverse)
                                (apply comp)) admin-client-cfg)
-        ac (AdminClient/create admin-client-cfg)]
+        ac (AdminClient/create ^java.util.Map admin-client-cfg)]
     (reify
       clojure.lang.IDeref
       (deref [_] ac)
@@ -1034,12 +1039,13 @@
     :keys [topic-name-providers
            nr-of-partitions]}]
 
-  (let [nr-of-partitions (or (when (and nr-of-partitions
+  (let [^java.lang.Integer
+        nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
                              nr-of-partitions)
         ac (make-admin-client cfg)
-        existing-topics (-> @ac
+        existing-topics (-> ^AdminClient @ac
                             (.listTopics)
                             (.names)
                             (.get)
@@ -1054,13 +1060,15 @@
                                                topic-name
                                                (str (or nr-of-partitions "CLUSTER_DEFAULT"))
                                                "CLUSTER_DEFAULT"))
-                                 (NewTopic. topic-name
+                                 (NewTopic. ^String topic-name
+                                            ^java.util.Optional
                                             (if nr-of-partitions
                                               (Optional/of (Integer. nr-of-partitions))
                                               (Optional/empty))
+                                            ^java.util.Optional
                                             (Optional/empty)))))
                          topic-name-providers)
-        topic-create-result (.createTopics @ac new-topics)]
+        topic-create-result (.createTopics ^AdminClient @ac new-topics)]
 
     ;; wait for complete success
     (-> topic-create-result
@@ -1270,10 +1278,10 @@
         @ktable-state)
 
       IRef
-      (getValidator [this]  (.getValidator ktable-state))
-      (getWatches [this]    (.getWatches ktable-state))
-      (addWatch [this k cb] (.addWatch ktable-state k cb))
-      (removeWatch [this k] (.removeWatch ktable-state k)))))
+      (getValidator [this]  (.getValidator ^clojure.lang.Atom ktable-state))
+      (getWatches [this]    (.getWatches ^clojure.lang.Atom ktable-state))
+      (addWatch [this k cb] (.addWatch ^clojure.lang.Atom ktable-state k cb))
+      (removeWatch [this k] (.removeWatch ^clojure.lang.Atom ktable-state k)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; create a forwarder; a forwarder is configured with:
