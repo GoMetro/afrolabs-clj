@@ -114,13 +114,18 @@
                  [com.fasterxml.jackson.core/jackson-databind "2.13.2.2"]
                  [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.2"]
 
+
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
-                 [org.apache.kafka/kafka-clients "3.1.0"]
+                 [org.apache.kafka/kafka-clients "3.2.0"]
 
 
                  ;; following dependencies loosely inspired by the confluent example java app
                  ;; https://github.com/confluentinc/examples/blob/6.1.1-post/clients/cloud/java/pom.xml
-                 [org.apache.kafka/kafka-streams "3.1.0" ]
+                 [org.apache.kafka/kafka-streams "3.2.0" ]
+
+                 ;; dependency conflict resolution introduced by confluent libraries
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jdk8 "2.13.2"]
+                 [com.google.re2j/re2j "1.6"]
 
                  ;; dependency issue resolutions brought on by confluent
                  [org.javassist/javassist "3.26.0-GA"]
@@ -128,17 +133,17 @@
                  [joda-time "2.10.14"]
 
                  ;; dependencies for confluent cloud
-                 [org.apache.kafka/connect-runtime "3.1.0" :exclusions [org.slf4j/slf4j-log4j12]]
-                 [io.confluent/kafka-json-serializer "7.0.1"  :exclusions []]
-                 [io.confluent/kafka-json-schema-serializer "7.0.1" :exclusions [org.apache.kafka/kafka-clients
+                 [org.apache.kafka/connect-runtime "3.2.0" :exclusions [org.slf4j/slf4j-log4j12]]
+                 [io.confluent/kafka-json-serializer "7.1.1"  :exclusions []]
+                 [io.confluent/kafka-json-schema-serializer "7.1.1" :exclusions [org.apache.kafka/kafka-clients
                                                                                  org.glassfish.jersey.core/jersey-common]]
 
                  ;; for use with ksqld, the java client
-                 [io.confluent.ksql/ksqldb-api-client "7.0.1" :exclusions [org.slf4j/slf4j-log4j12]]
+                 [io.confluent.ksql/ksqldb-api-client "7.1.1" :exclusions [org.slf4j/slf4j-log4j12]]
 
                  [org.slf4j/slf4j-api "1.7.36"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
-                 [io.confluent/confluent-log4j "1.2.17-cp2"]
+                 [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
                  [thheller/shadow-cljs "2.18.0"]

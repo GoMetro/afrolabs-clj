@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>efe058f4e37004abdf896047a6c9518793835778</tag>
+    <tag>8955dd7fe15fe4c2c520667f736c9ce5245d9275</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -308,12 +308,22 @@
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
-      <version>3.1.0</version>
+      <version>3.2.0</version>
     </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-streams</artifactId>
-      <version>3.1.0</version>
+      <version>3.2.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jdk8</artifactId>
+      <version>2.13.2</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.re2j</groupId>
+      <artifactId>re2j</artifactId>
+      <version>1.6</version>
     </dependency>
     <dependency>
       <groupId>org.javassist</groupId>
@@ -333,7 +343,7 @@
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>connect-runtime</artifactId>
-      <version>3.1.0</version>
+      <version>3.2.0</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
@@ -344,12 +354,12 @@
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>kafka-json-serializer</artifactId>
-      <version>7.0.1</version>
+      <version>7.1.1</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>kafka-json-schema-serializer</artifactId>
-      <version>7.0.1</version>
+      <version>7.1.1</version>
       <exclusions>
         <exclusion>
           <artifactId>kafka-clients</artifactId>
@@ -364,7 +374,7 @@
     <dependency>
       <groupId>io.confluent.ksql</groupId>
       <artifactId>ksqldb-api-client</artifactId>
-      <version>7.0.1</version>
+      <version>7.1.1</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
@@ -380,7 +390,7 @@
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>confluent-log4j</artifactId>
-      <version>1.2.17-cp2</version>
+      <version>1.2.17-cp5</version>
     </dependency>
     <dependency>
       <groupId>thheller</groupId>
