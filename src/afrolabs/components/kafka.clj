@@ -701,6 +701,30 @@
           (assoc ProducerConfig/BUFFER_MEMORY_CONFIG (int producer-buffer-memory))
           (assoc ProducerConfig/COMPRESSION_TYPE_CONFIG producer-compression-type)))))
 
+
+(defstrategy ProducerCompression
+  [& compression-type-first-arg]
+  (let [compression-type (or (first compression-type-first-arg)
+                             "lz4")]
+    (reify
+      IUpdateProducerConfigHook
+      (update-producer-cfg-hook
+          [_ cfg]
+        (assoc cfg ProducerConfig/COMPRESSION_TYPE_CONFIG compression-type)))))
+
+(defstrategy ProducerBatching
+  [& {:keys [batch-size
+             linger-ms]
+      :or {batch-size 131072
+           linger-ms  150}}]
+  (reify
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (assoc cfg
+             ProducerConfig/BATCH_SIZE_CONFIG (int batch-size)
+             ProducerConfig/LINGER_MS_CONFIG (int linger-ms)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; after suggestions from confluent, use with care
 
