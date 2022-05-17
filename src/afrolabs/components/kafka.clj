@@ -1136,21 +1136,25 @@
                                                                 (catch NumberFormatException _ false)))
                                                 :d (s/and double?
                                                           #(< 0.0 % 1.0))))
+(s/def ::recreate-topics-with-bad-config boolean?)
 (s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
                                     (s/keys :req-un [::topic-name-providers]
                                             :opt-un [::nr-of-partitions
                                                      ::topic-delete-retention-ms
                                                      ::ktable-segment-ms
-                                                     ::ktable-min-cleanable-dirty-ratio])))
+                                                     ::ktable-min-cleanable-dirty-ratio
+                                                     ::recreate-topics-with-bad-config])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
-  [{:as cfg
+  [{:as   cfg
     :keys [topic-name-providers
            nr-of-partitions
            topic-delete-retention-ms
            ktable-segment-ms
-           ktable-min-cleanable-dirty-ratio]}]
+           ktable-min-cleanable-dirty-ratio
+           recreate-topics-with-bad-config]
+    :or   {recreate-topics-with-bad-config false}}]
 
   (let [nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
@@ -1180,14 +1184,31 @@
                                                                       (into {}))]
                                    (->> topic-to-cleanup-policies
                                         (filter (fn [[_ compaction-strategy]] (not= "compact" compaction-strategy)))
-                                        (map first)))
-        _ (when (pos-int? (count topics-with-wrong-config))
-            (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == 'compact', but they are not. Cannot continue.\n%s"
-                                    (str topics-with-wrong-config))
-                            {:topics topics-with-wrong-config})))
+                                        (map first)
+                                        vec))
 
-        new-topics (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
-                                   existing-topics)
+        ;; delete the topics with the wrong config
+        ;; OR throw when incorrectly created
+        _ (if (pos-int? (count topics-with-wrong-config))
+            (if-not recreate-topics-with-bad-config
+              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == 'compact', but they are not. Cannot continue.\n%s"
+                                      (str topics-with-wrong-config))
+                              {:topics topics-with-wrong-config}))
+
+              ;; here the topics will be deleted
+              (do
+                (warn (format "These topics ['%s'] were created incorrectly ('cleanup.policy' != 'compact'). They will now be deleted and re-created. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                              (str topics-with-wrong-config)))
+                (-> (.deleteTopics ^AdminClient @ac
+                                   topics-with-wrong-config)
+                    (.all)
+                    (.get)))))
+
+        new-topics (set/union (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
+                                              existing-topics)
+                              (or (when recreate-topics-with-bad-config
+                                    (set topics-with-wrong-config))
+                                  #{}))
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
                                         (info (format "Creating log-compacted topic '%s' with nr-partitions '%s' and replication-factor '%s'."
