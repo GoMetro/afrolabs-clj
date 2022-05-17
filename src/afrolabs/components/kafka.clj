@@ -1044,7 +1044,7 @@
       (halt [_] (.close ac)))))
 
 (-comp/defcomponent {::-comp/ig-kw ::admin-client
-                     ::-comp/spec  ::admin-client-cfg}
+                     ::-comp/config-spec  ::admin-client-cfg}
   [cfg] (make-admin-client cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
