@@ -13,7 +13,8 @@
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]
-            [taoensso.timbre :as log])
+            [taoensso.timbre :as log]
+            [afrolabs.components.kafka.edn-serdes :as -edn-serdes])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
@@ -365,8 +366,11 @@
 (defstrategy EdnSerializer
   [& {producer-option :producer
       consumer-option :consumer
-      :or {producer-option :none
-           consumer-option :none}}]
+
+      :keys [parse-inst-as-java-time]
+      :or   {producer-option         :noneu
+             consumer-option         :none
+             parse-inst-as-java-time false}}]
 
   (let [allowed-values #{:key :value :both :none}]
     (when-not (or (allowed-values producer-option)
@@ -388,8 +392,10 @@
     (update-consumer-cfg-hook
         [_ cfg]
       (cond-> cfg
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.edn_serdes.Deserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer")))))
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.edn_serdes.Deserializer"
+                                                  (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer"
+                                                  (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)))))
 
 (defprotocol IConsumerAwareRebalanceListener
   "Wrapping ConsumerRebalanceListener; adds the consumer to the parameter list"
