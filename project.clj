@@ -5,6 +5,7 @@
             :url "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
   :dependencies [[org.clojure/clojure "1.11.1"]
+                 [org.clojure/clojurescript "1.11.54"]
 
                  ;; property-based testing, generative testing
                  [org.clojure/test.check "1.1.1"]
@@ -95,6 +96,9 @@
                  ;; https://github.com/clojure/data.csv
                  [org.clojure/data.csv "1.0.1"]
 
+                 ;; fip, dependency of both malli and shadow-cljs
+                 [fipp "0.6.26"]
+
                  ;; malli; schema-driven development and utilities
                  [metosin/malli "0.8.4"]
 
@@ -111,8 +115,8 @@
                  ;; possibility to log to json, for use in cloud environments like GCK
                  [viesti/timbre-json-appender "0.2.6"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.13.2.2"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.2"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.13.3"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.13.3"]
 
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
@@ -124,7 +128,7 @@
                  [org.apache.kafka/kafka-streams "3.2.0" ]
 
                  ;; dependency conflict resolution introduced by confluent libraries
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jdk8 "2.13.2"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jdk8 "2.13.3"]
                  [com.google.re2j/re2j "1.6"]
 
                  ;; dependency issue resolutions brought on by confluent
@@ -146,7 +150,7 @@
                  [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
-                 [thheller/shadow-cljs "2.18.0"]
+                 [thheller/shadow-cljs "2.19.0"]
 
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
