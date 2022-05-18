@@ -1293,7 +1293,6 @@
   (let [consumer-group-id (str  ktable-id
                                 "-"
                                 (UUID/randomUUID))
-        _ (println consumer-group-id)
 
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
