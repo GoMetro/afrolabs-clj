@@ -1055,6 +1055,39 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn assert-topics
+  [^AdminClient admin-client
+   desired-topics
+   & {:keys [nr-of-partitions]}]
+  (let [existing-topics (-> admin-client
+                            (.listTopics)
+                            (.names)
+                            (.get)
+                            (set))
+        new-topics (into []
+                         (comp
+                          (distinct)
+                          (filter #(not (existing-topics %)))
+                          (map (fn [topic-name]
+                                 (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                               topic-name
+                                               (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                               "CLUSTER_DEFAULT"))
+                                 (NewTopic. ^String topic-name
+                                            ^java.util.Optional
+                                            (if nr-of-partitions
+                                              (Optional/of (Integer. nr-of-partitions))
+                                              (Optional/empty))
+                                            ^java.util.Optional
+                                            (Optional/empty)))))
+                         desired-topics)
+        topic-create-result (.createTopics admin-client new-topics)]
+
+    ;; wait for complete success
+    (-> topic-create-result
+        (.all)
+        (.get))))
+
 (s/def ::nr-of-partitions (s/or :nil nil?
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
@@ -1074,36 +1107,11 @@
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
                              nr-of-partitions)
-        ac (make-admin-client cfg)
-        existing-topics (-> ^AdminClient @ac
-                            (.listTopics)
-                            (.names)
-                            (.get)
-                            (set))
-        new-topics (into []
-                         (comp
-                          (mapcat #(get-topic-names %))
-                          (distinct)
-                          (filter #(not (existing-topics %)))
-                          (map (fn [topic-name]
-                                 (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
-                                               topic-name
-                                               (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                               "CLUSTER_DEFAULT"))
-                                 (NewTopic. ^String topic-name
-                                            ^java.util.Optional
-                                            (if nr-of-partitions
-                                              (Optional/of (Integer. nr-of-partitions))
-                                              (Optional/empty))
-                                            ^java.util.Optional
-                                            (Optional/empty)))))
-                         topic-name-providers)
-        topic-create-result (.createTopics ^AdminClient @ac new-topics)]
+        ac (make-admin-client cfg)]
 
-    ;; wait for complete success
-    (-> topic-create-result
-        (.all)
-        (.get))
+    (assert-topics @ac
+                   (mapcat #(get-topic-names %) topic-name-providers)
+                   :nr-of-partitions nr-of-partitions)
 
     ;; stop the admin client
     (-comp/halt ac)
