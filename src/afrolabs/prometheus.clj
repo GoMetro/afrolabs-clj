@@ -1,5 +1,6 @@
 (ns afrolabs.prometheus
   (:require [iapetos.core :as p]
+            [iapetos.registry :as promr]
             [iapetos.collector.jvm]
             [iapetos.export]
             [afrolabs.components :as -comp]
@@ -81,3 +82,48 @@
               (iapetos.export/write-text-format! w @registry)
               (.flush w)))))))))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn sample-data
+  [^io.prometheus.client.Collector$MetricFamilySamples$Sample s]
+  {:labels (->> (map vector
+                     (.labelNames s)
+                     (.labelValues s))
+                (into {}))
+   :name (.name s)
+   :value (.value s)
+   :timestamp-ms (.timestampMs s)})
+
+(defn metric-family-samples->data
+  [^io.prometheus.client.Collector$MetricFamilySamples x]
+  {:name (.name x)
+   :unit (.unit x)
+   :samples (into []
+                  (map sample-data)
+                  (.samples x))
+   :help (.help x)
+   :type (condp = (.type x)
+           io.prometheus.client.Collector$Type/COUNTER :counter
+           io.prometheus.client.Collector$Type/GAUGE :gauge
+           io.prometheus.client.Collector$Type/GAUGE_HISTOGRAM :gauge-histogram
+           io.prometheus.client.Collector$Type/HISTOGRAM :histogram
+           io.prometheus.client.Collector$Type/INFO :info
+           io.prometheus.client.Collector$Type/STATE_SET :state-set
+           io.prometheus.client.Collector$Type/SUMMARY :summary
+           io.prometheus.client.Collector$Type/UNKNOWN :unknown)
+   })
+
+(defn extract-samples
+  "Extracts sample values for a subset of the metrics from the registry."
+  ([] (extract-samples #".*"))
+  ([metric-re] (extract-samples @registry
+                                metric-re))
+  ([registry metric-re]
+   (let [sample-data (-> registry
+                         promr/raw
+                         (.metricFamilySamples)
+                         enumeration-seq)]
+     (sequence (comp (filter #(re-matches metric-re (.name %)))
+                     (map metric-family-samples->data))
+               sample-data))))
