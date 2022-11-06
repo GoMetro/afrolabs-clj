@@ -106,7 +106,7 @@
 (deftype KafkaProducingHeader [key value]
   Header
   (^String key [_] key)
-  (^bytes value [_] (serialize-producer-record-header value)))
+  (^bytes value [_] (when value (serialize-producer-record-header value))))
 
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
