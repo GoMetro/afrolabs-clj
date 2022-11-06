@@ -1088,6 +1088,24 @@
         (.all)
         (.get))))
 
+(defn delete-topics!
+  [^AdminClient admin-client
+   topics-to-be-deleted]
+  (let [existing-topics (-> admin-client
+                            (.listTopics)
+                            (.names)
+                            (.get)
+                            (set))
+        deletable-topics (set/intersection (set topics-to-be-deleted)
+                                           (set existing-topics))
+
+        topic-delete-result (.deleteTopics admin-client deletable-topics)]
+
+    ;; wait for complete success
+    (-> topic-delete-result
+        (.all)
+        (.get))))
+
 (s/def ::nr-of-partitions (s/or :nil nil?
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
