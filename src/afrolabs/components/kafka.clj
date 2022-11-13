@@ -791,9 +791,10 @@
 
 (s/def ::strategy (s/or :protocol satisfies-some-of-the-strategy-protocols
                         :strategy-keyword
-                        #(and (seq %1)
-                              (keyword? (first %1))
-                              (= "strategy" (namespace (first %1))))))
+                        #(try (and (seq %1)
+                                   (keyword? (first %1))
+                                   (= "strategy" (namespace (first %1))))
+                              (catch Throwable _ nil))))
 (s/def ::strategies (s/coll-of ::strategy))
 
 ;;;;;;;;;;;;;;;;;;;;
