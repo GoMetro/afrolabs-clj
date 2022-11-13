@@ -154,15 +154,17 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn forward-topics-between-clusters
-  "This fn will forward messages between different kafka clusters. It is indended for interactive use. The return value is an IHaltable (afrolabs.components/halt <return-value) which will terminate the process."
-  ([consumer-group-id src-cluster-cfg dest-cluster-cfg]
-   (forward-topics-between-clusters (-> src-cluster-cfg
-                                        (update :strategies concat [[:strategy/AutoCommitOffsets]
-                                                                    [:strategy/ConsumerGroup consumer-group-id]]))
-                                    dest-cluster-cfg))
-  ([src-cluster-cfg dest-cluster-cfg]
-   (let [log-metrics-input-ch (csp/chan)
+(defn forward-topics-between-clusters-2
+  "This fn will forward messages between different kafka clusters. The return value is an IHaltable (afrolabs.components/halt <return-value) which will terminate the process.
+
+  This is version 2 of this fn that changes the parameter interface to allow use as a component."
+  ([src-cluster-cfg dest-cluster-cfg {:keys [consumer-group-id
+                                             health-component]}]
+   (let [src-cluster-cfg (cond-> src-cluster-cfg
+                           consumer-group-id
+                           (update :strategies concat [[:strategy/AutoCommitOffsets]
+                                                       [:strategy/ConsumerGroup consumer-group-id]]))
+         log-metrics-input-ch (csp/chan)
          log-metrics-output-ch (csp/chan)
          _ (-csp/partition-by-interval log-metrics-input-ch
                                        (x/reduce (fn
@@ -187,7 +189,9 @@
                                                                                       (into {}
                                                                                             (x/by-key :topic x/count)
                                                                                             msgs))))))]))
-                                dest-cluster-cfg)))
+                                dest-cluster-cfg
+                                (cond-> {}
+                                  health-component (assoc :health-component health-component)))))
          halted? (promise)
          do-halt (fn []
                    (swap! system
@@ -200,13 +204,50 @@
                    (deliver halted? true))]
 
      (csp/thread
-       (-health/wait-while-healthy (-> system deref :afrolabs.components.health/component))
+       (-health/wait-while-healthy (or health-component
+                                       (-> system deref :afrolabs.components.health/component)))
        (do-halt))
      (reify
        IHaltable
        (halt [_]
          (do-halt)
          @halted?)))))
+
+;;;;;;;;;;
+
+(s/def ::src-cluster-cfg :topic-forwarder-cfg/src)
+(s/def ::dest-cluster-cfg :topic-forwarder-cfg/dest)
+(s/def ::consumer-group-id #(and (string? %)
+                                 (seq %)))
+(s/def ::health-component :topic-forwarder-cfg/health-component)
+
+(s/def ::topic-forwarder-cfg (s/keys :req-un [::src-cluster-cfg
+                                              ::dest-cluster-cfg
+                                              ::consumer-group-id
+                                              ::health-component]))
+(-comp/defcomponent {::-comp/config-spec  ::topic-forwarder-cfg
+                     ::-comp/ig-kw        ::topic-forwarder}
+  [{:keys [src-cluster-cfg
+           dest-cluster-cfg
+           consumer-group-id
+           health-component]}]
+  (forward-topics-between-clusters-2 src-cluster-cfg
+                                     dest-cluster-cfg
+                                     {:consumer-group-id consumer-group-id
+                                      :health-component  health-component}))
+
+;;;;;;;;;;;;;;;;;;;;
+
+(defn forward-topics-between-clusters
+  "This fn will forward messages between different kafka clusters. It is indended for interactive use. The return value is an IHaltable (afrolabs.components/halt <return-value) which will terminate the process."
+  ([consumer-group-id src-cluster-cfg dest-cluster-cfg]
+   (forward-topics-between-clusters-2 src-cluster-cfg
+                                      dest-cluster-cfg
+                                      {:consumer-group-id consumer-group-id}))
+  ([src-cluster-cfg dest-cluster-cfg]
+   (forward-topics-between-clusters-2 src-cluster-cfg
+                                      dest-cluster-cfg
+                                      {})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
