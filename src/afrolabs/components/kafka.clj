@@ -946,6 +946,9 @@
                         strategies)]
         (shutdown-hook s consumer))
 
+      ;; close the consumer. this commits and exits cleanly
+      (.close consumer)
+
       ;; the value we are returning
       [:done true]
       (catch Throwable t
@@ -1014,7 +1017,11 @@
           (when (satisfies? -comp/IHaltable s)
             (-comp/halt s)))
 
-        (.close ^Consumer consumer)))))
+        ;; this is throwing a new exception in some cases
+        ;; part of an experiment to close the consumer in the main consumer's thread
+        #_(.close ^Consumer consumer)
+
+        ))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::kafka-consumer
                      ::-comp/config-spec ::consumer-config}
