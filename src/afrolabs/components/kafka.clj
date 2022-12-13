@@ -1132,6 +1132,8 @@
         nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
+                             (when (number? nr-of-partitions)
+                               (Integer. nr-of-partitions))
                              nr-of-partitions)
         ac (make-admin-client cfg)]
 
@@ -1199,6 +1201,8 @@
   (let [nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
+                             (when (number? nr-of-partitions)
+                               (Integer. nr-of-partitions))
                              nr-of-partitions)
         ac (make-admin-client cfg)
         existing-topics (-> ^AdminClient @ac
