@@ -165,6 +165,9 @@
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
 
+                 ;; rules engine
+                 [net.sekao/odoyle-rules "1.0.0"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes

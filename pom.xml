@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>96456da26e7611627f60f6a0122f19a8025b3c66</tag>
+    <tag>a02f662b2dd53633a7196c34200ee0afdb9cd14b</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -416,6 +416,11 @@
       <groupId>gsnewmark</groupId>
       <artifactId>ring-pratchett</artifactId>
       <version>0.1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>net.sekao</groupId>
+      <artifactId>odoyle-rules</artifactId>
+      <version>1.0.0</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
