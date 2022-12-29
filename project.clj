@@ -1,10 +1,17 @@
-(defproject afrolabs/components "0.1.0-SNAPSHOT"
+(defproject
+  pieterbreed/components
+  (or (System/getenv "VERSION")
+      "0.1.0-SNAPSHOT")
+
   :description "Shared clojure components"
   :url "https://github.com/Afrolabs/afrolabs-clj"
   :license {:name "MIT"
             :url "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
+  :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
+                                    :sign-releases false}]]
   :dependencies [[org.clojure/clojure "1.11.1"]
+                 [com.google.javascript/closure-compiler-unshaded "v20221102"]
                  [org.clojure/clojurescript "1.11.60"]
 
                  ;; property-based testing, generative testing
@@ -15,9 +22,10 @@
 
                  ;; I'm not sure why we're choosing an old version of jetty here.
                  ;; might be cognitect.
-                 [org.eclipse.jetty/jetty-util "9.4.44.v20210927"]
-                 [org.eclipse.jetty/jetty-http "9.4.44.v20210927"]
-                 [org.eclipse.jetty/jetty-client "9.4.44.v20210927"]
+                 ;; https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-util
+                 [org.eclipse.jetty/jetty-util "9.4.50.v20221201"]
+                 [org.eclipse.jetty/jetty-http "9.4.50.v20221201"]
+                 [org.eclipse.jetty/jetty-client "9.4.50.v20221201"]
 
                  ;; conversions between different kinds of casing
                  ;; camelCase -> snake_case -> kebab-case -> PascalCase
