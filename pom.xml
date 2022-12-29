@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>724785d9a9defbfa479de761af97ad0441fd482b</tag>
+    <tag>4f66d0dffec46f1003fd9de4fa20261358b8689f</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -81,7 +81,7 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojurescript</artifactId>
-      <version>1.11.54</version>
+      <version>1.11.60</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -111,12 +111,12 @@
     <dependency>
       <groupId>camel-snake-kebab</groupId>
       <artifactId>camel-snake-kebab</artifactId>
-      <version>0.4.2</version>
+      <version>0.4.3</version>
     </dependency>
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>jsonista</artifactId>
-      <version>0.3.5</version>
+      <version>0.3.7</version>
       <exclusions>
         <exclusion>
           <artifactId>jackson-core</artifactId>
@@ -132,12 +132,12 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>core.async</artifactId>
-      <version>1.5.648</version>
+      <version>1.6.673</version>
     </dependency>
     <dependency>
       <groupId>net.cgrand</groupId>
       <artifactId>xforms</artifactId>
-      <version>0.19.2</version>
+      <version>0.19.4</version>
     </dependency>
     <dependency>
       <groupId>com.rpl</groupId>
@@ -162,7 +162,7 @@
     <dependency>
       <groupId>http-kit</groupId>
       <artifactId>http-kit</artifactId>
-      <version>2.5.3</version>
+      <version>2.6.0</version>
     </dependency>
     <dependency>
       <groupId>buddy</groupId>
@@ -182,7 +182,7 @@
     <dependency>
       <groupId>ring</groupId>
       <artifactId>ring-core</artifactId>
-      <version>1.9.5</version>
+      <version>1.9.6</version>
     </dependency>
     <dependency>
       <groupId>metosin</groupId>
@@ -203,42 +203,42 @@
     <dependency>
       <groupId>clojure.java-time</groupId>
       <artifactId>clojure.java-time</artifactId>
-      <version>0.3.3</version>
+      <version>1.1.0</version>
     </dependency>
     <dependency>
       <groupId>org.threeten</groupId>
       <artifactId>threeten-extra</artifactId>
-      <version>1.7.0</version>
+      <version>1.7.2</version>
     </dependency>
     <dependency>
       <groupId>io.prometheus</groupId>
       <artifactId>simpleclient</artifactId>
-      <version>0.15.0</version>
+      <version>0.16.0</version>
     </dependency>
     <dependency>
       <groupId>io.prometheus</groupId>
       <artifactId>simpleclient_hotspot</artifactId>
-      <version>0.15.0</version>
+      <version>0.16.0</version>
     </dependency>
     <dependency>
       <groupId>clj-commons</groupId>
       <artifactId>iapetos</artifactId>
-      <version>0.1.12</version>
+      <version>0.1.13</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>api</artifactId>
-      <version>0.8.539</version>
+      <version>0.8.635</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>endpoints</artifactId>
-      <version>1.1.12.206</version>
+      <version>1.1.12.373</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sns</artifactId>
-      <version>822.2.1109.0</version>
+      <version>825.2.1268.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
@@ -248,17 +248,17 @@
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>s3</artifactId>
-      <version>822.2.1109.0</version>
+      <version>825.2.1250.0</version>
     </dependency>
     <dependency>
       <groupId>nrepl</groupId>
       <artifactId>nrepl</artifactId>
-      <version>0.9.0</version>
+      <version>1.0.0</version>
     </dependency>
     <dependency>
       <groupId>com.taoensso</groupId>
       <artifactId>timbre</artifactId>
-      <version>5.2.1</version>
+      <version>6.0.4</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -278,22 +278,22 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>malli</artifactId>
-      <version>0.8.4</version>
+      <version>0.9.2</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>log4j-over-slf4j</artifactId>
-      <version>1.7.36</version>
+      <version>2.0.6</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jul-to-slf4j</artifactId>
-      <version>1.7.36</version>
+      <version>2.0.6</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jcl-over-slf4j</artifactId>
-      <version>1.7.36</version>
+      <version>2.0.6</version>
     </dependency>
     <dependency>
       <groupId>com.fzakaria</groupId>
@@ -303,37 +303,37 @@
     <dependency>
       <groupId>viesti</groupId>
       <artifactId>timbre-json-appender</artifactId>
-      <version>0.2.6</version>
+      <version>0.2.8</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.13.3</version>
+      <version>2.14.1</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-      <version>2.13.3</version>
+      <version>2.14.1</version>
     </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-clients</artifactId>
-      <version>3.2.0</version>
+      <version>3.3.1</version>
     </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-streams</artifactId>
-      <version>3.2.0</version>
+      <version>3.3.1</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jdk8</artifactId>
-      <version>2.13.3</version>
+      <version>2.14.1</version>
     </dependency>
     <dependency>
       <groupId>com.google.re2j</groupId>
       <artifactId>re2j</artifactId>
-      <version>1.6</version>
+      <version>1.7</version>
     </dependency>
     <dependency>
       <groupId>org.javassist</groupId>
@@ -348,12 +348,12 @@
     <dependency>
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
-      <version>2.10.14</version>
+      <version>2.12.2</version>
     </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>connect-runtime</artifactId>
-      <version>3.2.0</version>
+      <version>3.3.1</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
@@ -364,12 +364,12 @@
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>kafka-json-serializer</artifactId>
-      <version>7.1.1</version>
+      <version>7.3.1</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
       <artifactId>kafka-json-schema-serializer</artifactId>
-      <version>7.1.1</version>
+      <version>7.3.1</version>
       <exclusions>
         <exclusion>
           <artifactId>kafka-clients</artifactId>
@@ -384,7 +384,7 @@
     <dependency>
       <groupId>io.confluent.ksql</groupId>
       <artifactId>ksqldb-api-client</artifactId>
-      <version>7.1.1</version>
+      <version>7.3.1</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
@@ -395,7 +395,7 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>1.7.36</version>
+      <version>2.0.6</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
@@ -405,7 +405,7 @@
     <dependency>
       <groupId>thheller</groupId>
       <artifactId>shadow-cljs</artifactId>
-      <version>2.19.0</version>
+      <version>2.20.16</version>
     </dependency>
     <dependency>
       <groupId>gsnewmark</groupId>
@@ -415,7 +415,7 @@
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
       <artifactId>clj-java-decompiler</artifactId>
-      <version>0.3.1</version>
+      <version>0.3.3</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -424,4 +424,4 @@
 <!-- This file was autogenerated by Leiningen.
   Please do not edit it directly; instead edit project.clj and regenerate it.
   It should not be considered canonical data. For more information see
-  https://github.com/technomancy/leiningen -->
+  https://codeberg.org/leiningen/leiningen -->
