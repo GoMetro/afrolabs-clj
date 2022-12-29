@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>pieterbreed</groupId>
+  <groupId>com.gitlab.pieterbreed</groupId>
   <artifactId>components</artifactId>
   <packaging>jar</packaging>
   <version>1.0.0</version>
@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>a02f662b2dd53633a7196c34200ee0afdb9cd14b</tag>
+    <tag>d55afa5edebb21cc1e00aa005b71f216c6ecd9f6</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>

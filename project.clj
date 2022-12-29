@@ -1,5 +1,5 @@
 (defproject
-  pieterbreed/components
+  com.gitlab.pieterbreed/components
   (or (System/getenv "VERSION")
       "0.1.0-SNAPSHOT")
 
