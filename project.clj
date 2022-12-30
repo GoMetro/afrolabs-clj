@@ -1,7 +1,6 @@
 (defproject
   com.gitlab.pieterbreed/components
-  (or (System/getenv "VERSION")
-      "0.1.0-SNAPSHOT")
+  "1.0.0"
 
   :description "Shared clojure components"
   :url "https://github.com/Afrolabs/afrolabs-clj"
