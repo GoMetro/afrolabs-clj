@@ -4,7 +4,7 @@
   <groupId>com.gitlab.pieterbreed</groupId>
   <artifactId>components</artifactId>
   <packaging>jar</packaging>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
   <name>components</name>
   <description>Shared clojure components</description>
   <url>https://github.com/Afrolabs/afrolabs-clj</url>
@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>0e77a16210113f92aac977c8fd0bc9872077b6c9</tag>
+    <tag>bb74e2f439f55e7928c62bdc3ac4245e00a89b38</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
