@@ -1,6 +1,6 @@
 (defproject
   com.gitlab.pieterbreed/components
-  "1.0.0"
+  "1.0.1"
 
   :description "Shared clojure components"
   :url "https://github.com/Afrolabs/afrolabs-clj"
@@ -10,7 +10,7 @@
   :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
                                     :sign-releases false}]]
   :dependencies [[org.clojure/clojure "1.11.1"]
-                 [com.google.javascript/closure-compiler-unshaded "v20221102"]
+                 [com.google.javascript/closure-compiler-unshaded "v20230103"]
                  [org.clojure/clojurescript "1.11.60"]
 
                  ;; property-based testing, generative testing
@@ -78,7 +78,7 @@
                  [metosin/reitit "0.5.18" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; https://github.com/dm3/clojure.java-time
-                 [clojure.java-time "1.1.0"]
+                 [clojure.java-time "1.2.0"]
                  [org.threeten/threeten-extra "1.7.2"]
 
                  ;; https://github.com/clj-commons/iapetos
@@ -88,7 +88,7 @@
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.635"]
-                 [com.cognitect.aws/endpoints "1.1.12.373"]
+                 [com.cognitect.aws/endpoints "1.1.12.381"]
                  [com.cognitect.aws/sns "825.2.1268.0"]
                  [com.cognitect.aws/sqs "822.2.1109.0"]
                  [com.cognitect.aws/s3 "825.2.1250.0"]
@@ -109,7 +109,7 @@
                  [fipp "0.6.26"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.9.2"]
+                 [metosin/malli "0.10.0"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
                  [org.slf4j/log4j-over-slf4j "2.0.6"]
@@ -159,7 +159,7 @@
                  [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
-                 [thheller/shadow-cljs "2.20.16"]
+                 [thheller/shadow-cljs "2.20.20"]
 
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
