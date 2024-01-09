@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>bb74e2f439f55e7928c62bdc3ac4245e00a89b38</tag>
+    <tag>0bd64cd895101f7e60a400d7fb90bf6b6b045904</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -81,12 +81,12 @@
     <dependency>
       <groupId>com.google.javascript</groupId>
       <artifactId>closure-compiler-unshaded</artifactId>
-      <version>v20230103</version>
+      <version>v20231112</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojurescript</artifactId>
-      <version>1.11.60</version>
+      <version>1.11.121</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -96,22 +96,22 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>tools.reader</artifactId>
-      <version>1.3.6</version>
+      <version>1.3.7</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-util</artifactId>
-      <version>9.4.50.v20221201</version>
+      <version>9.4.53.v20231009</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-http</artifactId>
-      <version>9.4.50.v20221201</version>
+      <version>9.4.53.v20231009</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-client</artifactId>
-      <version>9.4.50.v20221201</version>
+      <version>9.4.53.v20231009</version>
     </dependency>
     <dependency>
       <groupId>camel-snake-kebab</groupId>
@@ -121,7 +121,7 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>jsonista</artifactId>
-      <version>0.3.7</version>
+      <version>0.3.8</version>
       <exclusions>
         <exclusion>
           <artifactId>jackson-core</artifactId>
@@ -132,17 +132,17 @@
     <dependency>
       <groupId>failjure</groupId>
       <artifactId>failjure</artifactId>
-      <version>2.2.0</version>
+      <version>2.3.0</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>core.async</artifactId>
-      <version>1.6.673</version>
+      <version>1.6.681</version>
     </dependency>
     <dependency>
       <groupId>net.cgrand</groupId>
       <artifactId>xforms</artifactId>
-      <version>0.19.4</version>
+      <version>0.19.5</version>
     </dependency>
     <dependency>
       <groupId>com.rpl</groupId>
@@ -152,7 +152,7 @@
     <dependency>
       <groupId>integrant</groupId>
       <artifactId>integrant</artifactId>
-      <version>0.8.0</version>
+      <version>0.8.1</version>
     </dependency>
     <dependency>
       <groupId>aero</groupId>
@@ -167,12 +167,12 @@
     <dependency>
       <groupId>http-kit</groupId>
       <artifactId>http-kit</artifactId>
-      <version>2.6.0</version>
+      <version>2.7.0</version>
     </dependency>
     <dependency>
       <groupId>buddy</groupId>
       <artifactId>buddy-hashers</artifactId>
-      <version>1.8.158</version>
+      <version>2.0.167</version>
     </dependency>
     <dependency>
       <groupId>buddy</groupId>
@@ -182,12 +182,12 @@
     <dependency>
       <groupId>buddy</groupId>
       <artifactId>buddy-sign</artifactId>
-      <version>3.4.333</version>
+      <version>3.5.351</version>
     </dependency>
     <dependency>
       <groupId>ring</groupId>
       <artifactId>ring-core</artifactId>
-      <version>1.9.6</version>
+      <version>1.11.0</version>
     </dependency>
     <dependency>
       <groupId>metosin</groupId>
@@ -197,7 +197,7 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>reitit</artifactId>
-      <version>0.5.18</version>
+      <version>0.6.0</version>
       <exclusions>
         <exclusion>
           <artifactId>jackson-core</artifactId>
@@ -208,7 +208,7 @@
     <dependency>
       <groupId>clojure.java-time</groupId>
       <artifactId>clojure.java-time</artifactId>
-      <version>1.2.0</version>
+      <version>1.4.2</version>
     </dependency>
     <dependency>
       <groupId>org.threeten</groupId>
@@ -233,42 +233,42 @@
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>api</artifactId>
-      <version>0.8.635</version>
+      <version>0.8.686</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>endpoints</artifactId>
-      <version>1.1.12.381</version>
+      <version>1.1.12.626</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sns</artifactId>
-      <version>825.2.1268.0</version>
+      <version>847.2.1365.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sqs</artifactId>
-      <version>822.2.1109.0</version>
+      <version>847.2.1398.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>s3</artifactId>
-      <version>825.2.1250.0</version>
+      <version>848.2.1413.0</version>
     </dependency>
     <dependency>
       <groupId>nrepl</groupId>
       <artifactId>nrepl</artifactId>
-      <version>1.0.0</version>
+      <version>1.1.0</version>
     </dependency>
     <dependency>
       <groupId>com.taoensso</groupId>
       <artifactId>timbre</artifactId>
-      <version>6.0.4</version>
+      <version>6.3.1</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>data.json</artifactId>
-      <version>2.4.0</version>
+      <version>2.5.0</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -283,57 +283,42 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>malli</artifactId>
-      <version>0.10.0</version>
+      <version>0.13.0</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>log4j-over-slf4j</artifactId>
-      <version>2.0.6</version>
+      <version>2.0.10</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jul-to-slf4j</artifactId>
-      <version>2.0.6</version>
+      <version>2.0.10</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jcl-over-slf4j</artifactId>
-      <version>2.0.6</version>
+      <version>2.0.10</version>
     </dependency>
     <dependency>
       <groupId>com.fzakaria</groupId>
       <artifactId>slf4j-timbre</artifactId>
-      <version>0.3.21</version>
+      <version>0.4.1</version>
     </dependency>
     <dependency>
       <groupId>viesti</groupId>
       <artifactId>timbre-json-appender</artifactId>
-      <version>0.2.8</version>
+      <version>0.2.11</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.14.1</version>
+      <version>2.16.1</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-      <version>2.14.1</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>kafka-clients</artifactId>
-      <version>3.3.1</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>kafka-streams</artifactId>
-      <version>3.3.1</version>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.datatype</groupId>
-      <artifactId>jackson-datatype-jdk8</artifactId>
-      <version>2.14.1</version>
+      <version>2.16.1</version>
     </dependency>
     <dependency>
       <groupId>com.google.re2j</groupId>
@@ -341,66 +326,48 @@
       <version>1.7</version>
     </dependency>
     <dependency>
-      <groupId>org.javassist</groupId>
-      <artifactId>javassist</artifactId>
-      <version>3.26.0-GA</version>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>1.77</version>
     </dependency>
     <dependency>
-      <groupId>jakarta.xml.bind</groupId>
-      <artifactId>jakarta.xml.bind-api</artifactId>
-      <version>2.3.3</version>
+      <groupId>ch.qos.reload4j</groupId>
+      <artifactId>reload4j</artifactId>
+      <version>1.2.25</version>
+    </dependency>
+    <dependency>
+      <groupId>org.javassist</groupId>
+      <artifactId>javassist</artifactId>
+      <version>3.29.0-GA</version>
     </dependency>
     <dependency>
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
-      <version>2.12.2</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>connect-runtime</artifactId>
-      <version>3.3.1</version>
-      <exclusions>
-        <exclusion>
-          <artifactId>slf4j-log4j12</artifactId>
-          <groupId>org.slf4j</groupId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>io.confluent</groupId>
-      <artifactId>kafka-json-serializer</artifactId>
-      <version>7.3.1</version>
-    </dependency>
-    <dependency>
-      <groupId>io.confluent</groupId>
-      <artifactId>kafka-json-schema-serializer</artifactId>
-      <version>7.3.1</version>
-      <exclusions>
-        <exclusion>
-          <artifactId>kafka-clients</artifactId>
-          <groupId>org.apache.kafka</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>jersey-common</artifactId>
-          <groupId>org.glassfish.jersey.core</groupId>
-        </exclusion>
-      </exclusions>
+      <version>2.12.6</version>
     </dependency>
     <dependency>
       <groupId>io.confluent.ksql</groupId>
       <artifactId>ksqldb-api-client</artifactId>
-      <version>7.3.1</version>
+      <version>7.5.3</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
           <groupId>org.slf4j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>bc-fips</artifactId>
+          <groupId>org.bouncycastle</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>javassist</artifactId>
+          <groupId>org.javassist</groupId>
         </exclusion>
       </exclusions>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>2.0.6</version>
+      <version>2.0.10</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
@@ -410,7 +377,7 @@
     <dependency>
       <groupId>thheller</groupId>
       <artifactId>shadow-cljs</artifactId>
-      <version>2.20.20</version>
+      <version>2.26.2</version>
     </dependency>
     <dependency>
       <groupId>gsnewmark</groupId>
@@ -420,12 +387,12 @@
     <dependency>
       <groupId>net.sekao</groupId>
       <artifactId>odoyle-rules</artifactId>
-      <version>1.0.0</version>
+      <version>1.3.1</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
       <artifactId>clj-java-decompiler</artifactId>
-      <version>0.3.3</version>
+      <version>0.3.4</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -434,4 +401,4 @@
 <!-- This file was autogenerated by Leiningen.
   Please do not edit it directly; instead edit project.clj and regenerate it.
   It should not be considered canonical data. For more information see
-  https://github.com/technomancy/leiningen -->
+  https://codeberg.org/leiningen/leiningen -->
