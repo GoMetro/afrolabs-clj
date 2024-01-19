@@ -1170,6 +1170,7 @@
                                                          (catch NumberFormatException _ false)))
                                          :i pos-int?))
 (s/def ::ktable-segment-ms ::topic-delete-retention-ms)
+(s/def ::ktable-max-compaction-lag-ms ::topic-delete-retention-ms)
 (s/def ::ktable-min-cleanable-dirty-ratio (s/or :n nil?
                                                 :s (s/and string?
                                                           #(pos-int? (count %))
@@ -1185,7 +1186,8 @@
                                                      ::topic-delete-retention-ms
                                                      ::ktable-segment-ms
                                                      ::ktable-min-cleanable-dirty-ratio
-                                                     ::recreate-topics-with-bad-config])))
+                                                     ::recreate-topics-with-bad-config
+                                                     ::ktable-max-compaction-lag-ms])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
@@ -1195,6 +1197,7 @@
            topic-delete-retention-ms
            ktable-segment-ms
            ktable-min-cleanable-dirty-ratio
+           ktable-max-compaction-lag-ms
            recreate-topics-with-bad-config]
     :or   {recreate-topics-with-bad-config false}}]
 
@@ -1266,9 +1269,10 @@
                                                                    ^Optional (Optional/empty))
                                               _ (.configs new-topic
                                                           (cond-> {"cleanup.policy" "compact"}
-                                                            topic-delete-retention-ms (assoc "delete.retention.ms" (str topic-delete-retention-ms))
-                                                            ktable-segment-ms (assoc "segment.ms" (str ktable-segment-ms))
+                                                            topic-delete-retention-ms        (assoc "delete.retention.ms" (str topic-delete-retention-ms))
+                                                            ktable-segment-ms                (assoc "segment.ms" (str ktable-segment-ms))
                                                             ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty-ratio" (str ktable-min-cleanable-dirty-ratio))
+                                                            ktable-max-compaction-lag-ms     (assoc "max.compaction.lag.ms" (str ktable-max-compaction-lag-ms))
                                                             ))]
                                           new-topic)))
                                  (.createTopics ^AdminClient @ac))]
