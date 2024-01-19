@@ -463,3 +463,138 @@
             :partition-assignor       (.partitionAssignor cgdesc)
             :state                    (.toString (.state cgdesc))})
          r)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; backup topics
+
+(defn rename-topic:add-backup
+  "Used as a default argument to `rename-topic-strategy` param in `backup-topic`.
+
+  Creates a new topic by prepending \"backup-\" to the passed topic name."
+  [topic]
+  (str "backup-" topic))
+
+(comment
+
+  (rename-topic:add-backup "test") ;; "backup-test"
+
+  )
+
+(defn copy-topic
+  "Makes a \"copy\" of a topic by copying data from one topic, to a newly created topic.
+  This fn assumes both src and dest topics are on the same kafka cluster.
+
+  This fn blocks the calling thread.
+
+  Intended for interactive use.
+
+  This will keep on copying messages from the src topic until it reaches the current offset, and then stop.
+  This process /might/ therefore not stop if the src-topic is continually receiving new data, faster than it can be forwarded.
+
+  This is a dumb backup strategy as only the :key and the :value will be \"backed-up\" to a new topic.
+  Other data like partition, record-date etc will get the default treatment for produced records."
+  [& {:keys [src-topic dest-topic
+             bootstrap-server
+             confluent-api-key confluent-api-secret
+             consumer-group-id
+             nr-of-partitions]
+      :or   {dest-topic        (rename-topic:add-backup src-topic)
+             consumer-group-id (str "copy-topic-consumer-" (UUID/randomUUID))
+             nr-of-partitions     2}}]
+
+  (let [common-strategies (keep identity
+                                [(when (and confluent-api-key confluent-api-secret)
+                                   (-confluent/ConfluentCloud :api-key confluent-api-key
+                                                              :api-secret confluent-api-secret))])
+        admin-client-strategies common-strategies
+        src-topic-consumer-strategies (concat [(-bytes-serdes/ByteArraySerializer :consumer :both)
+                                               (-kafka/OffsetReset "earliest")
+                                               (-kafka/ConsumerGroup consumer-group-id)
+                                               (-kafka/SubscribeWithTopicsCollection [src-topic])
+                                               (-kafka/AutoCommitOffsets)]
+                                              common-strategies)
+        dest-topic-producer-strategies (concat [(-bytes-serdes/ByteArraySerializer :producer :both)
+                                                (-kafka/HighThroughput)]
+                                               common-strategies)
+
+        admin-client (-kafka/make-admin-client {:bootstrap-server bootstrap-server
+                                                :strategies       admin-client-strategies})
+        all-server-topics (list-all-topics :admin-client admin-client)]
+
+    (try
+      (when-not (all-server-topics src-topic)
+        (throw (ex-info "The src-topic does not exist and thus cannot be backed up." {:src-topic src-topic})))
+      (when (all-server-topics dest-topic)
+        (throw (ex-info "The dest-topic exists already and cannot be used as a backup topic." {:dest-topic dest-topic})))
+
+      (-kafka/assert-topics @admin-client [dest-topic]
+                            :nr-of-partitions nr-of-partitions)
+      (finally
+        (-comp/halt admin-client)))
+
+    (let [system-must-stop (promise)
+
+          ;; provides log feedback while the backup-system is running
+          log-metrics-input-ch (csp/chan)
+          _ (csp/go-loop [total-msgs 0]
+              (let [timeout (csp/timeout 30000)
+                    [v ch] (csp/alts! [log-metrics-input-ch
+                                       timeout])
+
+                    new-total
+                    (cond
+                      (= ch timeout)
+                      (do (log/info (format "Backed up a total of '%d' messages so far." total-msgs))
+                          total-msgs)
+
+                      (and (= ch log-metrics-input-ch)
+                           v)
+                      (+ total-msgs v)
+
+                      :else
+                      (do (log/info (format "Backed up a total of '%d' messages." total-msgs))
+                          nil))]
+                (when new-total
+                  (recur new-total))))
+
+          caught-up-ch (csp/chan)
+          _ (csp/go (csp/<! caught-up-ch)
+                    (info "Caught up to the end of the subscribed topics, closing...")
+                    (deliver system-must-stop true))
+
+          health-tripswitch (-healthcheck/make-fake-health-trip-switch system-must-stop)
+
+          system (atom (ig/init {::-kafka/kafka-producer {:bootstrap-server bootstrap-server
+                                                          :strategies       dest-topic-producer-strategies}
+                                 ::-kafka/kafka-consumer {:bootstrap-server bootstrap-server
+                                                          :strategies       (concat src-topic-consumer-strategies
+                                                                                    [(ig/ref ::-kafka/kafka-producer)
+                                                                                     (-kafka/CaughtUpNotifications caught-up-ch)])
+                                                          :service-health-trip-switch health-tripswitch
+                                                          :consumer/client            (reify
+                                                                                        IConsumerClient
+                                                                                        (consume-messages [_ msgs]
+                                                                                          (when (seq msgs)
+                                                                                            (csp/go (csp/>! log-metrics-input-ch
+                                                                                                            (count msgs))))
+                                                                                          (into [] (comp
+                                                                                                    (map #(select-keys % [:key :value]))
+                                                                                                    (map #(assoc % :topic dest-topic)))
+                                                                                                msgs)))}}))
+
+          halted? (promise)
+          do-halt (fn []
+                    (swap! system
+                           (fn [old-system]
+                             (when old-system
+                               (ig/halt! old-system))
+                             nil))
+                    (csp/close! log-metrics-input-ch)
+                    (csp/close! caught-up-ch)
+                    (deliver halted? true))]
+
+      ;; wait for the consumer to catch up to the current offset (or other exception)
+      ;; blocks the calling thread
+      @system-must-stop
+      (do-halt)
+      @halted?)))
