@@ -18,11 +18,13 @@
             [clojure.spec.alpha :as s]
             [afrolabs.components.kafka :as -kafka]
             [clojure.string :as str]
-            [clojure.set :as set])
+            [clojure.set :as set]
+            [afrolabs.components.kafka.utilities.healthcheck :as -healthcheck]
+            [afrolabs.components.kafka.bytes-serdes :as -bytes-serdes])
   (:import [afrolabs.components.health IServiceHealthTripSwitch]
            [afrolabs.components IHaltable]
            [java.util UUID]
-           [afrolabs.components.kafka IPostConsumeHook]
+           [afrolabs.components.kafka IPostConsumeHook IConsumerClient]
            [clojure.lang IDeref]))
 
 (defn load-messages-from-confluent-topic
@@ -73,21 +75,7 @@
                   (info "Caught up to the end of the subscribed topics, closing...")
                   (deliver loaded-enough-msgs true))
 
-        health-trip-switch
-        (reify
-          IServiceHealthTripSwitch
-          (indicate-unhealthy!
-              [_ _]
-
-            (log/error "load-messages-from-confluent-topic is unhealthy.")
-            (deliver loaded-enough-msgs true))
-          (wait-while-healthy
-              [_]
-            (log/warn "Cannot wait while the system is healthy..."))
-          (healthy?
-              [_]
-            (log/warn "Return constantly healthy...")
-            true))
+        health-trip-switch (-healthcheck/make-fake-health-trip-switch loaded-enough-msgs)
 
         consumer-client
         (reify
@@ -299,22 +287,26 @@
 (defn list-all-topics
   [& {:keys [bootstrap-server
              confluent-api-key confluent-api-secret ;; confluent
-             extra-strategies]
+             extra-strategies
+             admin-client]
       :or {extra-strategies []}}]
   (let [admin-client-strategies (concat (keep identity
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
                                         extra-strategies)
-        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
-                                           :strategies       admin-client-strategies})
+        admin-client' (or admin-client
+                          (k/make-admin-client {:bootstrap-server bootstrap-server
+                                                :strategies       admin-client-strategies}))
 
-        topics-result (set (-> @admin-client
+        topics-result (set (-> @admin-client'
                                (.listTopics)
                                (.names)
                                (.get)))]
 
     ;; to release the resources of the admin-client
-    (-comp/halt admin-client)
+    ;; but only if it was not provided as a parameter
+    (when-not admin-client
+      (-comp/halt admin-client'))
 
     topics-result))
 
