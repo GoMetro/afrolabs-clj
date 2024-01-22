@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>0bd64cd895101f7e60a400d7fb90bf6b6b045904</tag>
+    <tag>7db240e49edc3f34dcf241c2efb507ba7c5c7225</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
