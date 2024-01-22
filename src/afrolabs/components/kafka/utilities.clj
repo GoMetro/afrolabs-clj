@@ -524,11 +524,14 @@
     (try
       (when-not (all-server-topics src-topic)
         (throw (ex-info "The src-topic does not exist and thus cannot be backed up." {:src-topic src-topic})))
-      (when (all-server-topics dest-topic)
+      ;; on reflection, when restoring data to a topic, failing because it already exists is silly...
+      #_(when (all-server-topics dest-topic)
         (throw (ex-info "The dest-topic exists already and cannot be used as a backup topic." {:dest-topic dest-topic})))
 
-      (-kafka/assert-topics @admin-client [dest-topic]
-                            :nr-of-partitions nr-of-partitions)
+      ;; create the backup topic if it does not exist
+      (when-not (all-server-topics dest-topic)
+        (-kafka/assert-topics @admin-client [dest-topic]
+                              :nr-of-partitions nr-of-partitions))
       (finally
         (-comp/halt admin-client)))
 
