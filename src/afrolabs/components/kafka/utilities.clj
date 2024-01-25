@@ -324,12 +324,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn alter-topic-config
+  "Only with support for altering/increasing the number of partitions."
   [& {:as   alter-cfg
       :keys [topic-name
              partition-count
              confluent-api-key confluent-api-secret
              bootstrap-server
-             extra-strategies]}]
+             extra-strategies]
+      :or   {extra-strategies []}}]
   (let [admin-client-strategies (concat (keep identity
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
