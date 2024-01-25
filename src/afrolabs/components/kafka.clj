@@ -1271,7 +1271,7 @@
                                                           (cond-> {"cleanup.policy" "compact"}
                                                             topic-delete-retention-ms        (assoc "delete.retention.ms" (str topic-delete-retention-ms))
                                                             ktable-segment-ms                (assoc "segment.ms" (str ktable-segment-ms))
-                                                            ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty-ratio" (str ktable-min-cleanable-dirty-ratio))
+                                                            ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty.ratio" (str ktable-min-cleanable-dirty-ratio))
                                                             ktable-max-compaction-lag-ms     (assoc "max.compaction.lag.ms" (str ktable-max-compaction-lag-ms))
                                                             ))]
                                           new-topic)))
