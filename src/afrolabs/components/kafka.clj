@@ -1297,29 +1297,28 @@
            k :key
            v :value
            t :topic} & rest-msgs] new-msgs]
-    (let [next-old (cond
-                     ;; nothing is nil, save the value
-                     (not (or (nil? k)
-                              (nil? v)
-                              (nil? t)))
-                     (assoc-in old [t k] v)
+    (if-not head
+      old
+      (recur (cond
+               ;; nothing is nil, save the value
+               (not (or (nil? k)
+                        (nil? v)
+                        (nil? t)))
+               (assoc-in old [t k] v)
 
-                     ;; value (only) is nil, remove the value (tombstone)
-                     (and (nil? v)
-                          (not (or (nil? t)
-                                   (nil? k))))
-                     (update old t #(dissoc % k))
+               ;; value (only) is nil, remove the value (tombstone)
+               (and (nil? v)
+                    (not (or (nil? t)
+                             (nil? k))))
+               (update old t (fnil #(dissoc % k) {}))
 
-                     ;; default, return old value
-                     :else
-                     (do
-                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                     (str t) (str k) (str v)))
-                       old))]
-      (if (not rest-msgs)
-        next-old
-        (recur next-old
-               rest-msgs)))))
+               ;; default, return old value
+               :else
+               (do
+                 (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                               (str t) (str k) (str v)))
+                 old))
+             rest-msgs))))
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
