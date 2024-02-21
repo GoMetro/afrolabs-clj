@@ -65,9 +65,10 @@
            msg-filter       identity
            extra-strategies []
            offset-reset     "earliest"}}]
-  (let [loaded-msgs (atom nil)
+  (let [loaded-msgs (atom [])
         loaded-enough-msgs (promise)
 
+        running-total (atom 0)
         last-progress-update (atom (time/instant))
 
         caught-up-ch (csp/chan)
@@ -83,8 +84,8 @@
           (consume-messages
               [_ msgs]
             (let [msgs (filter msg-filter msgs)
-                  new-state (swap! loaded-msgs (partial apply conj) msgs)
-                  how-many (count new-state)]
+                  _ (swap! loaded-msgs conj msgs)
+                  how-many (swap! running-total + (count msgs))]
 
               ;; do we have enough yet? is anything ever enough?
               (when (and (not= nr-msgs :all)
@@ -124,15 +125,15 @@
 
     (try
       @loaded-enough-msgs
-      (infof "Done waiting, received a total of '%d' messages." (count @loaded-msgs))
+      (infof "Done waiting, received a total of '%d' messages." @running-total)
       (ig/halt! system)
       (info "System done shutting down.")
 
       ;; return value
       (or (when (and nr-msgs
                      (number? nr-msgs))
-            (vec (take nr-msgs @loaded-msgs)))
-          @loaded-msgs)
+            (vec (take nr-msgs (apply concat @loaded-msgs))))
+          (apply concat @loaded-msgs))
 
       (catch Throwable t
         (warn t "Caught a throwable while waiting for messages to load. Stopping the system...")
