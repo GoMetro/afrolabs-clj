@@ -24,7 +24,7 @@
            [java.util.concurrent Future]
            [java.util Map Collection UUID Optional]
            [afrolabs.components IHaltable]
-           [clojure.lang IDeref IRef]))
+           [clojure.lang IDeref IRef IBlockingDeref]))
 
 
 (comment
@@ -1051,7 +1051,7 @@
                                (apply comp)) admin-client-cfg)
         ac (AdminClient/create ^java.util.Map admin-client-cfg)]
     (reify
-      clojure.lang.IDeref
+      IDeref
       (deref [_] ac)
 
       IHaltable
@@ -1368,11 +1368,20 @@
         @has-caught-up-once
         @ktable-state)
 
+      IBlockingDeref
+      (deref [_ timeout-ms timeout-val]
+        (if-not (= timeout-val
+                   (deref has-caught-up-once
+                          timeout-ms
+                          timeout-val))
+          @ktable-state
+          timeout-val))
+
       IRef
-      (getValidator [this]  (.getValidator ^clojure.lang.Atom ktable-state))
-      (getWatches [this]    (.getWatches ^clojure.lang.Atom ktable-state))
-      (addWatch [this k cb] (.addWatch ^clojure.lang.Atom ktable-state k cb))
-      (removeWatch [this k] (.removeWatch ^clojure.lang.Atom ktable-state k)))))
+      (getValidator [_]  (.getValidator ^clojure.lang.Atom ktable-state))
+      (getWatches [_]    (.getWatches ^clojure.lang.Atom ktable-state))
+      (addWatch [_ k cb] (.addWatch ^clojure.lang.Atom ktable-state k cb))
+      (removeWatch [_ k] (.removeWatch ^clojure.lang.Atom ktable-state k)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; create a forwarder; a forwarder is configured with:
