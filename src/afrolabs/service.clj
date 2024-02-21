@@ -51,7 +51,8 @@
       (ig/init ig-cfg ig-cfg-ks)
       (catch Throwable t
         (log/error t "Error while initializing system. Shutting down the components that were started already...")
-        (ig/halt! (-> t ex-data :system))
+        (try (ig/halt! (-> t ex-data :system))
+             (catch Throwable _ nil))
         nil))))
 
 (defn as-service
