@@ -14,7 +14,8 @@
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]
             [taoensso.timbre :as log]
-            [afrolabs.components.kafka.edn-serdes :as -edn-serdes])
+            [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
+            [afrolabs.components.kafka.json-serdes :as -json-serdes])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
@@ -81,6 +82,31 @@
                                       :producer.msg/headers]))
 (s/def :producer/msgs (s/coll-of :producer/msg))
 
+(defmulti deserialize-consumer-record-header
+  "Provides a way to deserialize header values, based on the name of the header.
+  Default deserializer is to keep the value as a byte-array.
+
+  Returns the deserialized value itself."
+  (fn [header-name _header-value-bytes-array] header-name))
+
+(defmethod deserialize-consumer-record-header :default
+  [[_ value-byte-array]] value-byte-array)
+
+(defn- deserialize-consumer-record-header*
+  [[header-name header-value]]
+  [header-name (deserialize-consumer-record-header header-name header-value)])
+
+(defmulti serialize-producer-record-header-by-name
+  "Serializes a header by name of the header, rather than by type of the value.
+  The producer will attempt to use this multimethod first, and next try serialize-producer-record-header
+  to serialize by value type.
+
+  This MUST return a byte array."
+  (fn [[header-name _header-value]] header-name))
+
+(defmethod serialize-producer-record-header-by-name :default
+  [_ _])
+
 (defmulti serialize-producer-record-header
   "Knowledge of how to serialize header values into byte[] values."
   type)
@@ -106,7 +132,10 @@
 (deftype KafkaProducingHeader [key value]
   Header
   (^String key [_] key)
-  (^bytes value [_] (when value (serialize-producer-record-header value))))
+  (^bytes value [_]
+   (when value
+     (or (serialize-producer-record-header-by-name key value)
+         (serialize-producer-record-header value)))))
 
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
@@ -336,8 +365,10 @@
 (defstrategy JsonSerializer
   [& {producer-option :producer
       consumer-option :consumer
-      :or {producer-option :none
-           consumer-option :none}}]
+      :keys [deserialize-keys-as-keyword?]
+      :or {producer-option              :none
+           consumer-option              :none
+           deserialize-keys-as-keyword? false}}]
 
   ;; validation of arguments, fail early
   (let [allowed-values #{:key :value :both :none}]
@@ -360,15 +391,17 @@
     (update-consumer-cfg-hook
         [_ cfg]
       (cond-> cfg
-        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer")
-        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer")))))
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.json_serdes.Deserializer"
+                                                  -json-serdes/json-deserializer-keyfn-option-name (if deserialize-keys-as-keyword? "keyword" "identity"))
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.json_serdes.Deserializer"
+                                                  -json-serdes/json-deserializer-keyfn-option-name (if deserialize-keys-as-keyword? "keyword" "identity"))))))
 
 (defstrategy EdnSerializer
   [& {producer-option :producer
       consumer-option :consumer
 
       :keys [parse-inst-as-java-time]
-      :or   {producer-option         :noneu
+      :or   {producer-option         :none
              consumer-option         :none
              parse-inst-as-java-time false}}]
 
@@ -925,7 +958,8 @@
         (let [consumed-records           (into []
                                                (map (fn [^ConsumerRecord r]
                                                       (let [hdrs (into []
-                                                                       (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                       (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                             (map deserialize-consumer-record-header*))
                                                                        (-> r (.headers) (.toArray)))]
                                                         (cond->
                                                             {:topic     (.topic r)
@@ -1296,31 +1330,35 @@
 (defn merge-updates-with-ktable
   [old-ktable new-msgs]
   (loop [old                      old-ktable
-         [{:as head
-           k :key
-           v :value
-           t :topic} & rest-msgs] new-msgs]
+         [{:as  head
+           k    :key
+           v    :value
+           t    :topic
+           hdrs :headers} & rest-msgs] new-msgs]
     (if-not head
       old
-      (recur (cond
-               ;; nothing is nil, save the value
-               (not (or (nil? k)
-                        (nil? v)
-                        (nil? t)))
-               (assoc-in old [t k] v)
+      (recur (let [v (if-not hdrs
+                       v
+                       (with-meta v {:headers hdrs}))]
+               (cond
+                 ;; nothing is nil, save the value
+                 (not (or (nil? k)
+                          (nil? v)
+                          (nil? t)))
+                 (assoc-in old [t k] v)
 
-               ;; value (only) is nil, remove the value (tombstone)
-               (and (nil? v)
-                    (not (or (nil? t)
-                             (nil? k))))
-               (update old t (fnil #(dissoc % k) {}))
+                 ;; value (only) is nil, remove the value (tombstone)
+                 (and (nil? v)
+                      (not (or (nil? t)
+                               (nil? k))))
+                 (update old t (fnil #(dissoc % k) {}))
 
-               ;; default, return old value
-               :else
-               (do
-                 (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                               (str t) (str k) (str v)))
-                 old))
+                 ;; default, return old value
+                 :else
+                 (do
+                   (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                 (str t) (str k) (str v)))
+                   old)))
              rest-msgs))))
 
 (s/def ::ktable-id (s/and string?

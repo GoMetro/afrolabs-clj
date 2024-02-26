@@ -3,8 +3,17 @@
    :implements [org.apache.kafka.common.serialization.Serializer]
    :main false)
   (:require [clojure.data.json :as json]
-            [taoensso.timbre :as log])
+            [taoensso.timbre :as log]
+            [clojure.string :as str])
   (:import [org.apache.kafka.common.header Headers]))
+
+;;;;;;;;;;;;;;;;;;;;
+
+(def json-deserializer-keyfn-option-name
+  (let [option-kw ::json-deserializer-keyfn]
+    (-> (str (namespace option-kw) "_" (name option-kw))
+        (str/replace "." "_")
+        (str/replace "-" "_"))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -26,20 +35,39 @@
 
 (gen-class :name "afrolabs.components.kafka.json_serdes.Deserializer"
            :prefix "deser-"
+           :state state
+           :init init
            :main false
            :implements [org.apache.kafka.common.serialization.Deserializer])
 
+(defn deser-init []
+  [[] (atom nil)])
+
 (defn deser-deserialize
-  ([_ _ byte-data]
+  ([this _ byte-data]
    (try
-     (json/read-str (String. ^bytes byte-data))
+     (json/read-str (String. ^bytes byte-data)
+                    @(.state this))
      (catch Throwable t
        (log/error t "Unable to json deserialize."))))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
 (defn deser-close [_])
-(defn deser-configure [_ _ _])
+(defn deser-configure
+  [this config-settings _]
+  (when-let [read-opts (cond-> {}
+                         (get config-settings json-deserializer-keyfn-option-name)
+                         (assoc :key-fn
+                                (case (get config-settings json-deserializer-keyfn-option-name)
+                                  "keyword" keyword
+                                  "identity" identity
+                                  (do (log/warn (str "Option " json-deserializer-keyfn-option-name
+                                                     " for afrolabs.components.kafka.json_serdes.Deserializer "
+                                                     "was given value '" (get config-settings json-deserializer-keyfn-option-name) "' "
+                                                     "and this is not recognised. Using 'identity'."))
+                                      identity))))]
+    (reset! (.-state this) read-opts)))
 
 ;;;;;;;;;;;;;;;;;;;;
 
