@@ -24,7 +24,8 @@
 
 (defn ser-serialize
   ([_ _ data]
-   (.getBytes ^String (json/write-str data)))
+   (when data
+     (.getBytes ^String (json/write-str data))))
   ([this _ _ data]
    (ser-serialize this nil data)))
 
@@ -45,15 +46,14 @@
 
 (defn deser-deserialize
   ([this topic byte-data]
-   (when (and byte-data
-              (pos? (count byte-data)))
+   (when byte-data
      (try
        (json/read-str (String. ^bytes byte-data)
                       @(.state this))
        (catch Throwable t
          (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                            "The string value of the data is:\n" (String. ^bytes byte-data) "\n"
-                           "The byte-array value is: " (map identity byte-data)))))))
+                           "The byte-array value is: " (mapv identity byte-data)))))))
   ([this topic _headers byte-data]
    (deser-deserialize this topic byte-data)))
 

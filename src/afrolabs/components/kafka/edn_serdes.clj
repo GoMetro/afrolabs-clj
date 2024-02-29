@@ -14,7 +14,8 @@
 
 (defn ser-serialize
   ([_ _ data]
-   (.getBytes (pr-str data)))
+   (when data
+     (.getBytes (pr-str data))))
   ([this _ _ data]
    (ser-serialize this nil data)))
 
@@ -38,8 +39,9 @@
 
 (defn deser-deserialize
   ([this _ byte-data]
-   (edn/read-string @(.state this)
-                    (String. ^bytes byte-data)))
+   (when byte-data
+     (edn/read-string @(.state this)
+                      (String. ^bytes byte-data))))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
