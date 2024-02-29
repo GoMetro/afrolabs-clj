@@ -44,14 +44,18 @@
   [[] (atom nil)])
 
 (defn deser-deserialize
-  ([this _ byte-data]
-   (try
-     (json/read-str (String. ^bytes byte-data)
-                    @(.state this))
-     (catch Throwable t
-       (log/error t "Unable to json deserialize."))))
-  ([this _ _ byte-data]
-   (deser-deserialize this nil byte-data)))
+  ([this topic byte-data]
+   (when (and byte-data
+              (pos? (count byte-data)))
+     (try
+       (json/read-str (String. ^bytes byte-data)
+                      @(.state this))
+       (catch Throwable t
+         (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
+                           "The string value of the data is:\n" (String. ^bytes byte-data) "\n"
+                           "The byte-array value is: " (map identity byte-data)))))))
+  ([this topic _headers byte-data]
+   (deser-deserialize this topic byte-data)))
 
 (defn deser-close [_])
 (defn deser-configure
@@ -67,6 +71,7 @@
                                                      "was given value '" (get config-settings json-deserializer-keyfn-option-name) "' "
                                                      "and this is not recognised. Using 'identity'."))
                                       identity))))]
+    (log/debug (str "Setting json deserializer options to: " read-opts))
     (reset! (.-state this) read-opts)))
 
 ;;;;;;;;;;;;;;;;;;;;
