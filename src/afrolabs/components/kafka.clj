@@ -96,13 +96,17 @@
   [[header-name header-value]]
   [header-name (deserialize-consumer-record-header header-name header-value)])
 
+(comment
+
+  (def serialize-producer-record-header-by-name nil)
+  )
 (defmulti serialize-producer-record-header-by-name
   "Serializes a header by name of the header, rather than by type of the value.
   The producer will attempt to use this multimethod first, and next try serialize-producer-record-header
   to serialize by value type.
 
   This MUST return a byte array."
-  (fn [[header-name _header-value]] header-name))
+  (fn [header-name _header-value] header-name))
 
 (defmethod serialize-producer-record-header-by-name :default
   [_ _])
