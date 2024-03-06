@@ -90,7 +90,7 @@
   (fn [header-name _header-value-bytes-array] header-name))
 
 (defmethod deserialize-consumer-record-header :default
-  [[_ value-byte-array]] value-byte-array)
+  [_ value-byte-array] value-byte-array)
 
 (defn- deserialize-consumer-record-header*
   [[header-name header-value]]
