@@ -6,8 +6,10 @@
             [clojure.string :as str]
             [taoensso.timbre :as log]
             [afrolabs.components.health :as -health]
+            [afrolabs.version :as -version]
             [ring.util.http-response :as http-response]
-            [ring.middleware.pratchett])
+            [ring.middleware.pratchett]
+            [clojure.pprint])
   (:import [afrolabs.components IHaltable]
            [afrolabs.components.health IServiceHealthTripSwitch]))
 
@@ -88,29 +90,36 @@
 (s/def ::endpoint (s/and string?
                          #(pos-int? (count %))
                          #(str/starts-with? % "/")))
+(s/def ::version-info-resource string?)
 (s/def ::health-endpoint-cfg (s/keys :req-un [::health-component
-                                              ::endpoint]))
+                                              ::endpoint
+                                              ::version-info-resource]))
 
 (defn create-http-health-endpoint
   [{:keys [health-component
-           endpoint]
+           endpoint
+           version-info-resource]
     :as   cfg}]
 
   (s/assert ::health-endpoint-cfg cfg)
 
-  (reify
-    IHttpRequestHandler
-    (handle-http-request
-        [_ {:keys [uri request-method]}]
-      (when (and (= uri endpoint)
-                 (= :get request-method))
-        (if (-health/healthy? health-component)
-          (-> "Service is healthy."
-              (http-response/ok)
-              (http-response/content-type "text/plain"))
-          (-> "Service is NOT healthy :("
-              (http-response/internal-server-error)
-              (http-response/content-type "text/plain")))))))
+  (let [{:keys [git-ref
+                git-sha]} (-version/read-version-info version-info-resource)]
+    (reify
+      IHttpRequestHandler
+      (handle-http-request
+          [_ {:keys [uri request-method]}]
+        (when (and (= uri endpoint)
+                   (= :get request-method))
+          (if (-health/healthy? health-component)
+            (cond-> (-> "Service is healthy."
+                        (http-response/ok)
+                        (http-response/content-type "text/plain"))
+              git-ref (http-response/header "X-Version-GitRef" git-ref)
+              git-sha (http-response/header "X-Version-GitSHA" git-sha))
+            (-> "Service is NOT healthy :("
+                (http-response/internal-server-error)
+                (http-response/content-type "text/plain"))))))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::health-endpoint
                      ::-comp/config-spec ::health-endpoint-cfg}
