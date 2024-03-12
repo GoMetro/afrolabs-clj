@@ -92,8 +92,8 @@
                          #(str/starts-with? % "/")))
 (s/def ::version-info-resource string?)
 (s/def ::health-endpoint-cfg (s/keys :req-un [::health-component
-                                              ::endpoint
-                                              ::version-info-resource]))
+                                              ::endpoint]
+                                     :opt-un [::version-info-resource]))
 
 (defn create-http-health-endpoint
   [{:keys [health-component
@@ -104,7 +104,8 @@
   (s/assert ::health-endpoint-cfg cfg)
 
   (let [{:keys [git-ref
-                git-sha]} (-version/read-version-info version-info-resource)]
+                git-sha]} (when version-info-resource
+                            (-version/read-version-info version-info-resource))]
     (reify
       IHttpRequestHandler
       (handle-http-request
