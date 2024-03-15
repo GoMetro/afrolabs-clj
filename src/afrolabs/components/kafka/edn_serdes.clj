@@ -38,10 +38,14 @@
   [[] (atom nil)])
 
 (defn deser-deserialize
-  ([this _ byte-data]
+  ([this topic byte-data]
    (when byte-data
-     (edn/read-string @(.state this)
-                      (String. ^bytes byte-data))))
+     (try (edn/read-string @(.state this)
+                           (String. ^bytes byte-data))
+          (catch Throwable t
+            (log/error t (str "Unable to deserialize EDN from topic '" topic "'.\n"
+                              "The string value of the data is: \n" (String. ^bytes byte-data) "\n"
+                              "The byte-array value is: " (mapv identity byte-data)))))))
   ([this _ _ byte-data]
    (deser-deserialize this nil byte-data)))
 
