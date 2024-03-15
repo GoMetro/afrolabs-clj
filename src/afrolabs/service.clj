@@ -24,10 +24,15 @@
            config-file
            dotenv-file
            profile
-           ig-cfg-ks]
+           ig-cfg-ks
+           logging-params]
     :or {config-file (*ns*-as-config-file-path)}}]
 
-  (log/debug (str "Attempting to read config file at: " config-file))
+  (log/info (str "Reading config file at: " config-file))
+
+  (when logging-params
+    (apply afrolabs.logging/configure-logging!
+           logging-params))
 
   (let [dotenv-file (or dotenv-file ".env")
         ig-cfg (-config/read-config config-file
@@ -60,14 +65,12 @@
   [{:keys [logging-params]
     :as   cfg}]
 
-  (apply afrolabs.logging/configure-logging!
-         :disable-stacktrace-colors true
-         logging-params)
-
   (try
     (let [{health-component ::-health/component
            :as              ig-system}
-          (as-system cfg)]
+          (as-system (assoc cfg
+                            :logging-params (into [:disable-stacktrace-colors true]
+                                                  logging-params)))]
 
       (log/info "System started...")
       (-health/wait-while-healthy health-component)
