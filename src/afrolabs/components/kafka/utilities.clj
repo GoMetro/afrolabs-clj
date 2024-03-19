@@ -30,7 +30,7 @@
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
 
-  Intended for interactive use. Returns items in a list in reverse order (oldest at the end, newest at the beginning)
+  Intended for interactive use. Returns items in an unspecified order.
 
   - Specify :topics (a collection of strings) for which topics to subscribe to.
   - If you want to limit the number of messages you load, use :nr-msgs to specify a lower bound of loaded messages. You will get at least this many, unless there are too few messages in the topic, in which case you will get everything in the topic.
