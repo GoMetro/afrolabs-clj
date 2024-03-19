@@ -356,15 +356,18 @@
 
 (defn load-ktable
   [& {:as cfg
-      :keys [api-key api-secret
-             topics]}]
+      :keys [_bootstrap-server
+             api-key api-secret
+             topics
+             extra-strategies]}]
   (let [extra-strategies (->> [(when (and (seq (:api-key cfg))
                                           (seq (:api-secret cfg)))
                                  [(-confluent/ConfluentCloud cfg)])
                                (when topics
                                  [(-kafka/SubscribeWithTopicsCollection topics)])]
                               (keep identity)
-                              flatten)
+                              flatten
+                              (into extra-strategies))
         system-cfg {:afrolabs.components.health/component
                     {:intercept-signals                   false
                      :intercept-uncaught-exceptions       false
