@@ -167,7 +167,10 @@
       IRingMiddlewareProvider
       (get-middleware [_]
         (if-not (and git-ref git-sha)
-          []
+          (do (log/warn (str "Failed to load version info from resource '"
+                             version-info-resource
+                             "'. Unable to create version middleware."))
+              [])
           [(fn [handler]
              (fn [request]
                (let [response (handler request)]
