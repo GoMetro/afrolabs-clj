@@ -5,7 +5,6 @@
             [afrolabs.components.health :as -health]
             [clojure.string :as str]
             [taoensso.timbre :as log]
-            [afrolabs.components.health :as -health]
             [afrolabs.version :as -version]
             [ring.util.http-response :as http-response]
             [ring.middleware.pratchett]
@@ -24,6 +23,17 @@
               (filter #(<= 0 % 255))
               count)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; We want middleware to be applied in order.
+;; To be first in the middleware, means you will receive the request first.
+;; To be last in the middleware, means you will receive the request last, and the response first.
+
+(defprotocol IRingMiddlewareProvider
+  (get-middleware [_] "Returns a collection of ring-style middleware."))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (s/def ::health-component #(satisfies? -health/IServiceHealthTripSwitch %))
 ;; non-priveleged port number
 (s/def ::port (s/and pos-int?
@@ -37,12 +47,13 @@
 (s/def ::http-request-handler #(satisfies? IHttpRequestHandler %))
 (s/def ::worker-thread-name-prefix (s/and string?
                                           #(pos-int? (count %))))
-
+(s/def ::middleware-providers (s/coll-of #(satisfies? IRingMiddlewareProvider %)))
 (s/def ::handlers (s/coll-of ::http-request-handler))
 (s/def ::http-component-cfg (s/keys :req-un [::handlers]
                                     :opt-un [::port
                                              ::ip
-                                             ::worker-thread-name-prefix]))
+                                             ::worker-thread-name-prefix
+                                             ::middleware-providers]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -50,6 +61,7 @@
   [{:keys [port
            ip
            handlers
+           middleware-providers
            worker-thread-name-prefix]
     :or   {port 8000
            ip   "0.0.0.0"}
@@ -61,8 +73,16 @@
                        (map #(partial handle-http-request
                                       %)
                             handlers))
-        handler (ring.middleware.pratchett/wrap-pratchett handler)
-        s (httpkit/run-server handler
+        middleware-chain (or (when (seq middleware-providers)
+                               (->> middleware-providers
+                                    (mapcat get-middleware)
+                                    (reverse)
+                                    (apply comp)))
+                             identity)
+        handler' (-> handler
+                     (middleware-chain)
+                     (ring.middleware.pratchett/wrap-pratchett))
+        s (httpkit/run-server handler'
                               {:worker-name-prefix   worker-thread-name-prefix
                                :error-logger         (fn [txt ex]
                                                        (if-not ex
@@ -128,5 +148,39 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; The resource file identified with `version-info-resource` has to have this format:
+;; {:git-ref  "refs/heads/pwab/BSA-103-add-git-commit-branch-info-into-deployed-artifact-so-you-can-see-what-version-is-running"
+;;  :git-sha  "f7ba5fa0d8bfd1c8a078cae583f8b4cda39b59c3"}
 
 
+(s/def ::version-info-resource string?)
+
+(s/def ::git-version-middleware-cfg
+  (s/keys :req-un [::version-info-resource]
+          :opt-un []))
+
+(defn create-git-version-middleware
+  [{:as   _cfg
+    :keys [version-info-resource]}]
+  (let [{:keys [git-ref git-sha]} (-version/read-version-info version-info-resource)]
+    (reify
+      IRingMiddlewareProvider
+      (get-middleware [_]
+        (if-not (and git-ref git-sha)
+          (do (log/warn (str "Failed to load version info from resource '"
+                             version-info-resource
+                             "'. Unable to create version middleware."))
+              [])
+          [(fn [handler]
+             (fn [request]
+               (let [response (handler request)]
+                 (-> response
+                     (http-response/header "X-Version-GitRef" git-ref)
+                     (http-response/header "X-Version-GitSHA" git-sha)))))]))
+
+      -comp/IHaltable
+      (halt [_]))))
+
+(-comp/defcomponent {::-comp/config-spec ::git-version-middleware-cfg
+                     ::-comp/ig-kw       ::git-version-middleware}
+  [cfg] (create-git-version-middleware cfg))

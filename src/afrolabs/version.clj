@@ -10,17 +10,18 @@
     (when (= 0 exit)
       (str/trim out))))
 
-;; This nette/version.edn is created during build.
-;; In production we are counting on nette/version.edn being available.
+;; The file read by this fn has to have this format:
+;; {:git-ref  "refs/heads/pwab/BSA-103-add-git-commit-branch-info-into-deployed-artifact-so-you-can-see-what-version-is-running"
+;;  :git-sha  "f7ba5fa0d8bfd1c8a078cae583f8b4cda39b59c3"}
+
 (defn read-version-info
   [version-info-resource]
-  (or (let [loaded (some-> version-info-resource
+  (or (when-let [loaded (some-> version-info-resource
                            (io/resource)
                            (slurp)
                            (edn/read-string)
                            (select-keys [:git-sha :git-ref]))]
-        (when (seq loaded)
-          loaded))
+        loaded)
       {:git-ref (or (git-cmd "symbolic-ref" "HEAD")
                     "GIT-REF-FALLBACK")
        :git-sha (or (when-let [ref (git-cmd "rev-parse" "HEAD")]
