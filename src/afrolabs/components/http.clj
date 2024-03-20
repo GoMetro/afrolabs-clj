@@ -146,6 +146,11 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; The resource file identified with `version-info-resource` has to have this format:
+;; {:git-ref  "refs/heads/pwab/BSA-103-add-git-commit-branch-info-into-deployed-artifact-so-you-can-see-what-version-is-running"
+;;  :git-sha  "f7ba5fa0d8bfd1c8a078cae583f8b4cda39b59c3"}
+
+
 (s/def ::version-info-resource string?)
 
 (s/def ::git-version-middleware-cfg
