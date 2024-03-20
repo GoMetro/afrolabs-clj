@@ -73,10 +73,12 @@
                        (map #(partial handle-http-request
                                       %)
                             handlers))
-        middleware-chain (->> middleware-providers
-                              (mapcat get-middleware)
-                              (reverse)
-                              (apply comp))
+        middleware-chain (or (when (seq middleware-providers)
+                               (->> middleware-providers
+                                    (mapcat get-middleware)
+                                    (reverse)
+                                    (apply comp)))
+                             identity)
         handler' (-> handler
                      (middleware-chain)
                      (ring.middleware.pratchett/wrap-pratchett))
