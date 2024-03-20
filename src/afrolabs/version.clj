@@ -14,13 +14,12 @@
 ;; In production we are counting on nette/version.edn being available.
 (defn read-version-info
   [version-info-resource]
-  (or (let [loaded (some-> version-info-resource
+  (or (when-let [loaded (some-> version-info-resource
                            (io/resource)
                            (slurp)
                            (edn/read-string)
                            (select-keys [:git-sha :git-ref]))]
-        (when (seq loaded)
-          loaded))
+        loaded)
       {:git-ref (or (git-cmd "symbolic-ref" "HEAD")
                     "GIT-REF-FALLBACK")
        :git-sha (or (when-let [ref (git-cmd "rev-parse" "HEAD")]
