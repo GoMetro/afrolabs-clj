@@ -84,8 +84,10 @@
 (defmethod aero/reader 'long?
   [_ _ value]
   (when value
-    #?(:clj (Long/parseLong (str value)))
-    #?(:cljs (js/parseInt (str value)))))
+    (Long/parseLong (str value))))
+
+;; #?(:clj (Long/parseLong (str value)))
+;; #?(:cljs (js/parseInt (str value)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
