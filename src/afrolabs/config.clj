@@ -77,9 +77,13 @@
 (defmethod aero/reader 'regex
   [_ _ value] (re-pattern value))
 
+(defn interpret-string-as-csv-row
+  [row-string]
+  (first (csv/read-csv (java.io.StringReader. row-string))))
+
 (defmethod aero/reader 'csv-array
   [_ _ value]
-  (first (csv/read-csv (java.io.StringReader. value))))
+  (interpret-string-as-csv-row value))
 
 (defmethod aero/reader 'long?
   [_ _ value]
