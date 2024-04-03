@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>265e2fe4df59cbc7f3c9184e6af033a93057e3cb</tag>
+    <tag>dc365008ab248862a4a365ae55a560e3b1fd6151</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -76,17 +76,17 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojure</artifactId>
-      <version>1.11.1</version>
+      <version>1.11.2</version>
     </dependency>
     <dependency>
       <groupId>com.google.javascript</groupId>
       <artifactId>closure-compiler-unshaded</artifactId>
-      <version>v20231112</version>
+      <version>v20240317</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojurescript</artifactId>
-      <version>1.11.121</version>
+      <version>1.11.132</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -96,22 +96,22 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>tools.reader</artifactId>
-      <version>1.3.7</version>
+      <version>1.4.1</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-util</artifactId>
-      <version>9.4.53.v20231009</version>
+      <version>9.4.54.v20240208</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-http</artifactId>
-      <version>9.4.53.v20231009</version>
+      <version>9.4.54.v20240208</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-client</artifactId>
-      <version>9.4.53.v20231009</version>
+      <version>9.4.54.v20240208</version>
     </dependency>
     <dependency>
       <groupId>camel-snake-kebab</groupId>
@@ -142,7 +142,7 @@
     <dependency>
       <groupId>net.cgrand</groupId>
       <artifactId>xforms</artifactId>
-      <version>0.19.5</version>
+      <version>0.19.6</version>
     </dependency>
     <dependency>
       <groupId>com.rpl</groupId>
@@ -187,7 +187,7 @@
     <dependency>
       <groupId>ring</groupId>
       <artifactId>ring-core</artifactId>
-      <version>1.11.0</version>
+      <version>1.12.1</version>
     </dependency>
     <dependency>
       <groupId>metosin</groupId>
@@ -233,37 +233,42 @@
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>api</artifactId>
-      <version>0.8.686</version>
+      <version>0.8.692</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>endpoints</artifactId>
-      <version>1.1.12.626</version>
+      <version>1.1.12.682</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sns</artifactId>
-      <version>847.2.1365.0</version>
+      <version>857.2.1574.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>sqs</artifactId>
-      <version>847.2.1398.0</version>
+      <version>857.2.1574.0</version>
     </dependency>
     <dependency>
       <groupId>com.cognitect.aws</groupId>
       <artifactId>s3</artifactId>
-      <version>848.2.1413.0</version>
+      <version>868.2.1580.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.cognitect.aws</groupId>
+      <artifactId>monitoring</artifactId>
+      <version>857.2.1574.0</version>
     </dependency>
     <dependency>
       <groupId>nrepl</groupId>
       <artifactId>nrepl</artifactId>
-      <version>1.1.0</version>
+      <version>1.1.1</version>
     </dependency>
     <dependency>
       <groupId>com.taoensso</groupId>
       <artifactId>timbre</artifactId>
-      <version>6.3.1</version>
+      <version>6.5.0</version>
     </dependency>
     <dependency>
       <groupId>org.clojure</groupId>
@@ -273,7 +278,7 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>data.csv</artifactId>
-      <version>1.0.1</version>
+      <version>1.1.0</version>
     </dependency>
     <dependency>
       <groupId>fipp</groupId>
@@ -283,22 +288,22 @@
     <dependency>
       <groupId>metosin</groupId>
       <artifactId>malli</artifactId>
-      <version>0.13.0</version>
+      <version>0.15.0</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>log4j-over-slf4j</artifactId>
-      <version>2.0.10</version>
+      <version>2.0.12</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jul-to-slf4j</artifactId>
-      <version>2.0.10</version>
+      <version>2.0.12</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>jcl-over-slf4j</artifactId>
-      <version>2.0.10</version>
+      <version>2.0.12</version>
     </dependency>
     <dependency>
       <groupId>com.fzakaria</groupId>
@@ -308,17 +313,17 @@
     <dependency>
       <groupId>viesti</groupId>
       <artifactId>timbre-json-appender</artifactId>
-      <version>0.2.11</version>
+      <version>0.2.13</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.16.1</version>
+      <version>2.17.0</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-      <version>2.16.1</version>
+      <version>2.17.0</version>
     </dependency>
     <dependency>
       <groupId>com.google.re2j</groupId>
@@ -343,12 +348,12 @@
     <dependency>
       <groupId>joda-time</groupId>
       <artifactId>joda-time</artifactId>
-      <version>2.12.6</version>
+      <version>2.12.7</version>
     </dependency>
     <dependency>
       <groupId>io.confluent.ksql</groupId>
       <artifactId>ksqldb-api-client</artifactId>
-      <version>7.5.3</version>
+      <version>7.6.0</version>
       <exclusions>
         <exclusion>
           <artifactId>slf4j-log4j12</artifactId>
@@ -367,7 +372,7 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>2.0.10</version>
+      <version>2.0.12</version>
     </dependency>
     <dependency>
       <groupId>io.confluent</groupId>
@@ -377,7 +382,7 @@
     <dependency>
       <groupId>thheller</groupId>
       <artifactId>shadow-cljs</artifactId>
-      <version>2.26.2</version>
+      <version>2.28.3</version>
     </dependency>
     <dependency>
       <groupId>gsnewmark</groupId>
@@ -388,6 +393,11 @@
       <groupId>net.sekao</groupId>
       <artifactId>odoyle-rules</artifactId>
       <version>1.3.1</version>
+    </dependency>
+    <dependency>
+      <groupId>com.clojure-goes-fast</groupId>
+      <artifactId>clj-async-profiler</artifactId>
+      <version>1.2.0</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
