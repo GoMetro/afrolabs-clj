@@ -44,7 +44,7 @@
      (java.util.Arrays/copyOf ^bytes byte-data
                               (alength ^bytes byte-data))))
   ([this _ _ ^bytes byte-data]
-   (deser-deserialize-String-Headers-bytes this nil byte-data)))
+   (deser-deserialize-String-Headers-byte<> this nil byte-data)))
 
 (defn deser-deserialize-String-Headers-ByteBuffer
   ([_ _ ^ByteBuffer byte-data]
