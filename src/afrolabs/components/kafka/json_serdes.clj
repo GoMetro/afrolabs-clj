@@ -5,7 +5,9 @@
   (:require [clojure.data.json :as json]
             [taoensso.timbre :as log]
             [clojure.string :as str])
-  (:import [org.apache.kafka.common.header Headers]))
+  (:import
+   [org.apache.kafka.common.header Headers]
+   [java.nio ByteBuffer]))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -44,8 +46,8 @@
 (defn deser-init []
   [[] (atom nil)])
 
-(defn deser-deserialize
-  ([this topic byte-data]
+(defn deser-deserialize-String-Headers-byte<>
+  ([this topic ^bytes byte-data]
    (when byte-data
      (try
        (json/read-str (String. ^bytes byte-data)
@@ -55,7 +57,22 @@
                            "The string value of the data is:\n" (String. ^bytes byte-data) "\n"
                            "The byte-array value is: " (mapv identity byte-data)))))))
   ([this topic _headers byte-data]
-   (deser-deserialize this topic byte-data)))
+   (deser-deserialize-String-Headers-byte<> this topic byte-data)))
+
+(defn deser-deserialize-String-Headers-ByteBuffer
+  ([this topic ^ByteBuffer byte-data]
+   (when byte-data
+     (let [byte-array (make-array Byte/TYPE (.remaining byte-data))]
+       (.get byte-data byte-array)
+       (try
+         (json/read-str (String. ^bytes byte-array)
+                        @(.state this))
+         (catch Throwable t
+           (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
+                             "The string value of the data is:\n" (String. ^bytes byte-array) "\n"
+                             "The byte-array value is: " (mapv identity byte-array))))))))
+  ([this topic _headers byte-data]
+   (deser-deserialize-String-Headers-ByteBuffer this topic byte-data)))
 
 (defn deser-close [_])
 (defn deser-configure

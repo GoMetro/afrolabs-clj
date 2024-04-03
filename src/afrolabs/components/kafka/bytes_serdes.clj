@@ -4,7 +4,8 @@
   (:import [org.apache.kafka.common.header Headers]
            [afrolabs.components.kafka IUpdateConsumerConfigHook IUpdateProducerConfigHook]
            [org.apache.kafka.clients.consumer ConsumerConfig]
-           [org.apache.kafka.clients.producer ProducerConfig]))
+           [org.apache.kafka.clients.producer ProducerConfig]
+           [java.nio ByteBuffer]))
 
 (comment
 
@@ -37,13 +38,22 @@
            :main false
            :implements [org.apache.kafka.common.serialization.Deserializer])
 
-(defn deser-deserialize
-  ([_ _ byte-data]
+(defn deser-deserialize-String-Headers-byte<>
+  ([_ _ ^bytes byte-data]
    (when byte-data
      (java.util.Arrays/copyOf ^bytes byte-data
                               (alength ^bytes byte-data))))
+  ([this _ _ ^bytes byte-data]
+   (deser-deserialize-String-Headers-bytes this nil byte-data)))
+
+(defn deser-deserialize-String-Headers-ByteBuffer
+  ([_ _ ^ByteBuffer byte-data]
+   (when byte-data
+     (let [result (make-array Byte/TYPE (.remaining byte-data))]
+       (.get byte-data result)
+       result)))
   ([this _ _ byte-data]
-   (deser-deserialize this nil byte-data)))
+   (deser-deserialize-String-Headers-ByteBuffer this nil byte-data)))
 
 (defn deser-close [_])
 (defn deser-configure [_ _ _])
