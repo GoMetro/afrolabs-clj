@@ -122,6 +122,6 @@
   ([registry metric-re]
    (let [^io.prometheus.client.CollectorRegistry collector-registry (promr/raw registry)
          sample-data (enumeration-seq (.metricFamilySamples collector-registry))]
-     (sequence (comp (filter #(re-matches metric-re (.name ^io.prometheus.client.SummaryMetricFamily %)))
+     (sequence (comp (filter #(re-matches metric-re (.name ^io.prometheus.client.Collector$MetricFamilySamples %)))
                      (map metric-family-samples->data))
                sample-data))))
