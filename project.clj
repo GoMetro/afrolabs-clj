@@ -105,6 +105,7 @@
 
                  ;; https://github.com/clojure/data.csv
                  [org.clojure/data.csv "1.1.0"]
+                 [com.cnuernber/charred "1.034"]
 
                  ;; fip, dependency of both malli and shadow-cljs
                  [fipp "0.6.26"]

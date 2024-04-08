@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>dc365008ab248862a4a365ae55a560e3b1fd6151</tag>
+    <tag>39e163a944cec362ee24d3f02d7a3542f4cbc048</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -279,6 +279,11 @@
       <groupId>org.clojure</groupId>
       <artifactId>data.csv</artifactId>
       <version>1.1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.cnuernber</groupId>
+      <artifactId>charred</artifactId>
+      <version>1.034</version>
     </dependency>
     <dependency>
       <groupId>fipp</groupId>
