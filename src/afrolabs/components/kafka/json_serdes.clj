@@ -2,12 +2,20 @@
   (:gen-class
    :implements [org.apache.kafka.common.serialization.Serializer]
    :main false)
-  (:require [clojure.data.json :as json]
-            [taoensso.timbre :as log]
-            [clojure.string :as str])
+  (:require
+   ;; [clojure.data.json :as json]
+   [charred.api :as json]
+   [taoensso.timbre :as log]
+   [clojure.string :as str])
   (:import
    [org.apache.kafka.common.header Headers]
    [java.nio ByteBuffer]))
+
+(comment
+
+  (set! *warn-on-reflection* true)
+
+  )
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -24,10 +32,14 @@
            :main false
            :implements [org.apache.kafka.common.serialization.Serializer])
 
+(def writer (json/write-json-fn {}))
+
 (defn ser-serialize
   ([_ _ data]
    (when data
-     (.getBytes ^String (json/write-str data))))
+     (let [sw (java.io.StringWriter.)]
+       (writer sw data)
+       (.getBytes (.toString sw)))))
   ([this _ _ data]
    (ser-serialize this nil data)))
 
@@ -50,8 +62,8 @@
   ([this topic ^bytes byte-data]
    (when byte-data
      (try
-       (json/read-str (String. ^bytes byte-data)
-                      @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
+       ((:reader @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
+        byte-data)
        (catch Throwable t
          (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                            "The string value of the data is:\n" (String. ^bytes byte-data) "\n"
@@ -65,8 +77,8 @@
      (let [byte-array (make-array Byte/TYPE (.remaining byte-data))]
        (.get byte-data ^bytes byte-array)
        (try
-         (json/read-str (String. ^bytes byte-array)
-                        @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
+         ((:reader @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
+          byte-data)
          (catch Throwable t
            (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                              "The string value of the data is:\n" (String. ^bytes byte-array) "\n"
@@ -89,7 +101,8 @@
                                                      "and this is not recognised. Using 'identity'."))
                                       identity))))]
     (log/debug (str "Setting json deserializer options to: " read-opts))
-    (reset! (.-state ^afrolabs.components.kafka.json_serdes.Deserializer this) read-opts)))
+    (reset! (.-state ^afrolabs.components.kafka.json_serdes.Deserializer this)
+            {:reader (json/parse-json-fn read-opts)})))
 
 ;;;;;;;;;;;;;;;;;;;;
 
