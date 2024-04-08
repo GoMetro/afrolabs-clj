@@ -78,7 +78,7 @@
        (.get byte-data ^bytes byte-array)
        (try
          ((:reader @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
-          byte-data)
+          byte-array)
          (catch Throwable t
            (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                              "The string value of the data is:\n" (String. ^bytes byte-array) "\n"
