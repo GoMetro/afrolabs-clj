@@ -1410,7 +1410,18 @@
 
       IDeref
       (deref [_]
-        @has-caught-up-once
+        ;; wait, but with feedback every 5 seconds
+        (let [starting-millis (System/currentTimeMillis)]
+          (loop []
+            (let [caught-up? (deref has-caught-up-once
+                                    5000
+                                    :timeout)]
+              (when (= :timeout caught-up?)
+                (log/info (str "KTable '" consumer-group-id "' loading initial data. Waited "
+                               (long (/ (- (System/currentTimeMillis) starting-millis)
+                                        1000))
+                               " seconds so far."))
+                (recur)))))
         @ktable-state)
 
       IBlockingDeref
