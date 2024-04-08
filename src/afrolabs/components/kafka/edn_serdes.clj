@@ -9,6 +9,12 @@
    [org.apache.kafka.common.header Headers]
    [java.nio ByteBuffer]))
 
+(comment
+
+  (set! *warn-on-reflection* true)
+
+  )
+
 (gen-class :name "afrolabs.components.kafka.edn_serdes.Serializer"
            :prefix "ser-"
            :main false
@@ -42,7 +48,7 @@
 (defn deser-deserialize-String-Headers-byte<>
   ([this topic ^bytes byte-data]
    (when byte-data
-     (try (edn/read-string @(.state this)
+     (try (edn/read-string @(.state ^afrolabs.components.kafka.edn_serdes.Deserializer this)
                            (String. byte-data))
           (catch Throwable t
             (log/error t (str "Unable to deserialize EDN from topic '" topic "'.\n"
@@ -55,8 +61,8 @@
   ([this topic ^ByteBuffer byte-data]
    (when byte-data
      (let [byte-array (make-array Byte/TYPE (.remaining byte-data))]
-       (.get byte-data byte-array)
-       (try (edn/read-string @(.state this)
+       (.get byte-data ^bytes byte-array)
+       (try (edn/read-string @(.state ^afrolabs.components.kafka.edn_serdes.Deserializer this)
                              (String. ^bytes byte-array))
             (catch Throwable t
               (log/error t (str "Unable to deserialize EDN from topic '" topic "'.\n"
@@ -67,7 +73,7 @@
 
 (defn deser-close [_])
 (defn deser-configure [this config-settings _]
-  (reset! (.-state this)
+  (reset! (.-state ^afrolabs.components.kafka.edn_serdes.Deserializer this)
           {:readers (cond-> {}
                       (get config-settings (:parse-inst-as-java-time config-keys))
                       (assoc 'inst #(t/instant %)))}))

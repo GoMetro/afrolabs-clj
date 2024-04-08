@@ -51,7 +51,7 @@
    (when byte-data
      (try
        (json/read-str (String. ^bytes byte-data)
-                      @(.state this))
+                      @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
        (catch Throwable t
          (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                            "The string value of the data is:\n" (String. ^bytes byte-data) "\n"
@@ -63,10 +63,10 @@
   ([this topic ^ByteBuffer byte-data]
    (when byte-data
      (let [byte-array (make-array Byte/TYPE (.remaining byte-data))]
-       (.get byte-data byte-array)
+       (.get byte-data ^bytes byte-array)
        (try
          (json/read-str (String. ^bytes byte-array)
-                        @(.state this))
+                        @(.state ^afrolabs.components.kafka.json_serdes.Deserializer this))
          (catch Throwable t
            (log/error t (str "Unable to json deserialize from topic '" topic "'.\n"
                              "The string value of the data is:\n" (String. ^bytes byte-array) "\n"
@@ -89,7 +89,7 @@
                                                      "and this is not recognised. Using 'identity'."))
                                       identity))))]
     (log/debug (str "Setting json deserializer options to: " read-opts))
-    (reset! (.-state this) read-opts)))
+    (reset! (.-state ^afrolabs.components.kafka.json_serdes.Deserializer this) read-opts)))
 
 ;;;;;;;;;;;;;;;;;;;;
 

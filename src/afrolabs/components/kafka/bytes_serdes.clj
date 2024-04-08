@@ -50,7 +50,7 @@
   ([_ _ ^ByteBuffer byte-data]
    (when byte-data
      (let [result (make-array Byte/TYPE (.remaining byte-data))]
-       (.get byte-data result)
+       (.get byte-data ^bytes result)
        result)))
   ([this _ _ byte-data]
    (deser-deserialize-String-Headers-ByteBuffer this nil byte-data)))
