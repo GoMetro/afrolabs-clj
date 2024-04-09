@@ -157,11 +157,16 @@
         (csp/close! delivered-ch)
         (trace "onCompletion done.")))))
 
+(-prom/register-metric (prom/counter ::producer-msgs-produced
+                                     {:description "How many messages are being produce via producer-produce."
+                                      :labels [:topic]}))
+
 (defn- producer-produce
   [^Producer producer msgs]
   (s/assert :producer/msgs msgs)
   (doseq [{:as msg
            :keys [delivered-ch]} msgs]
+    (prom/inc (get-counter-producer-msgs-produced {:topic (:topic msg)}))
     (let [producer-record (ProducerRecord. (:topic msg)
                                            (when-let [p (:partition msg)] p)
                                            nil ;; timestamp, Long
