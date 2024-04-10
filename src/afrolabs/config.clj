@@ -87,7 +87,8 @@
 
 (defmethod aero/reader 'long?
   [_ _ value]
-  (when value
+  (when (and value
+             (seq value))
     (Long/parseLong (str value))))
 
 ;; #?(:clj (Long/parseLong (str value)))
