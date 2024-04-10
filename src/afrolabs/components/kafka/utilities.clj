@@ -249,12 +249,14 @@
              topic-predicate
              preserve-internal-and-confluent-topics]
       :or {extra-strategies                       []
-           preserve-internal-and-confluent-topics true
-           topic-predicate                        (complement #(str/starts-with? % "_"))}}]
+           preserve-internal-and-confluent-topics true}}]
   (when-not preserve-internal-and-confluent-topics
     (log/warn "Old option `preserve-internal-and-confluent-topics` used. This option is ignored. No internal topics will be deleted."))
 
-  (let [admin-client-strategies (concat (keep identity
+  (let [topic-predicate' (fn [topic-name]
+                           (and (not (str/starts-with? topic-name "_"))
+                                (if topic-predicate (topic-predicate topic-name) true)))
+        admin-client-strategies (concat (keep identity
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
                                         extra-strategies)
@@ -263,7 +265,7 @@
         list-topics-options (-> (ListTopicsOptions.)
                                 (.listInternal false))
         topics-to-be-deleted (into #{}
-                                   (filter topic-predicate)
+                                   (filter topic-predicate')
                                    (-> @admin-client
                                        (.listTopics list-topics-options)
                                        (.names)
