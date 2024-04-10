@@ -166,7 +166,9 @@
   (s/assert :producer/msgs msgs)
   (doseq [{:as msg
            :keys [delivered-ch]} msgs]
-    (prom/inc (get-counter-producer-msgs-produced {:topic (:topic msg)}))
+    (prom/inc (get-counter-producer-msgs-produced {:topic (:topic msg)})
+              1)
+
     (let [producer-record (ProducerRecord. (:topic msg)
                                            (when-let [p (:partition msg)] p)
                                            nil ;; timestamp, Long
