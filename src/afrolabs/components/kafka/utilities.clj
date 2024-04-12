@@ -288,6 +288,25 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn assert-topics
+  [topics nr-of-partitions
+   & {:keys [bootstrap-server
+             confluent-api-key confluent-api-secret
+             extra-strategies]}]
+  (let [admin-client-strategies
+        (concat (keep identity
+                      [(when (and confluent-api-key confluent-api-secret)
+                         (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
+                extra-strategies)
+        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
+                                           :strategies       admin-client-strategies})]
+    (-kafka/assert-topics @admin-client
+                          topics
+                          {:nr-of-partitions nr-of-partitions})
+    (-comp/halt admin-client)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn list-all-topics
   [& {:keys [bootstrap-server
              confluent-api-key confluent-api-secret ;; confluent
