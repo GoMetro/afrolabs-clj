@@ -32,7 +32,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn configure-logging!
-  [& {:keys [disable-stacktrace-colors
+  [& {:as logging-params
+      :keys [disable-stacktrace-colors
              min-level-maps
              min-level
              gck-logging?
@@ -42,7 +43,7 @@
       :or {disable-stacktrace-colors false
            min-level-maps            default-min-log-level-maps
            min-level                 :info}}]
-
+  (println (str logging-params))
   (let [default-tas-config {:level               min-level
                             :should-log-field-fn (constantly true)}]
     (cond

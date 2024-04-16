@@ -64,7 +64,7 @@
   "A service that /does logging/ is not an interactive terminal in prod and should not be writing ANSI color codes."
   [{:keys [logging-params]
     :as   cfg}]
-
+  (log/info (str "logging-params: " logging-params))
   (try
     (let [{health-component ::-health/component
            :as              ig-system}
