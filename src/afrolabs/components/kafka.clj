@@ -997,6 +997,9 @@
 (-prom/register-metric (prom/counter ::consumer-main-msgs-consumed
                                      {:description "All messages consumed by kafka consumer-main."
                                       :labels [:topic]}))
+(-prom/register-metric (prom/counter ::consumer-poll
+                                     {:description "Incemented every time a poll call is completed on the consumer."
+                                      :labels [:consumer-group-id]}))
 
 (defn -consumer-main
   [^Consumer consumer
@@ -1042,34 +1045,37 @@
 
       (combined-post-init-hooks consumer)
 
-      (while (not @must-stop)
-        (let [consumed-records           (into []
-                                               (map (fn [^ConsumerRecord r]
-                                                      (let [hdrs (into []
-                                                                       (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
-                                                                             (map deserialize-consumer-record-header*))
-                                                                       (-> r (.headers) (.toArray)))]
-                                                        (cond->
-                                                            {:topic     (.topic r)
-                                                             :partition (.partition r)
-                                                             :offset    (.offset r)
-                                                             :value     (.value r)
-                                                             :key       (.key r)
-                                                             :timestamp (t/instant (.timestamp r))}
-                                                          (seq hdrs) (assoc :headers hdrs)))))
-                                               (.poll consumer ^long poll-timeout))
-              ;; register prometheus metrics for msgs consumed per topic
-              _ (csp/go (doseq [[topic msgs-count] (into {}
-                                                         (x/by-key :topic x/count)
-                                                         consumed-records)]
-                          (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
-                                    msgs-count)))
-              consumption-results        (consume-messages client consumed-records)]
+      (let [consumer-group-id (.groupId (.groupMetaData  consumer))]
 
-          (when consumption-results
-            (combined-consumed-results-handler consumption-results))
+        (while (not @must-stop)
+          (let [consumed-records           (into []
+                                                 (map (fn [^ConsumerRecord r]
+                                                        (let [hdrs (into []
+                                                                         (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                               (map deserialize-consumer-record-header*))
+                                                                         (-> r (.headers) (.toArray)))]
+                                                          (cond->
+                                                              {:topic     (.topic r)
+                                                               :partition (.partition r)
+                                                               :offset    (.offset r)
+                                                               :value     (.value r)
+                                                               :key       (.key r)
+                                                               :timestamp (t/instant (.timestamp r))}
+                                                            (seq hdrs) (assoc :headers hdrs)))))
+                                                 (.poll consumer ^long poll-timeout))
+                _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
+                ;; register prometheus metrics for msgs consumed per topic
+                _ (doseq [[topic msgs-count] (into {}
+                                                   (x/by-key :topic x/count)
+                                                   consumed-records)]
+                    (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
+                              msgs-count))
+                consumption-results        (consume-messages client consumed-records)]
 
-          (combined-post-consume-hook consumer consumed-records)))
+            (when consumption-results
+              (combined-consumed-results-handler consumption-results))
+
+            (combined-post-consume-hook consumer consumed-records))))
 
       ;; we're done poll'ing and shutting down
       ;; give shutdown hooks a chance
