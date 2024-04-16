@@ -63,7 +63,7 @@
     (let [request-id (random-uuid)]
       (log/with-context+ {:request-id request-id}
         (http-response/header (handler req)
-                              "X-RequestId" (str request-id))))))
+                              "X-Request-Id" (str request-id))))))
 
 (defn basic-request-logging
   [handler {:as logging-context
