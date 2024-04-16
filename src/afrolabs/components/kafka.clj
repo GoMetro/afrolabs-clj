@@ -1045,7 +1045,7 @@
 
       (combined-post-init-hooks consumer)
 
-      (let [consumer-group-id (.groupId (.groupMetaData  consumer))]
+      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
 
         (while (not @must-stop)
           (let [consumed-records           (into []
