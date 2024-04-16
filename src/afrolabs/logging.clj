@@ -54,7 +54,7 @@
                          (when disable-stacktrace-colors
                            {:output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}})})
                          (when println-context?
-                           {:appenders {println (context-println-appender {})}})))))
+                           {:appenders {:println (context-println-appender {})}})))))
 
   (timbre/merge-config! {:min-level min-level-maps}))
 
