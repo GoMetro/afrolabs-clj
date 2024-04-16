@@ -28,11 +28,11 @@
            logging-params]
     :or {config-file (*ns*-as-config-file-path)}}]
 
-  (log/info (str "Reading config file at: " config-file))
-
   (when logging-params
     (apply afrolabs.logging/configure-logging!
            logging-params))
+
+  (log/info (str "Reading config file at: " config-file))
 
   (let [dotenv-file (or dotenv-file ".env")
         ig-cfg (-config/read-config config-file
@@ -64,7 +64,6 @@
   "A service that /does logging/ is not an interactive terminal in prod and should not be writing ANSI color codes."
   [{:keys [logging-params]
     :as   cfg}]
-  (log/info (str "logging-params: " logging-params))
   (try
     (let [{health-component ::-health/component
            :as              ig-system}
