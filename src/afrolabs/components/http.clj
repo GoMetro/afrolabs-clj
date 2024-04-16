@@ -57,6 +57,23 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn add-request-id
+  [handler]
+  (fn [req]
+    (let [request-id (random-uuid)]
+      (log/with-context+ {:request-id request-id}
+        (handler req)))))
+
+(defn basic-request-logging
+  [handler logging-context]
+  (fn [{:as req
+        :keys [uri]}]
+    (let [{:as   res
+           :keys [status]} (log/with-context+ logging-context
+                             (handler req))]
+      (log/debug (format "%s - %d" uri status))
+      res)))
+
 (defn create-http-component
   [{:keys [port
            ip
@@ -81,6 +98,8 @@
                              identity)
         handler' (-> handler
                      (middleware-chain)
+                     (basic-request-logging {:port port :ip ip})
+                     (add-request-id)
                      (ring.middleware.pratchett/wrap-pratchett))
         s (httpkit/run-server handler'
                               {:worker-name-prefix   worker-thread-name-prefix
@@ -92,7 +111,7 @@
                                                        (if-not ex
                                                          (log/warn txt)
                                                          (log/warn ex txt)))
-                               :event-logger         (fn [event-name] (log/debug event-name))
+                               ;; :event-logger         (fn [event-name] (log/debug event-name)) ;; replaced with (basic-request-logging)
                                :legacy-return-value? false
                                :port                 port
                                :ip                   ip})]
