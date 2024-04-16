@@ -644,6 +644,27 @@
         [_ cfg]
       (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))))
 
+(defn consumer-end-offsets
+  "Gets the (.endOffsets ...) of the consumer in nice data format."
+  [^Consumer consumer]
+  (let [topic-partition-assignment (.assignment consumer)]
+    (into #{}
+          (map (fn [[tp o]]
+                 {:topic     (.topic ^TopicPartition tp)
+                  :partition (.partition ^TopicPartition tp)
+                  :offset    o}))
+          (.endOffsets consumer topic-partition-assignment))))
+
+(defn consumer-current-offsets
+  [^Consumer consumer]
+  (let [topic-partition-assignment (.assignment consumer)]
+    (into #{}
+          (map (fn [tp]
+                 {:topic     (.topic ^TopicPartition tp)
+                  :partition (.partition ^TopicPartition tp)
+                  :offset    (.position consumer ^TopicPartition tp)}))
+          topic-partition-assignment)))
+
 ;; Once the consumer loads, fetches the endOffsets. Once the consumer reaches those offsets
 ;; will send this value to the channel. This is distinct from `CaughtUpNotifications` in that
 ;; the latter only fires when the consumer is up-to-date, whereas this strategy fires
@@ -667,29 +688,12 @@
       (post-init-hook
           [_ consumer]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [topic-partition-assignment (.assignment ^KafkaConsumer consumer)
-
-              end-offsets
-              (into #{}
-                    (map (fn [[tp o]] {:topic (.topic ^TopicPartition tp)
-                                       :partition (.partition ^TopicPartition tp)
-                                       :offset o}))
-                    (.endOffsets ^KafkaConsumer consumer
-                                 topic-partition-assignment))]
-          (reset! end-offsets-at-start end-offsets)))
+        (reset! end-offsets-at-start (consumer-end-offsets consumer)))
 
       IPostConsumeHook
       (post-consume-hook
           [_ consumer _consumed-records]
-        (let [topic-partition-assignment (.assignment ^KafkaConsumer consumer)
-
-              current-offsets
-              (into #{}
-                    (map (fn [tp] {:topic (.topic ^TopicPartition tp)
-                                   :partition (.partition ^TopicPartition tp)
-                                   :offset (.position ^KafkaConsumer consumer
-                                                      ^TopicPartition tp)}))
-                    topic-partition-assignment)]
+        (let [current-offsets (consumer-current-offsets consumer)]
           ;; when the end offsets at the start are less than the current offsets
           ;; we have caught up once
           (csp/go (when (every? (fn [{:keys [topic partition offset]}]
@@ -720,26 +724,10 @@
 
       IPostConsumeHook
       (post-consume-hook
-          [_ consumer consumed-records]
+          [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [topic-partition-assignment (.assignment ^KafkaConsumer consumer)
-
-              current-offsets
-              (into #{}
-                    (map (fn [tp] {:topic (.topic ^TopicPartition tp)
-                                   :partition (.partition ^TopicPartition tp)
-                                   :offset (.position ^KafkaConsumer consumer
-                                                      ^TopicPartition tp)}))
-                    topic-partition-assignment)
-
-              end-offsets
-              (into #{}
-                    (map (fn [[tp o]] {:topic (.topic ^TopicPartition tp)
-                                       :partition (.partition ^TopicPartition tp)
-                                       :offset o}))
-                    (.endOffsets ^KafkaConsumer consumer
-                                 topic-partition-assignment))
-              ]
+        (let [current-offsets (consumer-current-offsets consumer)
+              end-offsets (consumer-end-offsets consumer)]
           (when (= end-offsets current-offsets)
             (csp/>!! caught-up-ch
                      current-offsets)))))))
@@ -1000,6 +988,11 @@
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
+(-prom/register-metric (prom/gauge ::consumer-partition-lag
+                                   {:description "The lag in offsets per consumer-group-id and partition."
+                                    :labels [:consumer-group-id
+                                             :topic
+                                             :partition]}))
 
 (defn -consumer-main
   [^Consumer consumer
@@ -1064,6 +1057,19 @@
                                                                  :timestamp (t/instant (.timestamp r))}
                                                               (seq hdrs) (assoc :headers hdrs)))))
                                                    (.poll consumer ^long poll-timeout)))
+                end-offsets (consumer-end-offsets consumer)
+                current-offsets (consumer-current-offsets consumer)
+                _ (doseq [{:keys [topic partition offset]} current-offsets
+                          :let [end-offset (:offset
+                                            (first
+                                             (filter #(and (= (:partition %) partition)
+                                                           (= (:topic %) topic))
+                                                     end-offsets)))]]
+                    (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
+                                                                 :partition         partition
+                                                                 :offset            offset}
+                                                                (- end-offset offset))))
+
                 _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
                 ;; register prometheus metrics for msgs consumed per topic
                 _ (doseq [[topic msgs-count] (into {}
