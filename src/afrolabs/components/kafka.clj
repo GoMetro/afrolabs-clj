@@ -1066,8 +1066,8 @@
                                                            (= (:topic %) topic))
                                                      end-offsets)))]]
                     (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
-                                                                 :partition         partition
-                                                                 :offset            offset})
+                                                                 :topic             topic
+                                                                 :partition         partition})
                               (- end-offset offset)))
 
                 _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
