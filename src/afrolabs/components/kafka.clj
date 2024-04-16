@@ -1067,8 +1067,8 @@
                                                      end-offsets)))]]
                     (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
                                                                  :partition         partition
-                                                                 :offset            offset}
-                                                                (- end-offset offset))))
+                                                                 :offset            offset})
+                              (- end-offset offset)))
 
                 _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
                 ;; register prometheus metrics for msgs consumed per topic
