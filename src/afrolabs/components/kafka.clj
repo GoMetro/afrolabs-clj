@@ -1077,17 +1077,19 @@
 
             (combined-post-consume-hook consumer consumed-records))))
 
-      ;; we're done poll'ing and shutting down
-      ;; give shutdown hooks a chance
-      (doseq [s (filter (partial satisfies? IShutdownHook)
-                        strategies)]
-        (shutdown-hook s consumer))
-
       ;; the value we are returning
       [:done true]
       (catch Throwable t
         [:error t])
       (finally
+        ;; we're done poll'ing and shutting down
+        ;; give shutdown hooks a chance
+        (doseq [s (filter (partial satisfies? IShutdownHook)
+                          strategies)]
+          (try (shutdown-hook s consumer)
+               (catch Throwable t
+                 (error t (str "Exception while calling shutdown-hook.")))))
+
         ;; close the consumer. this commits and exits cleanly
         (.close consumer)))))
 
