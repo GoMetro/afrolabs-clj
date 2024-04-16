@@ -56,7 +56,7 @@
                          (when println-context?
                            {:appenders {:println (context-println-appender {})}})))))
 
-  (timbre/merge-config! {:min-level min-level-maps})
+  (timbre/merge-config! {:min-level-maps min-level-maps})
   (println (str timbre/*config*)))
 
 
