@@ -1048,21 +1048,22 @@
       (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
 
         (while (not @must-stop)
-          (let [consumed-records           (into []
-                                                 (map (fn [^ConsumerRecord r]
-                                                        (let [hdrs (into []
-                                                                         (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
-                                                                               (map deserialize-consumer-record-header*))
-                                                                         (-> r (.headers) (.toArray)))]
-                                                          (cond->
-                                                              {:topic     (.topic r)
-                                                               :partition (.partition r)
-                                                               :offset    (.offset r)
-                                                               :value     (.value r)
-                                                               :key       (.key r)
-                                                               :timestamp (t/instant (.timestamp r))}
-                                                            (seq hdrs) (assoc :headers hdrs)))))
-                                                 (.poll consumer ^long poll-timeout))
+          (let [consumed-records           (log/with-context+ {:consume-id (random-uuid)}
+                                             (into []
+                                                   (map (fn [^ConsumerRecord r]
+                                                          (let [hdrs (into []
+                                                                           (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                                 (map deserialize-consumer-record-header*))
+                                                                           (-> r (.headers) (.toArray)))]
+                                                            (cond->
+                                                                {:topic     (.topic r)
+                                                                 :partition (.partition r)
+                                                                 :offset    (.offset r)
+                                                                 :value     (.value r)
+                                                                 :key       (.key r)
+                                                                 :timestamp (t/instant (.timestamp r))}
+                                                              (seq hdrs) (assoc :headers hdrs)))))
+                                                   (.poll consumer ^long poll-timeout)))
                 _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
                 ;; register prometheus metrics for msgs consumed per topic
                 _ (doseq [[topic msgs-count] (into {}
@@ -1102,8 +1103,7 @@
   (let [consumer-group-id (get consumer-properties ConsumerConfig/GROUP_ID_CONFIG "<UNAVAILABLE>")]
     (csp/go
       (let [[status xtra :as thread-result]
-            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id
-                                                    :consume-id        (random-uuid)}
+            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id}
                                   (-consumer-main consumer
                                                   must-stop
                                                   :consumer-config consumer-config
