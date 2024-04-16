@@ -1097,21 +1097,24 @@
    {:as   consumer-config
     :keys [service-health-trip-switch]}
    consumer-properties has-stopped]
-  (csp/go
-    (let [[status xtra :as thread-result]
-          (csp/<! (csp/thread (-consumer-main consumer
-                                              must-stop
-                                              :consumer-config consumer-config
-                                              :consumer-properties consumer-properties)))]
-      (when (= :error status)
-        (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
-               "Kafka consumer main thread finished with exception. Tripping the health switch...")
-        (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
+  (let [consumer-group-id (get consumer-properties ConsumerConfig/GROUP_ID_CONFIG "<UNAVAILABLE>")]
+    (csp/go
+      (let [[status xtra :as thread-result]
+            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id}
+                                  (-consumer-main consumer
+                                                  must-stop
+                                                  :consumer-config consumer-config
+                                                  :consumer-properties consumer-properties))))]
+        (when (= :error status)
+          (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
+                 (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
+                         consumer-group-id))
+          (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
 
-      ;; Anyway deliver the value into the promise.
-      ;; At the time this code is written, the return value is not used.
-      (deliver has-stopped
-               (or xtra status thread-result)))))
+        ;; Anyway deliver the value into the promise.
+        ;; At the time this code is written, the return value is not used.
+        (deliver has-stopped
+                 (or xtra status thread-result))))))
 
 (defn make-consumer
   [{:as            consumer-config
