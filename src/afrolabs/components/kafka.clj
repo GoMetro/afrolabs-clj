@@ -1102,7 +1102,8 @@
   (let [consumer-group-id (get consumer-properties ConsumerConfig/GROUP_ID_CONFIG "<UNAVAILABLE>")]
     (csp/go
       (let [[status xtra :as thread-result]
-            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id}
+            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id
+                                                    :consume-id        (random-uuid)}
                                   (-consumer-main consumer
                                                   must-stop
                                                   :consumer-config consumer-config
