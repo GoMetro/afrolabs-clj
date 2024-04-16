@@ -1083,13 +1083,13 @@
                         strategies)]
         (shutdown-hook s consumer))
 
-      ;; close the consumer. this commits and exits cleanly
-      (.close consumer)
-
       ;; the value we are returning
       [:done true]
       (catch Throwable t
-        [:error t]))))
+        [:error t])
+      (finally
+        ;; close the consumer. this commits and exits cleanly
+        (.close consumer)))))
 
 (defn- background-wait-on-stop-signal
   "Extracted only because the debugger chokes on core.async."
