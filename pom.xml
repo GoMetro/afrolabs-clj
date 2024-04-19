@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>39e163a944cec362ee24d3f02d7a3542f4cbc048</tag>
+    <tag>8e1cc31ecf727b676a873c6cd6946880c280cda9</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -259,6 +259,11 @@
       <groupId>com.cognitect.aws</groupId>
       <artifactId>monitoring</artifactId>
       <version>857.2.1574.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.cognitect.aws</groupId>
+      <artifactId>logs</artifactId>
+      <version>868.2.1584.0</version>
     </dependency>
     <dependency>
       <groupId>nrepl</groupId>

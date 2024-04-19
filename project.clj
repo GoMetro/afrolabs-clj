@@ -93,6 +93,7 @@
                  [com.cognitect.aws/sqs "857.2.1574.0"]
                  [com.cognitect.aws/s3 "868.2.1580.0"]
                  [com.cognitect.aws/monitoring "857.2.1574.0"]
+                 [com.cognitect.aws/logs "868.2.1584.0"]
 
                  ;; NREPL
                  [nrepl "1.1.1"]
