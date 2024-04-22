@@ -61,15 +61,21 @@
         nil))))
 
 (defn as-service
-  "A service that /does logging/ is not an interactive terminal in prod and should not be writing ANSI color codes."
+  "A service that /does logging/ is not an interactive terminal in prod and should not be writing ANSI color codes.
+  - `logging-params` may have several values:
+    - `nil` - default logging setup will be performed
+    - sequence of parameters that will be passed to `as-system`. Read the code there to understand what it will do.
+    - `:component` - Used when there is a seperate logging integrant component. This is a backward-compatibility flag.
+  "
   [{:keys [logging-params]
     :as   cfg}]
   (try
     (let [{health-component ::-health/component
            :as              ig-system}
-          (as-system (assoc cfg
-                            :logging-params (into [:disable-stacktrace-colors true]
-                                                  logging-params)))]
+          (as-system (cond-> cfg
+                       (not= :component logging-params)
+                       (assoc :logging-params (into [:disable-stacktrace-colors true]
+                                                    logging-params))))]
 
       (log/info "System started...")
       (-health/wait-while-healthy health-component)

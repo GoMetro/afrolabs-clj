@@ -21,14 +21,17 @@
   "timbre println appender that additionally prints out the logging context as part of the log output.
 
   based on example at https://github.com/ptaoussanis/timbre/blob/master/src/taoensso/timbre/appenders/example.clj"
-  [_appender-opts_]
-  {:enabled? true
-   :fn       (fn [data]
-               (let [{:keys [output_ context]} data
-                     output                    (force output_)]
-                 (atomic-println (str output
-                                      (when (seq context)
-                                        (str " :: [" context "]"))))))})
+  [& {:keys [colorized-output?]
+      :or   {colorized-output? false}}]
+  (cond-> {:enabled? true
+           :fn       (fn [data]
+                       (let [{:keys [output_ context]} data
+                             output                    (force output_)]
+                         (atomic-println (str output
+                                              (when (seq context)
+                                                (str " :: [" context "]"))))))}
+    (not colorized-output?)
+    (assoc :output-fn (partial timbre/default-output-fn {:stacktrace-fonts {}}))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn configure-logging!

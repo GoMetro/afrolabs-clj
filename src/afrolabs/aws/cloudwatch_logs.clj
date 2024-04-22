@@ -1,4 +1,4 @@
-(ns afrolabs.components.cloudwatch-logs
+(ns afrolabs.aws.cloudwatch-logs
   "Exports a component for integration with timbre that exports logs to cloudwatch. "
   (:require
    [afrolabs.components.aws.sso :as -aws-sso-profile-provider]
@@ -103,16 +103,50 @@
                 log-events)]
     (conj earlier-batches current-batch)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(s/def ::non-empty-string (s/and string?
+                                 #(pos? (count %))))
+(s/def ::log-group ::non-empty-string)
+(s/def ::log-stream ::non-empty-string)
+(s/def ::create-log-stream? boolean?)
+(s/def ::batch-period-ms pos-int?)
+(s/def ::client any?)
+
+(s/def ::create-log-dispatcher-args
+  (s/cat :client ::client
+         :group  ::log-group
+         :stream ::log-stream
+         :opts   (s/keys :opt-un [::batch-period-ms
+                                  ::create-log-stream?])))
+
+(comment
+  (s/valid? ::create-log-dispatcher-args
+            [{} "group" "stream"
+             {:batch-period-ms 1000
+              :create-log-stream? true}])
+  )
+
+
 (defn create-log-dispatcher
   "Returns a function, that accepts a single log-event.
   This log-event will be batched with others and uploaded to cloudwatch every batch-period ms.
   When called with `:stop` as a paremeter, will stop the internal thread and therefore stop uploading logs.
   Each log-event must have a string :message and :timestamp with epoch-ms."
-  [client group stream & {:as   _opts
-                          :keys [batch-period-ms]
-                          :or   {batch-period-ms 1000}}]
+  [client group stream & {:as   opts
+                          :keys [batch-period-ms
+                                 create-log-stream?]
+                          :or   {batch-period-ms    1000
+                                 create-log-stream? true}}]
+  (-spec/assert! ::create-log-dispatcher-args [client group stream opts])
   (let [enqued-log-events (atom [])
         stop-signal (csp/chan)]
+
+    (when create-log-stream?
+      (let [res (create-log-stream client group stream)]
+        (when (:cognitect.anomalies/category res)
+          (throw (ex-info (format "Unable to create the log stream. Does the log-group (%s) exist?" group)
+                          res)))))
 
     (csp/thread
       (loop [to (csp/timeout batch-period-ms)]
@@ -133,110 +167,3 @@
         (swap! enqued-log-events conj log-event)
         (csp/close! stop-signal)))))
 
-(comment
-
-  (def stop
-    (let [stop? (atom false)]
-      (csp/thread
-        (let [dispatch-log (create-log-dispatcher cloudwatch "pieter-test" "test-1")]
-          (loop [x 0]
-            (Thread/sleep 100)
-            (dispatch-log {:message   (str "testing 2: " x)
-                           :timestamp (.toEpochMilli ^java.time.Instant (t/instant))})
-            (when (not @stop?)
-              (recur (inc x))))
-          (dispatch-log :stop)))
-      (fn [] (reset! stop? true))))
-  (stop)
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; component
-;;
-;; There is probably no need to have more than once of this component, so no -comp/defcomponent for this one.
-
-(s/def ::non-empty-string (s/and string?
-                                 #(pos? (count %))))
-(s/def ::log-group ::non-empty-string)
-(s/def ::log-stream ::non-empty-string)
-(s/def ::create-log-stream? boolean?)
-(s/def ::disabled? boolean?)
-(s/def ::aws-region ::non-empty-string)
-(s/def ::aws-access-key-id (s/nilable ::non-empty-string))
-(s/def ::aws-secret-access-key (s/nilable ::non-empty-string))
-
-(s/def ::install-timbre-appender-cfg
-  (s/keys :req-un [::log-group
-                   ::log-stream
-                   ::create-log-stream?
-                   ::disabled?]
-          :opt-un [::aws-access-key-id
-                   ::aws-secret-access-key
-                   ::aws-region]))
-
-(defmethod ig/init-key ::install-timbre-appender
-  [_ cfg]
-  (-spec/assert! ::install-timbre-appender-cfg cfg)
-  (let [{:keys [log-group
-                log-stream
-                create-log-stream?
-                disabled?
-                aws-region
-                aws-access-key-id
-                aws-secret-access-key]} cfg]
-    (if disabled?
-      {:dispatch-fn (constantly nil)}
-      (let [client-cfg (cond-> {:api    :logs}
-                         aws-region (assoc :region aws-region)
-
-                         (and aws-access-key-id
-                              aws-secret-access-key)
-                         (assoc :credentials-provider
-                                (aws-creds/basic-credentials-provider
-                                 {:access-key-id     aws-access-key-id
-                                  :secret-access-key aws-secret-access-key}))
-
-                         (not (and aws-access-key-id
-                                   aws-secret-access-key))
-                         (assoc :credentials-provider
-                                (aws-creds/chain-credentials-provider
-                                 [(aws-creds/default-credentials-provider (aws/default-http-client))
-                                  ;; this crazy shit provides a work-around because
-                                  ;; cognitect's profile credentials provider does not work for sso.
-                                  ;; We are adding it at the end of the chain.
-                                  (-aws-sso-profile-provider/provider (or (System/getenv "AWS_PROFILE")
-                                                                          (System/getProperty "aws.profile")
-                                                                          "default"))])))
-            client (aws/client client-cfg)
-            _ (when create-log-stream?
-                (let [res (create-log-stream client log-group log-stream)]
-                  (when (:cognitect.anomalies/category res)
-                    (throw (ex-info (format "Unable to create the log stream. Does the log-group (%s) exist?" log-group)
-                                    res)))))
-            dispatch-fn (create-log-dispatcher client log-group log-stream)]
-
-        (log/merge-config! {:appenders {:aws {:enabled?  true
-                                              :async?    false
-                                              :min-level nil
-                                              :output-fn (timbre-json-appender.core/make-json-output-fn {:msg-key :message})
-                                              :fn        (fn [{:keys [output_ ^java.util.Date instant]}]
-                                                           (dispatch-fn {:message   (force output_)
-                                                                         :timestamp (.getTime instant)}))}}})
-        (assoc cfg :dispatch-fn dispatch-fn)))))
-
-(defmethod ig/halt-key! ::install-timbre-appender
-  [_ {:as _state
-      :keys [dispatch-fn]}]
-  (dispatch-fn :stop)
-  (log/merge-config! {:appenders {:aws nil}}))
-
-(comment
-
-  (def system (ig/init {::install-timbre-appender {:log-group "pieter-test2"
-                                                   :log-stream "test-2"
-                                                   :create-log-stream? true
-                                                   :disabled? false
-                                                   :aws-region "af-south-1"}}))
-  (ig/halt! system)
-  )
