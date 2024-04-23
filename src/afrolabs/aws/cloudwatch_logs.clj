@@ -24,16 +24,22 @@
 
   (aws/doc cloudwatch :CreateLogStream)
   (aws/doc cloudwatch :PutLogEvents)
+  (aws/doc cloudwatch :DescribeLogStreams)
 
 
   )
 
-(defn create-log-stream
+(defn assert-log-stream
+  "Creates a log stream if it does not exist."
   [client group stream]
-  (aws/invoke client
-              {:op      :CreateLogStream
-               :request {:logGroupName  group
-                         :logStreamName stream}}))
+  (let [{:as res
+         :keys [cognitect.aws.error/code]}
+        (aws/invoke client
+                    {:op      :CreateLogStream
+                     :request {:logGroupName  group
+                               :logStreamName stream}})]
+    (when-not (= code "ResourceAlreadyExistsException")
+      res)))
 
 (defn put-log-events
   [client group stream log-events]
@@ -45,7 +51,7 @@
 
 (comment
 
-  (create-log-stream cloudwatch "pieter-test" "test-1")
+  (assert-log-stream cloudwatch "pieter-test" "test-1")
   (put-log-events cloudwatch "pieter-test" "test-1" [{:timestamp (.toEpochMilli ^java.time.Instant (t/instant))
                                                       :message (json/write-str {:hello "world"})}
                                                      {:timestamp (.toEpochMilli ^java.time.Instant (t/instant))
@@ -143,7 +149,7 @@
         stop-signal (csp/chan)]
 
     (when create-log-stream?
-      (let [res (create-log-stream client group stream)]
+      (let [res (assert-log-stream client group stream)]
         (when (:cognitect.anomalies/category res)
           (throw (ex-info (format "Unable to create the log stream. Does the log-group (%s) exist?" group)
                           res)))))

@@ -4,7 +4,8 @@
             [clojure.string :as str]
             [integrant.core :as ig]
             [taoensso.timbre :as log]
-            [clojure.data.csv :as csv]))
+            [clojure.data.csv :as csv]
+            [clojure.edn :as edn]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -90,6 +91,11 @@
   (when (and value
              (seq value))
     (Long/parseLong (str value))))
+
+(defmethod aero/reader 'edn
+  [_ _ value]
+  (when value
+    (edn/read-string value)))
 
 ;; #?(:clj (Long/parseLong (str value)))
 ;; #?(:cljs (js/parseInt (str value)))
