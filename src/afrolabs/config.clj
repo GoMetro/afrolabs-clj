@@ -97,6 +97,10 @@
   (when value
     (edn/read-string value)))
 
+(defmethod aero/reader 'ip-hostname
+  [_ _ _value]
+  (.getHostName (java.net.InetAddress/getLocalHost)))
+
 ;; #?(:clj (Long/parseLong (str value)))
 ;; #?(:cljs (js/parseInt (str value)))
 
