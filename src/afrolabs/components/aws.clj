@@ -134,5 +134,5 @@
 ;;
 ;; Here, a client _config_ is configured (everything you would pass to (aws/client {}))
 ;; _except_ the :api <api-name> values.
-;; The idea is that you have one (hopufully) such component in your integrant config
+;; The idea is that you have one (hopefully) such component in your integrant config
 ;; and then re-use this by adding :api <api-name> to the result, and passing that to (aws/client ...)
