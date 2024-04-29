@@ -81,9 +81,9 @@
                         (if-not (< max-message-size msg-size')
                           [msg-size' (:message log-event')]
                           (do
-                            (log/debugf "Attempt to log a message that has size (%d) which is larger than the max-message-size (%d). Message truncated."
-                                        msg-size'
-                                        max-message-size)
+                            (log/warnf "Attempt to log a message that has size (%d) which is larger than the max-message-size (%d). Message truncated."
+                                       msg-size'
+                                       max-message-size)
                             [max-message-size
                              (String. (into-array Byte/TYPE (take max-message-size msg-bytes)))]))
 
