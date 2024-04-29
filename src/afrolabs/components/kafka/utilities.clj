@@ -25,7 +25,8 @@
            [afrolabs.components IHaltable]
            [java.util UUID]
            [afrolabs.components.kafka IPostConsumeHook IConsumerClient]
-           [clojure.lang IDeref]))
+           [clojure.lang IDeref]
+           [org.apache.kafka.clients.admin ListTopicsOptions]))
 
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
@@ -249,22 +250,24 @@
              preserve-internal-and-confluent-topics]
       :or {extra-strategies                       []
            preserve-internal-and-confluent-topics true}}]
-  (let [admin-client-strategies (concat (keep identity
+  (when-not preserve-internal-and-confluent-topics
+    (log/warn "Old option `preserve-internal-and-confluent-topics` used. This option is ignored. No internal topics will be deleted."))
+
+  (let [topic-predicate' (fn [topic-name]
+                           (and (not (str/starts-with? topic-name "_"))
+                                (if topic-predicate (topic-predicate topic-name) true)))
+        admin-client-strategies (concat (keep identity
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
                                         extra-strategies)
         admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
                                            :strategies       admin-client-strategies})
-        extra-topic-predicate (if preserve-internal-and-confluent-topics
-                                (comp (filter (complement #(str/starts-with? % "_")))
-                                      (filter (complement #(str/index-of % "ksql")))
-                                      (filter (complement #(str/index-of % "connect"))))
-                                (constantly true))
+        list-topics-options (-> (ListTopicsOptions.)
+                                (.listInternal false))
         topics-to-be-deleted (into #{}
-                                   (comp (filter topic-predicate)
-                                         extra-topic-predicate)
+                                   (filter topic-predicate')
                                    (-> @admin-client
-                                       (.listTopics)
+                                       (.listTopics list-topics-options)
                                        (.names)
                                        (.get)))]
 
@@ -282,6 +285,25 @@
   [& {:as cfg}]
   (apply delete-some-topics-on-cluster! (->> (assoc cfg :topic-predicate (constantly true))
                                              (mapcat identity))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn assert-topics
+  [topics nr-of-partitions
+   & {:keys [bootstrap-server
+             confluent-api-key confluent-api-secret
+             extra-strategies]}]
+  (let [admin-client-strategies
+        (concat (keep identity
+                      [(when (and confluent-api-key confluent-api-secret)
+                         (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
+                extra-strategies)
+        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
+                                           :strategies       admin-client-strategies})]
+    (-kafka/assert-topics @admin-client
+                          topics
+                          {:nr-of-partitions nr-of-partitions})
+    (-comp/halt admin-client)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

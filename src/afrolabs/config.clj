@@ -4,7 +4,8 @@
             [clojure.string :as str]
             [integrant.core :as ig]
             [taoensso.timbre :as log]
-            [clojure.data.csv :as csv]))
+            [clojure.data.csv :as csv]
+            [clojure.edn :as edn]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -59,7 +60,9 @@
   (when-not ps
     (throw (ex-info "Give the :parameters option value to the aero read-config file." {})))
   (let [result (get ps (keywordize (str value)))]
-    (when-not result (throw (ex-info (format "The parameter '%s' can not be resolved to a value." (str value)) {})))
+    (when-not result
+      (throw (ex-info (format "The parameter '%s' can not be resolved to a value." (str value))
+                      {:all-keys (keys ps)})))
     result))
 
 (defmethod aero/reader 'option
@@ -75,9 +78,31 @@
 (defmethod aero/reader 'regex
   [_ _ value] (re-pattern value))
 
+(defn interpret-string-as-csv-row
+  [row-string]
+  (first (csv/read-csv (java.io.StringReader. row-string))))
+
 (defmethod aero/reader 'csv-array
   [_ _ value]
-  (first (csv/read-csv (java.io.StringReader. value))))
+  (interpret-string-as-csv-row value))
+
+(defmethod aero/reader 'long?
+  [_ _ value]
+  (when (and value
+             (seq value))
+    (Long/parseLong (str value))))
+
+(defmethod aero/reader 'edn
+  [_ _ value]
+  (when value
+    (edn/read-string value)))
+
+(defmethod aero/reader 'ip-hostname
+  [_ _ _value]
+  (.getHostName (java.net.InetAddress/getLocalHost)))
+
+;; #?(:clj (Long/parseLong (str value)))
+;; #?(:cljs (js/parseInt (str value)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

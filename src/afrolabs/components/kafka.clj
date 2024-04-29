@@ -1,21 +1,23 @@
 (ns afrolabs.components.kafka
-  (:require [afrolabs.components.internal-include :as -inc]
-            [afrolabs.components :as -comp]
-            [clojure.spec.alpha :as s]
-            [clojure.spec.gen.alpha :as sgen]
-            [integrant.core :as ig]
-            [clojure.core.async :as csp]
-            [afrolabs.components.health :as -health]
-            [clojure.set :as set]
-            [clojure.string :as str]
-            [java-time :as t]
-            [taoensso.timbre :as timbre
-             :refer [log  trace  debug  info  warn  error  fatal  report
-                     logf tracef debugf infof warnf errorf fatalf reportf
-                     spy get-env]]
-            [taoensso.timbre :as log]
-            [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
-            [afrolabs.components.kafka.json-serdes :as -json-serdes])
+  (:require
+   [afrolabs.components :as -comp]
+   [afrolabs.components.health :as -health]
+   [afrolabs.components.internal-include :as -inc]
+   [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
+   [afrolabs.components.kafka.json-serdes :as -json-serdes]
+   [afrolabs.prometheus :as -prom]
+   [clojure.core.async :as csp]
+   [clojure.set :as set]
+   [clojure.spec.alpha :as s]
+   [clojure.spec.gen.alpha :as sgen]
+   [clojure.string :as str]
+   [iapetos.core :as prom]
+   [integrant.core :as ig]
+   [java-time :as t]
+   [taoensso.timbre :as log]
+   [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
+
+   [net.cgrand.xforms :as x])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
@@ -155,11 +157,18 @@
         (csp/close! delivered-ch)
         (trace "onCompletion done.")))))
 
+(-prom/register-metric (prom/counter ::producer-msgs-produced
+                                     {:description "How many messages are being produce via producer-produce."
+                                      :labels [:topic]}))
+
 (defn- producer-produce
   [^Producer producer msgs]
   (s/assert :producer/msgs msgs)
   (doseq [{:as msg
            :keys [delivered-ch]} msgs]
+    (prom/inc (get-counter-producer-msgs-produced {:topic (:topic msg)})
+              1)
+
     (let [producer-record (ProducerRecord. (:topic msg)
                                            (when-let [p (:partition msg)] p)
                                            nil ;; timestamp, Long
@@ -179,45 +188,56 @@
 ;; Strategies
 
 (defprotocol IUpdateProducerConfigHook
-  "A Strategy protocol for modifying the configuration properties before the Producer object is created. Useful for things like serdes."
+  "A Strategy protocol for modifying the configuration properties before the Producer object is created. Useful for
+  things like serdes."
   (update-producer-cfg-hook [this cfg] "Takes a config map and returns a (modified version of the) map."))
 
 (defprotocol IUpdateConsumerConfigHook
-  "A Strategy protocol for modifying the configuration properties before the Consumer objects is created. Useful for things like serdes."
+  "A Strategy protocol for modifying the configuration properties before the Consumer objects is created. Useful for
+  things like serdes."
   (update-consumer-cfg-hook [this cfg] "Takes a config map and returns a (modified version of the) map."))
 
 (defprotocol IUpdateAdminClientConfigHook
-  "A Strategy protocol for modifying the configuration properties before the AdminClient is created. Useful for Confluent connections."
+  "A Strategy protocol for modifying the configuration properties before the AdminClient is created. Useful for
+  Confluent connections."
   (update-admin-client-cfg-hook [this cfg] "Takes a config map and returns a modified version of the same map."))
 
 (s/def ::update-admin-client-config-hook #(satisfies? IUpdateAdminClientConfigHook %))
 
 (defprotocol IConsumerInitHook
-  "A Strategy protocol for Kafka Object initialization. This hooks is called before the first .poll. Useful for assigning of or subscribing to partitions for consumers."
+  "A Strategy protocol for Kafka Object initialization. This hooks is called before the first .poll.
+  Useful for assigning of or subscribing to partitions for consumers."
   (consumer-init-hook [this ^Consumer consumer] "Takes a Consumer or Producer Object. Results are ignored."))
 
 (defprotocol IConsumerPostInitHook
-  "A strategy protocol for the kafka consumer object. This is called after IConsumerInitHook (after subscription) but before the first .poll. Useful for getting info about partitions or topics before consumption starts."
+  "A strategy protocol for the kafka consumer object. This is called after IConsumerInitHook (after subscription) but
+  before the first .poll. Useful for getting info about partitions or topics before consumption starts."
   (post-init-hook [this consumer] "Receives the consumer before the first call to .poll."))
 
 (defprotocol IPostConsumeHook
-  "A Strategy protocol for getting access to the Consumer Object and the consumed records, after the consume logic has been invoked. Useful for things like detecting when the consumer has caught up to the end of the partitions."
+  "A Strategy protocol for getting access to the Consumer Object and the consumed records, after the consume logic has
+  been invoked. Useful for things like detecting when the consumer has caught up to the end of the partitions."
   (post-consume-hook [this consumer consumed-records] "Receives the consumer and the consumed records."))
 
 (defprotocol IShutdownHook
-  "A Strategy protocol for getting access to the kafka Object, eg after the .poll loop has been terminated, before .close is invoked. Useful for cleanup/.close type logic."
+  "A Strategy protocol for getting access to the kafka Object, eg after the .poll loop has been terminated, before
+  .close is invoked. Useful for cleanup/.close type logic."
   (shutdown-hook [this consumer] "Receives the consumer."))
 
 (defprotocol IConsumerMiddleware
   "A strategy protocol to intercept messages between the consumer object thread and the consumer-client.
 
-  All the middlewares will form a chain, succesively intercepting and modifying messages one after the other, with later interceptors having access to the changes made be earlier interceptors.
+  All the middlewares will form a chain, succesively intercepting and modifying messages one after the other, with later
+  interceptors having access to the changes made be earlier interceptors.
 
-  It is assumed that the result of any consumer-client is again messages that must be produced, so in reality this middleware accepts kafka messages (in map format) both from and to the consumer thread."
+  It is assumed that the result of any consumer-client is again messages that must be produced, so in reality this
+  middleware accepts kafka messages (in map format) both from and to the consumer thread."
   (consumer-middleware-hook [this msgs] "Accepts a collection of messages and returns a collection of messages."))
 
 (defprotocol IConsumedResultsHandler
-  "A strategy protocol for dealing with the result of the IConsumerClient's consume-messages call. This is useful when for example you want to set up consumer-producer unit, where the results of consuming messages are messages that has to be produced."
+  "A strategy protocol for dealing with the result of the IConsumerClient's consume-messages call. This is useful when
+  for example you want to set up consumer-producer unit, where the results of consuming messages are messages that has
+  to be produced."
   (handle-consumption-results [this xs] "Accepts whatever the (consume-messages ...) from the consumer-client returned."))
 
 
@@ -624,6 +644,70 @@
         [_ cfg]
       (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))))
 
+(defn consumer-end-offsets
+  "Gets the (.endOffsets ...) of the consumer in nice data format."
+  [^Consumer consumer]
+  (let [topic-partition-assignment (.assignment consumer)]
+    (into #{}
+          (map (fn [[tp o]]
+                 {:topic     (.topic ^TopicPartition tp)
+                  :partition (.partition ^TopicPartition tp)
+                  :offset    o}))
+          (.endOffsets consumer topic-partition-assignment))))
+
+(defn consumer-current-offsets
+  [^Consumer consumer]
+  (let [topic-partition-assignment (.assignment consumer)]
+    (into #{}
+          (map (fn [tp]
+                 {:topic     (.topic ^TopicPartition tp)
+                  :partition (.partition ^TopicPartition tp)
+                  :offset    (.position consumer ^TopicPartition tp)}))
+          topic-partition-assignment)))
+
+;; Once the consumer loads, fetches the endOffsets. Once the consumer reaches those offsets
+;; will send this value to the channel. This is distinct from `CaughtUpNotifications` in that
+;; the latter only fires when the consumer is up-to-date, whereas this strategy fires
+;; once the consumer reaches the offsets that were current when it started up.
+(defstrategy CaughtUpOnceNotifications
+  [& chs]
+  (let [caught-up-ch (csp/chan)
+        caught-up-mult (csp/mult caught-up-ch)
+        end-offsets-at-start (atom nil)]
+
+    ;; tap all of the provided channels into the mult/ch that we notify on
+    (doseq [ch chs] (csp/tap caught-up-mult ch))
+
+    (reify
+      IShutdownHook
+      (shutdown-hook
+          [_ _]
+        (csp/close! caught-up-ch))
+
+      IConsumerPostInitHook
+      (post-init-hook
+          [_ consumer]
+        ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
+        (reset! end-offsets-at-start (consumer-end-offsets consumer)))
+
+      IPostConsumeHook
+      (post-consume-hook
+          [_ consumer _consumed-records]
+        (let [current-offsets (consumer-current-offsets consumer)]
+          ;; when the end offsets at the start are less than the current offsets
+          ;; we have caught up once
+          (csp/go (when (every? (fn [{:keys [topic partition offset]}]
+                                  (<= offset
+                                      (->> current-offsets
+                                           (filter (fn [co]
+                                                     (and (= (:partition co) partition)
+                                                          (= (:topic co) topic))))
+                                           (first)
+                                           :offset)))
+                                @end-offsets-at-start)
+                    (csp/>!! caught-up-ch
+                             current-offsets))))))))
+
 (defstrategy CaughtUpNotifications
   [& chs]
   (let [caught-up-ch (csp/chan)
@@ -640,26 +724,10 @@
 
       IPostConsumeHook
       (post-consume-hook
-          [_ consumer consumed-records]
+          [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [topic-partition-assignment (.assignment ^KafkaConsumer consumer)
-
-              current-offsets
-              (into #{}
-                    (map (fn [tp] {:topic (.topic ^TopicPartition tp)
-                                   :partition (.partition ^TopicPartition tp)
-                                   :offset (.position ^KafkaConsumer consumer
-                                                      ^TopicPartition tp)}))
-                    topic-partition-assignment)
-
-              end-offsets
-              (into #{}
-                    (map (fn [[tp o]] {:topic (.topic ^TopicPartition tp)
-                                       :partition (.partition ^TopicPartition tp)
-                                       :offset o}))
-                    (.endOffsets ^KafkaConsumer consumer
-                                 topic-partition-assignment))
-              ]
+        (let [current-offsets (consumer-current-offsets consumer)
+              end-offsets (consumer-end-offsets consumer)]
           (when (= end-offsets current-offsets)
             (csp/>!! caught-up-ch
                      current-offsets)))))))
@@ -914,6 +982,18 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
+(-prom/register-metric (prom/counter ::consumer-main-msgs-consumed
+                                     {:description "All messages consumed by kafka consumer-main."
+                                      :labels [:topic]}))
+(-prom/register-metric (prom/counter ::consumer-poll
+                                     {:description "Incemented every time a poll call is completed on the consumer."
+                                      :labels [:consumer-group-id]}))
+(-prom/register-metric (prom/gauge ::consumer-partition-lag
+                                   {:description "The lag in offsets per consumer-group-id and partition."
+                                    :labels [:consumer-group-id
+                                             :topic
+                                             :partition]}))
+
 (defn -consumer-main
   [^Consumer consumer
    must-stop
@@ -958,42 +1038,67 @@
 
       (combined-post-init-hooks consumer)
 
-      (while (not @must-stop)
-        (let [consumed-records           (into []
-                                               (map (fn [^ConsumerRecord r]
-                                                      (let [hdrs (into []
-                                                                       (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
-                                                                             (map deserialize-consumer-record-header*))
-                                                                       (-> r (.headers) (.toArray)))]
-                                                        (cond->
-                                                            {:topic     (.topic r)
-                                                             :partition (.partition r)
-                                                             :offset    (.offset r)
-                                                             :value     (.value r)
-                                                             :key       (.key r)
-                                                             :timestamp (t/instant (.timestamp r))}
-                                                          (seq hdrs) (assoc :headers hdrs)))))
-                                               (.poll consumer ^long poll-timeout))
-              consumption-results        (consume-messages client consumed-records)]
+      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
 
-          (when consumption-results
-            (combined-consumed-results-handler consumption-results))
+        (while (not @must-stop)
+          (let [consumed-records           (log/with-context+ {:consume-id (random-uuid)}
+                                             (into []
+                                                   (map (fn [^ConsumerRecord r]
+                                                          (let [hdrs (into []
+                                                                           (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                                 (map deserialize-consumer-record-header*))
+                                                                           (-> r (.headers) (.toArray)))]
+                                                            (cond->
+                                                                {:topic     (.topic r)
+                                                                 :partition (.partition r)
+                                                                 :offset    (.offset r)
+                                                                 :value     (.value r)
+                                                                 :key       (.key r)
+                                                                 :timestamp (t/instant (.timestamp r))}
+                                                              (seq hdrs) (assoc :headers hdrs)))))
+                                                   (.poll consumer ^long poll-timeout)))
+                end-offsets (consumer-end-offsets consumer)
+                current-offsets (consumer-current-offsets consumer)
+                _ (doseq [{:keys [topic partition offset]} current-offsets
+                          :let [end-offset (:offset
+                                            (first
+                                             (filter #(and (= (:partition %) partition)
+                                                           (= (:topic %) topic))
+                                                     end-offsets)))]]
+                    (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
+                                                                 :topic             topic
+                                                                 :partition         partition})
+                              (- end-offset offset)))
 
-          (combined-post-consume-hook consumer consumed-records)))
+                _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
+                ;; register prometheus metrics for msgs consumed per topic
+                _ (doseq [[topic msgs-count] (into {}
+                                                   (x/by-key :topic x/count)
+                                                   consumed-records)]
+                    (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
+                              msgs-count))
+                consumption-results        (consume-messages client consumed-records)]
 
-      ;; we're done poll'ing and shutting down
-      ;; give shutdown hooks a chance
-      (doseq [s (filter (partial satisfies? IShutdownHook)
-                        strategies)]
-        (shutdown-hook s consumer))
+            (when consumption-results
+              (combined-consumed-results-handler consumption-results))
 
-      ;; close the consumer. this commits and exits cleanly
-      (.close consumer)
+            (combined-post-consume-hook consumer consumed-records))))
 
       ;; the value we are returning
       [:done true]
       (catch Throwable t
-        [:error t]))))
+        [:error t])
+      (finally
+        ;; we're done poll'ing and shutting down
+        ;; give shutdown hooks a chance
+        (doseq [s (filter (partial satisfies? IShutdownHook)
+                          strategies)]
+          (try (shutdown-hook s consumer)
+               (catch Throwable t
+                 (error t (str "Exception while calling shutdown-hook.")))))
+
+        ;; close the consumer. this commits and exits cleanly
+        (.close consumer)))))
 
 (defn- background-wait-on-stop-signal
   "Extracted only because the debugger chokes on core.async."
@@ -1001,21 +1106,24 @@
    {:as   consumer-config
     :keys [service-health-trip-switch]}
    consumer-properties has-stopped]
-  (csp/go
-    (let [[status xtra :as thread-result]
-          (csp/<! (csp/thread (-consumer-main consumer
-                                              must-stop
-                                              :consumer-config consumer-config
-                                              :consumer-properties consumer-properties)))]
-      (when (= :error status)
-        (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
-               "Kafka consumer main thread finished with exception. Tripping the health switch...")
-        (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
+  (let [consumer-group-id (get consumer-properties ConsumerConfig/GROUP_ID_CONFIG "<UNAVAILABLE>")]
+    (csp/go
+      (let [[status xtra :as thread-result]
+            (csp/<! (csp/thread (log/with-context+ {:consumer-group-id consumer-group-id}
+                                  (-consumer-main consumer
+                                                  must-stop
+                                                  :consumer-config consumer-config
+                                                  :consumer-properties consumer-properties))))]
+        (when (= :error status)
+          (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
+                 (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
+                         consumer-group-id))
+          (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
 
-      ;; Anyway deliver the value into the promise.
-      ;; At the time this code is written, the return value is not used.
-      (deliver has-stopped
-               (or xtra status thread-result)))))
+        ;; Anyway deliver the value into the promise.
+        ;; At the time this code is written, the return value is not used.
+        (deliver has-stopped
+                 (or xtra status thread-result))))))
 
 (defn make-consumer
   [{:as            consumer-config
@@ -1368,13 +1476,17 @@
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
 
+(s/def ::caught-up-once? boolean?)
 (s/def ::ktable-cfg (s/and ::clientless-consumer
-                           (s/keys :req-un [::ktable-id])))
+                           (s/keys :req-un [::ktable-id]
+                                   :opt-un [::caught-up-once?])))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
-    :keys [ktable-id]}]
+    :keys [ktable-id
+           caught-up-once?]
+    :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
                                 "-"
@@ -1398,7 +1510,9 @@
         cfg (-> cfg
                 (update-in [:strategies] concat [(OffsetReset "earliest")
                                                  (ConsumerGroup consumer-group-id)
-                                                 (CaughtUpNotifications caught-up-ch)
+                                                 (if caught-up-once?
+                                                   (CaughtUpOnceNotifications caught-up-ch)
+                                                   (CaughtUpNotifications caught-up-ch))
                                                  ])
                 (assoc :consumer/client consumer-client))
 
@@ -1410,7 +1524,18 @@
 
       IDeref
       (deref [_]
-        @has-caught-up-once
+        ;; wait, but with feedback every 5 seconds
+        (let [starting-millis (System/currentTimeMillis)]
+          (loop []
+            (let [caught-up? (deref has-caught-up-once
+                                    5000
+                                    :timeout)]
+              (when (= :timeout caught-up?)
+                (log/info (str "KTable '" consumer-group-id "' loading initial data. Waited "
+                               (long (/ (- (System/currentTimeMillis) starting-millis)
+                                        1000))
+                               " seconds so far."))
+                (recur)))))
         @ktable-state)
 
       IBlockingDeref

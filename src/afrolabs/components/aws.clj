@@ -1,9 +1,11 @@
 (ns afrolabs.components.aws
-  (:require [afrolabs.components :as -comp]
-            [cognitect.aws.credentials :as aws-creds]
-            [clojure.spec.alpha :as s]
-            [clojure.core.async :as csp]
-            [taoensso.timbre :as log]))
+  (:require
+   [afrolabs.components :as -comp]
+   [clojure.core.async :as csp]
+   [clojure.spec.alpha :as s]
+   [cognitect.aws.credentials :as aws-creds]
+   [taoensso.timbre :as log]
+   ))
 
 (defn set-aws-creds!
   "Sets java system properties for AWS credentials. This works extremely well. Too well. There are better ways to pass credentials to AWS API's"
@@ -127,3 +129,10 @@
 
   )
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; A new imagining of how aws creds can be configured.
+;;
+;; Here, a client _config_ is configured (everything you would pass to (aws/client {}))
+;; _except_ the :api <api-name> values.
+;; The idea is that you have one (hopefully) such component in your integrant config
+;; and then re-use this by adding :api <api-name> to the result, and passing that to (aws/client ...)

@@ -9,22 +9,22 @@
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
   :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
                                     :sign-releases false}]]
-  :dependencies [[org.clojure/clojure "1.11.1"]
-                 [com.google.javascript/closure-compiler-unshaded "v20231112"]
-                 [org.clojure/clojurescript "1.11.121"]
+  :dependencies [[org.clojure/clojure "1.11.2"]
+                 [com.google.javascript/closure-compiler-unshaded "v20240317"]
+                 [org.clojure/clojurescript "1.11.132"]
 
                  ;; property-based testing, generative testing
                  [org.clojure/test.check "1.1.1"]
 
                  ;; dependency conflict resolution, also edn reader
-                 [org.clojure/tools.reader "1.3.7"]
+                 [org.clojure/tools.reader "1.4.1"]
 
                  ;; I'm not sure why we're choosing an old version of jetty here.
                  ;; might be cognitect.
                  ;; https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-util
-                 [org.eclipse.jetty/jetty-util "9.4.53.v20231009"]
-                 [org.eclipse.jetty/jetty-http "9.4.53.v20231009"]
-                 [org.eclipse.jetty/jetty-client "9.4.53.v20231009"]
+                 [org.eclipse.jetty/jetty-util "9.4.54.v20240208"]
+                 [org.eclipse.jetty/jetty-http "9.4.54.v20240208"]
+                 [org.eclipse.jetty/jetty-client "9.4.54.v20240208"]
 
                  ;; conversions between different kinds of casing
                  ;; camelCase -> snake_case -> kebab-case -> PascalCase
@@ -43,7 +43,7 @@
                  [org.clojure/core.async "1.6.681"]
 
                  ;; https://github.com/cgrand/xforms ; sometimes useful extra transducers - data transformation
-                 [net.cgrand/xforms "0.19.5"]
+                 [net.cgrand/xforms "0.19.6"]
 
                  ;; https://github.com/redplanetlabs/specter, data transformation DSL
                  [com.rpl/specter "1.1.4"]
@@ -67,7 +67,7 @@
                  [buddy/buddy-auth "3.0.323"]
                  [buddy/buddy-sign "3.5.351"]
 
-                 [ring/ring-core "1.11.0"]
+                 [ring/ring-core "1.12.1"]
 
                  ;; https://github.com/metosin/ring-http-response
                  ;; ring response helper fns
@@ -87,34 +87,37 @@
                  [clj-commons/iapetos "0.1.13"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
-                 [com.cognitect.aws/api "0.8.686"]
-                 [com.cognitect.aws/endpoints "1.1.12.626"]
-                 [com.cognitect.aws/sns "847.2.1365.0"]
-                 [com.cognitect.aws/sqs "847.2.1398.0"]
-                 [com.cognitect.aws/s3 "848.2.1413.0"]
+                 [com.cognitect.aws/api "0.8.692"]
+                 [com.cognitect.aws/endpoints "1.1.12.682"]
+                 [com.cognitect.aws/sns "857.2.1574.0"]
+                 [com.cognitect.aws/sqs "857.2.1574.0"]
+                 [com.cognitect.aws/s3 "868.2.1580.0"]
+                 [com.cognitect.aws/monitoring "857.2.1574.0"]
+                 [com.cognitect.aws/logs "868.2.1584.0"]
 
                  ;; NREPL
-                 [nrepl "1.1.0"]
+                 [nrepl "1.1.1"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
-                 [com.taoensso/timbre "6.3.1"]
+                 [com.taoensso/timbre "6.5.0"]
 
                  ;; https://github.com/clojure/data.json
                  [org.clojure/data.json "2.5.0"]
 
                  ;; https://github.com/clojure/data.csv
-                 [org.clojure/data.csv "1.0.1"]
+                 [org.clojure/data.csv "1.1.0"]
+                 [com.cnuernber/charred "1.034"]
 
                  ;; fip, dependency of both malli and shadow-cljs
                  [fipp "0.6.26"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.13.0"]
+                 [metosin/malli "0.15.0"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
-                 [org.slf4j/log4j-over-slf4j "2.0.10"]
-                 [org.slf4j/jul-to-slf4j "2.0.10"]
-                 [org.slf4j/jcl-over-slf4j "2.0.10"]
+                 [org.slf4j/log4j-over-slf4j "2.0.12"]
+                 [org.slf4j/jul-to-slf4j "2.0.12"]
+                 [org.slf4j/jcl-over-slf4j "2.0.12"]
 
                  ;; then routing slf4j to timbre
                  ;; This will allow us to receive, log (and configure) the logs provided by libraries
@@ -122,10 +125,10 @@
                  [com.fzakaria/slf4j-timbre "0.4.1"]
 
                  ;; possibility to log to json, for use in cloud environments like GCK
-                 [viesti/timbre-json-appender "0.2.11"]
+                 [viesti/timbre-json-appender "0.2.13"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.16.1"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.16.1"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.17.0"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.17.0"]
 
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
@@ -145,7 +148,7 @@
 
                  ;; dependency issue resolutions brought on by confluent
                  ;; [jakarta.xml.bind/jakarta.xml.bind-api "2.3.3" :upgrade false]
-                 [joda-time "2.12.6"]
+                 [joda-time "2.12.7"]
 
                  ;; dependencies for confluent cloud
                  ;; [org.apache.kafka/connect-runtime "3.6.1" :exclusions [org.slf4j/slf4j-log4j12]]
@@ -154,22 +157,26 @@
                  ;;                                                                 org.glassfish.jersey.core/jersey-common]]
 
                  ;; for use with ksqld, the java client
-                 [io.confluent.ksql/ksqldb-api-client "7.5.3" :exclusions [org.slf4j/slf4j-log4j12
+                 [io.confluent.ksql/ksqldb-api-client "7.6.0" :exclusions [org.slf4j/slf4j-log4j12
                                                                            org.bouncycastle/bc-fips
                                                                            org.javassist/javassist]]
 
-                 [org.slf4j/slf4j-api "2.0.10"]
+                 [org.slf4j/slf4j-api "2.0.12"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
-                 [thheller/shadow-cljs "2.26.2"]
+                 [thheller/shadow-cljs "2.28.3"]
 
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
 
                  ;; rules engine
                  [net.sekao/odoyle-rules "1.3.1"]
+
+                 ;; profiling
+                 ;; this is safe to distribute into prod according to the docs
+                 [com.clojure-goes-fast/clj-async-profiler "1.2.0"]
 
                  ]
   :aot [afrolabs.components.kafka.json-serdes

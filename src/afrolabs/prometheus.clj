@@ -78,7 +78,7 @@
         (ring-response/response
          (ring-io/piped-input-stream
           (fn [output-stream]
-            (with-open [w (io/make-writer output-stream {})]
+            (with-open [^java.io.BufferedWriter w (io/make-writer output-stream {})]
               (iapetos.export/write-text-format! w @registry)
               (.flush w)))))))))
 
@@ -120,10 +120,8 @@
   ([metric-re] (extract-samples @registry
                                 metric-re))
   ([registry metric-re]
-   (let [sample-data (-> registry
-                         promr/raw
-                         (.metricFamilySamples)
-                         enumeration-seq)]
-     (sequence (comp (filter #(re-matches metric-re (.name %)))
+   (let [^io.prometheus.client.CollectorRegistry collector-registry (promr/raw registry)
+         sample-data (enumeration-seq (.metricFamilySamples collector-registry))]
+     (sequence (comp (filter #(re-matches metric-re (.name ^io.prometheus.client.Collector$MetricFamilySamples %)))
                      (map metric-family-samples->data))
                sample-data))))
