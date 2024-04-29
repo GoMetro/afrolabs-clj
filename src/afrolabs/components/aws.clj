@@ -132,7 +132,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; A new imagining of how aws creds can be configured.
 ;;
-;; Here, a client _config_ is configure (everything you would paas to (aws/client {}))
+;; Here, a client _config_ is configured (everything you would pass to (aws/client {}))
 ;; _except_ the :api <api-name> values.
 ;; The idea is that you have one (hopufully) such component in your integrant config
 ;; and then re-use this by adding :api <api-name> to the result, and passing that to (aws/client ...)
