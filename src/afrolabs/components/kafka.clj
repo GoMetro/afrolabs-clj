@@ -645,25 +645,52 @@
       (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))))
 
 (defn consumer-end-offsets
-  "Gets the (.endOffsets ...) of the consumer in nice data format."
-  [^Consumer consumer]
-  (let [topic-partition-assignment (.assignment consumer)]
-    (into #{}
-          (map (fn [[tp o]]
-                 {:topic     (.topic ^TopicPartition tp)
-                  :partition (.partition ^TopicPartition tp)
-                  :offset    o}))
-          (.endOffsets consumer topic-partition-assignment))))
+  "Gets the (.endOffsets ...) of the consumer in nice data format.
+  Pass a duration in `timeout-duration` to use non-default timeout value.
+  When a timeout exception is encountered, the value of `timeout-value` will be returned.
+  If this value is `:throw`, the TimeoutException will be re-thrown."
+  [^Consumer consumer & {:keys [timeout-duration
+                                timeout-value]
+                         :or   {timeout-value :timeout}}]
+  (try
+    (let [topic-partition-assignment (.assignment consumer)]
+      (into #{}
+            (map (fn [[tp o]]
+                   {:topic     (.topic ^TopicPartition tp)
+                    :partition (.partition ^TopicPartition tp)
+                    :offset    o}))
+            (if timeout-duration
+              (.endOffsets consumer topic-partition-assignment timeout-duration)
+              (.endOffsets consumer topic-partition-assignment))))
+    (catch org.apache.kafka.common.errors.TimeoutException to
+      (log/warn to "Timeout fetching consumer end offsets.")
+      (if (= :throw timeout-value)
+        (throw to)
+        timeout-value))))
 
 (defn consumer-current-offsets
-  [^Consumer consumer]
-  (let [topic-partition-assignment (.assignment consumer)]
-    (into #{}
-          (map (fn [tp]
-                 {:topic     (.topic ^TopicPartition tp)
-                  :partition (.partition ^TopicPartition tp)
-                  :offset    (.position consumer ^TopicPartition tp)}))
-          topic-partition-assignment)))
+  "Gets the (.position Consumer) of the consumer in nice format.
+  Pass a duration in `timeout-duration` to use non-default timeout value.
+  When a timeout exception is encountered, the value of `timeout-value` will be returned.
+  If this value is set to `:throw`, the TimeoutException will be re-thrown."
+  [^Consumer consumer & {:keys [timeout-duration
+                                timeout-value]
+                         :or   {timeout-value :timeout}}]
+  (try
+    (let [topic-partition-assignment (.assignment consumer)]
+      (into #{}
+            (map (fn [tp]
+                   {:topic     (.topic ^TopicPartition tp)
+                    :partition (.partition ^TopicPartition tp)
+                    :offset    (if timeout-duration
+                                 (.position consumer ^TopicPartition tp timeout-duration)
+                                 (.position consumer ^TopicPartition tp))}))
+            topic-partition-assignment))
+    (catch org.apache.kafka.common.errors.TimeoutException to
+      (log/warn to "Timeout waiting for consumer position.")
+      (if (= :throw timeout-value)
+        (throw to)
+        timeout-value))))
 
 ;; Once the consumer loads, fetches the endOffsets. Once the consumer reaches those offsets
 ;; will send this value to the channel. This is distinct from `CaughtUpNotifications` in that
@@ -687,13 +714,15 @@
       IConsumerPostInitHook
       (post-init-hook
           [_ consumer]
-        ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (reset! end-offsets-at-start (consumer-end-offsets consumer)))
+        ;; We save the end offsets at the start, so we can compare later if we've caught up
+        ;; If this times out, the exception will be bubbled up.
+        (reset! end-offsets-at-start
+                (consumer-end-offsets consumer :timeout-value :throw)))
 
       IPostConsumeHook
       (post-consume-hook
           [_ consumer _consumed-records]
-        (let [current-offsets (consumer-current-offsets consumer)]
+        (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)]
           ;; when the end offsets at the start are less than the current offsets
           ;; we have caught up once
           (csp/go (when (every? (fn [{:keys [topic partition offset]}]
@@ -726,8 +755,8 @@
       (post-consume-hook
           [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [current-offsets (consumer-current-offsets consumer)
-              end-offsets (consumer-end-offsets consumer)]
+        (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
+              end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
           (when (= end-offsets current-offsets)
             (csp/>!! caught-up-ch
                      current-offsets)))))))
@@ -988,7 +1017,10 @@
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
-(-prom/register-metric (prom/gauge ::consumer-partition-lag
+;; part of commented-out code below.
+;; This technique of determining lag on the consumer is not smart.
+;; It should probably be a strategy.
+#_(-prom/register-metric (prom/gauge ::consumer-partition-lag
                                    {:description "The lag in offsets per consumer-group-id and partition."
                                     :labels [:consumer-group-id
                                              :topic
@@ -1041,48 +1073,55 @@
       (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
 
         (while (not @must-stop)
-          (let [consumed-records           (log/with-context+ {:consume-id (random-uuid)}
-                                             (into []
-                                                   (map (fn [^ConsumerRecord r]
-                                                          (let [hdrs (into []
-                                                                           (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
-                                                                                 (map deserialize-consumer-record-header*))
-                                                                           (-> r (.headers) (.toArray)))]
-                                                            (cond->
-                                                                {:topic     (.topic r)
-                                                                 :partition (.partition r)
-                                                                 :offset    (.offset r)
-                                                                 :value     (.value r)
-                                                                 :key       (.key r)
-                                                                 :timestamp (t/instant (.timestamp r))}
-                                                              (seq hdrs) (assoc :headers hdrs)))))
-                                                   (.poll consumer ^long poll-timeout)))
-                end-offsets (consumer-end-offsets consumer)
-                current-offsets (consumer-current-offsets consumer)
-                _ (doseq [{:keys [topic partition offset]} current-offsets
-                          :let [end-offset (:offset
-                                            (first
-                                             (filter #(and (= (:partition %) partition)
-                                                           (= (:topic %) topic))
-                                                     end-offsets)))]]
-                    (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
-                                                                 :topic             topic
-                                                                 :partition         partition})
-                              (- end-offset offset)))
+          (let [consume-id                 (random-uuid)]
+            (log/with-context+ {:consume-id consume-id}
+              (let [consumed-records           (into []
+                                                     (map (fn [^ConsumerRecord r]
+                                                            (let [hdrs (into []
+                                                                             (comp (map (juxt #(.key ^Header %) #(.value ^Header %)))
+                                                                                   (map deserialize-consumer-record-header*))
+                                                                             (-> r (.headers) (.toArray)))]
+                                                              (cond->
+                                                                  {:topic     (.topic r)
+                                                                   :partition (.partition r)
+                                                                   :offset    (.offset r)
+                                                                   :value     (.value r)
+                                                                   :key       (.key r)
+                                                                   :timestamp (t/instant (.timestamp r))}
+                                                                (seq hdrs) (assoc :headers hdrs)))))
+                                                     (.poll consumer ^long poll-timeout))
+                    ;;;;;;;;;;;;;;;;;;;;;;
+                    ;; This code naively tries to determine consumer lag.
+                    ;; The problem is dealing with the timeouts in an intelligent way and complicated by the additional
+                    ;; processing time added to every .poll loop.
+                    ;; This should also probably be a strategy and not applied to every consumer.
+                    ;;;;;;;;;;;;;;;;;;;;;
+                    ;; end-offsets (consumer-end-offsets consumer)
+                    ;; current-offsets (consumer-current-offsets consumer)
+                    ;; _ (doseq [{:keys [topic partition offset]} current-offsets
+                    ;;           :let [end-offset (:offset
+                    ;;                             (first
+                    ;;                              (filter #(and (= (:partition %) partition)
+                    ;;                                            (= (:topic %) topic))
+                    ;;                                      end-offsets)))]]
+                    ;;     (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
+                    ;;                                                  :topic             topic
+                    ;;                                                  :partition         partition})
+                    ;;               (- end-offset offset)))
 
-                _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
-                ;; register prometheus metrics for msgs consumed per topic
-                _ (doseq [[topic msgs-count] (into {}
-                                                   (x/by-key :topic x/count)
-                                                   consumed-records)]
-                    (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
-                              msgs-count))
-                consumption-results        (consume-messages client consumed-records)]
+                    _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
+                    ;; register prometheus metrics for msgs consumed per topic
+                    _ (doseq [[topic msgs-count] (into {}
+                                                       (x/by-key :topic x/count)
+                                                       consumed-records)]
+                        (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
+                                  msgs-count))
+                    consumption-results        (consume-messages client consumed-records)]
 
-            (when consumption-results
-              (combined-consumed-results-handler consumption-results))
+                (when consumption-results
+                  (combined-consumed-results-handler consumption-results))
 
-            (combined-post-consume-hook consumer consumed-records))))
+                (combined-post-consume-hook consumer consumed-records))))))
 
       ;; the value we are returning
       [:done true]
