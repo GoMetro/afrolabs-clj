@@ -69,12 +69,18 @@
   [handler {:as logging-context
             :keys [port ip]}]
   (fn [{:as req
-        :keys [uri]}]
-    (let [{:as   res
-           :keys [status]} (log/with-context+ logging-context
-                             (handler req))]
-      (log/debug (str ip ":" port uri " [" status "]"))
-      res)))
+        :keys [uri
+               remote-addr
+               request-method]}]
+    (log/with-context+ logging-context
+      (let [{:as   res
+             :keys [status]} (handler req)]
+        (log/with-context+ {:status         status
+                            :uri            uri
+                            :remote-addr    remote-addr
+                            :request-method request-method}
+          (log/info (str ip ":" port uri " [" status "]")))
+        res))))
 
 (defn create-http-component
   [{:keys [port
