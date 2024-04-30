@@ -1485,31 +1485,37 @@
            k    :key
            v    :value
            t    :topic
+           p    :partition
+           o    :offset
            hdrs :headers} & rest-msgs] new-msgs]
     (if-not head
       old
-      (recur (let [v (if-not hdrs
-                       v
-                       (with-meta v {:headers hdrs}))]
-               (cond
-                 ;; nothing is nil, save the value
-                 (not (or (nil? k)
-                          (nil? v)
-                          (nil? t)))
-                 (assoc-in old [t k] v)
+      (recur (vary-meta (let [v (if-not hdrs
+                                  v
+                                  (with-meta v {:headers hdrs}))]
+                          (cond
+                            ;; nothing is nil, save the value
+                            (not (or (nil? k)
+                                     (nil? v)
+                                     (nil? t)))
+                            (assoc-in old [t k] v)
 
-                 ;; value (only) is nil, remove the value (tombstone)
-                 (and (nil? v)
-                      (not (or (nil? t)
-                               (nil? k))))
-                 (update old t (fnil #(dissoc % k) {}))
+                            ;; value (only) is nil, remove the value (tombstone)
+                            (and (nil? v)
+                                 (not (or (nil? t)
+                                          (nil? k))))
+                            (update old t (fnil #(dissoc % k) {}))
 
-                 ;; default, return old value
-                 :else
-                 (do
-                   (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                 (str t) (str k) (str v)))
-                   old)))
+                            ;; default, return old value
+                            :else
+                            (do
+                              (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                            (str t) (str k) (str v)))
+                              old)))
+                        (fn [old-meta]
+                          (update-in old-meta [:ktable/partition-offsets p]
+                                     (fnil #(max % o)
+                                           -1))))
              rest-msgs))))
 
 (s/def ::ktable-id (s/and string?
