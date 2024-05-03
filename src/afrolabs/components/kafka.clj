@@ -555,14 +555,23 @@
     IConsumerPostInitHook
     (post-init-hook
         [_ consumer]
-      (doseq [[topic partition] (->> (.assignment ^KafkaConsumer consumer)
-                                     (map (fn [topic-partition]
-                                            [(.topic ^TopicPartition topic-partition)
-                                             (.partition ^TopicPartition topic-partition)])))]
-        (when-let [offset (get-in topic-partition-offsets [topic partition])]
-          (.seek ^KafkaConsumer consumer
-                 (TopicPartition. topic partition)
-                 ^long offset))))))
+      (let [assignment
+            (loop []
+              (let [assignment (.assignment ^KafkaConsumer consumer)]
+                (if (seq assignment)
+                  assignment
+                  (do
+                    (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
+                    (.poll ^Consumer consumer 5000)
+                    (recur)))))]
+        (doseq [[topic partition] (map (fn [topic-partition]
+                                         [(.topic ^TopicPartition topic-partition)
+                                          (.partition ^TopicPartition topic-partition)])
+                                       assignment)]
+          (when-let [offset (get-in topic-partition-offsets [topic partition])]
+            (.seek ^KafkaConsumer consumer
+                   (TopicPartition. topic partition)
+                   ^long offset)))))))
 
 (defstrategy SeekToTimestampOffset
   [offset]
@@ -581,16 +590,25 @@
       IConsumerPostInitHook
       (post-init-hook
           [_ consumer]
-
-        (doseq [[^TopicPartition topic-partition
-                 ^OffsetAndTimestamp offset-and-timestamp]
-                (.offsetsForTimes ^KafkaConsumer consumer
-                                  (into {}
-                                        (map #(vector % offset))
-                                        (.assignment ^KafkaConsumer consumer)))]
-          (.seek ^KafkaConsumer consumer
-                 topic-partition
-                 (.offset offset-and-timestamp)))))))
+        (let [assignment
+              (loop []
+                (let [assignment (.assignment ^KafkaConsumer consumer)]
+                  (if (seq assignment)
+                    assignment
+                    (do
+                      (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
+                      (.poll ^Consumer consumer 5000)
+                      (recur)))))]
+          (doseq [[^TopicPartition topic-partition
+                   ^OffsetAndTimestamp offset-and-timestamp]
+                  (.offsetsForTimes ^KafkaConsumer consumer
+                                    (into {}
+                                          (map #(vector % offset))
+                                          assignment))]
+            (when offset-and-timestamp
+              (.seek ^KafkaConsumer consumer
+                     topic-partition
+                     (.offset offset-and-timestamp)))))))))
 
 (defstrategy OffsetReset
   [strategy]
