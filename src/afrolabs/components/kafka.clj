@@ -584,7 +584,8 @@
                      (t/instant)
                      (t/to-millis-from-epoch))
 
-                 (= java.time.Instant (type offset))
+                 (#{java.time.Instant
+                    java.time.ZonedDateTime} (type offset))
                  (t/to-millis-from-epoch offset))]
     (reify
       IConsumerPostInitHook
