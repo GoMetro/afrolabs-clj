@@ -1532,9 +1532,11 @@
                                             (str t) (str k) (str v)))
                               old)))
                         (fn [old-meta]
-                          (update-in old-meta [:ktable/partition-offsets p]
-                                     (fnil #(max % o)
-                                           -1))))
+                          (if-not (and o p)
+                            old-meta
+                            (update-in old-meta [:ktable/partition-offsets p]
+                                       (fnil #(max % o)
+                                             -1)))))
              rest-msgs))))
 
 (s/def ::ktable-id (s/and string?
