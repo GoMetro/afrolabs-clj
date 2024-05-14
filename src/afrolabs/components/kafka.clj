@@ -1555,6 +1555,79 @@
                            (s/keys :req-un [::ktable-id]
                                    :opt-un [::caught-up-once?])))
 
+(defprotocol IKTable
+  (ktable-wait-for-catchup
+    [_this topic-partition-offset timeout-period timeout-value]
+    "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
+Supports a timeout operation."))
+
+(defn ktable-atom-wait-for-catchup
+  "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
+  [ktable-atom topic-partition-offset timeout-duration timeout-value]
+  (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
+        timeout-chan (csp/timeout timeout-ms)
+
+        initial-ktable-value (deref ktable-atom
+                                    (.toMillis ^java.time.Duration timeout-duration)
+                                    timeout-value)
+
+        ktable->topic-partition-offsets
+        (fn [ktable-value] (:ktable/topic-partition-offsets (meta ktable-value)))
+
+        caught-up-already? (fn [ktable-value]
+                             (let [ktable-topic-partition-offsets
+                                   (ktable->topic-partition-offsets ktable-value)]
+
+                               (->> topic-partition-offset
+                                    (mapcat (fn [[topic partition-offset]]
+                                              (map (fn [[partition offset]] [topic partition offset])
+                                                   partition-offset)))
+                                    (keep (fn [[topic partition offset]]
+                                            (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
+                                                                                 [topic partition])]
+                                              (when (< ktable-progress-offset offset)
+                                                :not-caught-up-yet))))
+                                    (count)
+                                    (zero?))))]
+    (cond
+      (= initial-ktable-value timeout-value)
+      timeout-value
+
+      (caught-up-already? initial-ktable-value)
+      (ktable->topic-partition-offsets initial-ktable-value)
+
+      :else
+      (let [watch-id (keyword "ktable-atom-wait-for-catchup" (str (random-uuid)))
+            caught-up?-chan (csp/chan)
+            new-ktable-ch (csp/chan (csp/sliding-buffer 1))]
+
+        ;; notice changes when they happen
+        (add-watch ktable-atom watch-id (fn [_ _ _ _] (csp/>!! new-ktable-ch true)))
+
+        ;; do the job of waiting on a background thread
+        (csp/go
+          (loop [[_v ch] (csp/alts! [new-ktable-ch
+                                     timeout-chan])]
+            (if (= ch timeout-chan)
+              (do (csp/>! caught-up?-chan timeout-value)
+                  (csp/close! caught-up?-chan)
+                  timeout-value)
+              (let [ktable-value @ktable-atom]
+                (if (caught-up-already? ktable-value)
+                  (do (csp/>! caught-up?-chan (ktable->topic-partition-offsets ktable-value))
+                      (csp/close! caught-up?-chan))
+                  (recur (csp/alts! [new-ktable-ch
+                                     timeout-chan
+                                     (csp/timeout (long (/ timeout-ms 10)))]))))))
+          ;; cleanup with the watch
+          (remove-watch ktable-atom watch-id))
+
+        ;; kick of the process
+        (csp/go (csp/>! new-ktable-ch true))
+
+        ;; wait for the result or the timeout-value to arrive
+        (csp/<!! caught-up?-chan)))))
+
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
@@ -1571,6 +1644,8 @@
         _ (csp/go (csp/<! caught-up-ch)
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
+
+        topic-partition-offset-ch (csp/chan)
 
         ktable-state (atom {})
         consumer-client (reify
@@ -1595,6 +1670,10 @@
     (reify
       IHaltable
       (halt [_] (-comp/halt consumer))
+
+      IKTable
+      (ktable-wait-for-catchup [_ topic-partition-offset timeout-period timeout-value]
+        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-period timeout-value))
 
       IDeref
       (deref [_]
