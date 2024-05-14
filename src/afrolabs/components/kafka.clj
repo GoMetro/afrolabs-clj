@@ -18,7 +18,7 @@
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
 
    [net.cgrand.xforms :as x])
-  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
+  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
            [org.apache.kafka.common.header Header Headers]
@@ -145,7 +145,7 @@
 
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
-  (onCompletion [_ _ ex]
+  (onCompletion [_ meta-data ex]
     (trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
@@ -153,7 +153,15 @@
     (when-not ex
       (trace "Forwarding delivery notification...")
       (csp/go
-        (csp/>! delivered-ch msg)
+        (csp/>! delivered-ch (merge msg
+                                    (cond-> {:topic     (.topic ^RecordMetadata meta-data)
+                                             :partition (.partition ^RecordMetadata meta-data)}
+
+                                      (.hasOffset ^RecordMetadata meta-data)
+                                      (assoc :offset (.offset ^RecordMetadata meta-data))
+
+                                      (.hasTimestamp ^RecordMetadata meta-data)
+                                      (assoc :timestamp (t/instant (.timestamp ^RecordMetadata meta-data))))))
         (csp/close! delivered-ch)
         (trace "onCompletion done.")))))
 
