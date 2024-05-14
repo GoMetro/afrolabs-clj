@@ -1542,7 +1542,7 @@
                         (fn [old-meta]
                           (if-not (and o p)
                             old-meta
-                            (update-in old-meta [:ktable/partition-offsets p]
+                            (update-in old-meta [:ktable/topic-partition-offsets t p]
                                        (fnil #(max % o)
                                              -1)))))
              rest-msgs))))
