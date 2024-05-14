@@ -1567,9 +1567,7 @@ Supports a timeout operation."))
   (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
         timeout-chan (csp/timeout timeout-ms)
 
-        initial-ktable-value (deref ktable-atom
-                                    (.toMillis ^java.time.Duration timeout-duration)
-                                    timeout-value)
+        initial-ktable-value @ktable-atom
 
         ktable->topic-partition-offsets
         (fn [ktable-value] (:ktable/topic-partition-offsets (meta ktable-value)))
@@ -1590,9 +1588,6 @@ Supports a timeout operation."))
                                     (count)
                                     (zero?))))]
     (cond
-      (= initial-ktable-value timeout-value)
-      timeout-value
-
       (caught-up-already? initial-ktable-value)
       (ktable->topic-partition-offsets initial-ktable-value)
 
