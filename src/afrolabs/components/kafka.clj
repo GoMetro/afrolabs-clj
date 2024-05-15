@@ -149,9 +149,11 @@
     (trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
-      (warn ex "Error while getting confirmation of producing record.")
-      (csp/>!! delivered-ch ex)
-      (csp/close! delivered-ch))
+      (trace "Forwarding delivery exception...")
+      (csp/go
+        (csp/>!! delivered-ch ex)
+        (csp/close! delivered-ch)
+        (trace "when exception onCompletion done.")))
     (when-not ex
       (trace "Forwarding delivery notification...")
       (csp/go
@@ -165,7 +167,7 @@
                                       (.hasTimestamp ^RecordMetadata meta-data)
                                       (assoc :timestamp (t/instant (.timestamp ^RecordMetadata meta-data))))))
         (csp/close! delivered-ch)
-        (trace "onCompletion done.")))))
+        (trace "onCompletion delivered result.")))))
 
 (-prom/register-metric (prom/counter ::producer-msgs-produced
                                      {:description "How many messages are being produce via producer-produce."
