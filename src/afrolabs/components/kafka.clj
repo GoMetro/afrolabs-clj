@@ -149,7 +149,9 @@
     (trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
-      (warn ex "Error while getting confirmation of producing record."))
+      (warn ex "Error while getting confirmation of producing record.")
+      (csp/>!! delivered-ch ex)
+      (csp/close! delivered-ch))
     (when-not ex
       (trace "Forwarding delivery notification...")
       (csp/go
