@@ -1509,6 +1509,64 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn msgs->topic-partition-maxoffsets
+  "Accepts a sequence of kafka messages, and works out the max offset for every topic and partition.
+  Result is map of string (topic) to map of int (partition) to int (max offset)."
+  [msgs]
+  (into {}
+        (comp (map #(dissoc % :value))
+              (x/by-key :topic
+                        (comp (x/by-key :partition
+                                        (comp (map :offset)
+                                              x/max))
+                              (x/into {}))))
+        msgs))
+
+(defn combine-topic-partition-maxoffsets
+  "Accepts to topic-partition-maxoffset values, and combines them by keeping the max offset for each topic-partition."
+  [topic-partition-offset-acc topic-partition-offset-x]
+  (merge-with (fn [r l] (merge-with max r l))
+              topic-partition-offset-acc
+              topic-partition-offset-x))
+
+(comment
+
+  (def x1 (msgs->topic-partition-maxoffsets [{:topic "a"
+                                              :partition 1
+                                              :offset 2}
+                                             {:topic "a"
+                                              :partition 1
+                                              :offset 4}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 5}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 6}
+                                             {:topic "c"
+                                              :partition 1
+                                              :offset 7}]))
+  (def x2 (msgs->topic-partition-maxoffsets [{:topic "a"
+                                              :partition 1
+                                              :offset 11}
+                                             {:topic "a"
+                                              :partition 1
+                                              :offset 12}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 15}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 16}
+                                             {:topic "c"
+                                              :partition 1
+                                              :offset 17}]))
+
+  (combine-topic-partition-maxoffsets x1 x2)
+
+
+  )
+
 (defn merge-updates-with-ktable
   [old-ktable new-msgs]
   (loop [old                      old-ktable
