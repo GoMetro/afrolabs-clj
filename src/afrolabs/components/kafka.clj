@@ -18,7 +18,7 @@
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
 
    [net.cgrand.xforms :as x])
-  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback]
+  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
            [org.apache.kafka.common.header Header Headers]
@@ -145,17 +145,29 @@
 
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
-  (onCompletion [_ _ ex]
+  (onCompletion [_ meta-data ex]
     (trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
-      (warn ex "Error while getting confirmation of producing record."))
+      (trace "Forwarding delivery exception...")
+      (csp/go
+        (csp/>!! delivered-ch ex)
+        (csp/close! delivered-ch)
+        (trace "when exception onCompletion done.")))
     (when-not ex
       (trace "Forwarding delivery notification...")
       (csp/go
-        (csp/>! delivered-ch msg)
+        (csp/>! delivered-ch (merge msg
+                                    (cond-> {:topic     (.topic ^RecordMetadata meta-data)
+                                             :partition (.partition ^RecordMetadata meta-data)}
+
+                                      (.hasOffset ^RecordMetadata meta-data)
+                                      (assoc :offset (.offset ^RecordMetadata meta-data))
+
+                                      (.hasTimestamp ^RecordMetadata meta-data)
+                                      (assoc :timestamp (t/instant (.timestamp ^RecordMetadata meta-data))))))
         (csp/close! delivered-ch)
-        (trace "onCompletion done.")))))
+        (trace "onCompletion delivered result.")))))
 
 (-prom/register-metric (prom/counter ::producer-msgs-produced
                                      {:description "How many messages are being produce via producer-produce."
@@ -1497,6 +1509,64 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn msgs->topic-partition-maxoffsets
+  "Accepts a sequence of kafka messages, and works out the max offset for every topic and partition.
+  Result is map of string (topic) to map of int (partition) to int (max offset)."
+  [msgs]
+  (into {}
+        (comp (map #(dissoc % :value))
+              (x/by-key :topic
+                        (comp (x/by-key :partition
+                                        (comp (map :offset)
+                                              x/max))
+                              (x/into {}))))
+        msgs))
+
+(defn combine-topic-partition-maxoffsets
+  "Accepts to topic-partition-maxoffset values, and combines them by keeping the max offset for each topic-partition."
+  [topic-partition-offset-acc topic-partition-offset-x]
+  (merge-with (fn [r l] (merge-with max r l))
+              topic-partition-offset-acc
+              topic-partition-offset-x))
+
+(comment
+
+  (def x1 (msgs->topic-partition-maxoffsets [{:topic "a"
+                                              :partition 1
+                                              :offset 2}
+                                             {:topic "a"
+                                              :partition 1
+                                              :offset 4}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 5}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 6}
+                                             {:topic "c"
+                                              :partition 1
+                                              :offset 7}]))
+  (def x2 (msgs->topic-partition-maxoffsets [{:topic "a"
+                                              :partition 1
+                                              :offset 11}
+                                             {:topic "a"
+                                              :partition 1
+                                              :offset 12}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 15}
+                                             {:topic "b"
+                                              :partition 1
+                                              :offset 16}
+                                             {:topic "c"
+                                              :partition 1
+                                              :offset 17}]))
+
+  (combine-topic-partition-maxoffsets x1 x2)
+
+
+  )
+
 (defn merge-updates-with-ktable
   [old-ktable new-msgs]
   (loop [old                      old-ktable
@@ -1534,7 +1604,7 @@
                         (fn [old-meta]
                           (if-not (and o p)
                             old-meta
-                            (update-in old-meta [:ktable/partition-offsets p]
+                            (update-in old-meta [:ktable/topic-partition-offsets t p]
                                        (fnil #(max % o)
                                              -1)))))
              rest-msgs))))
@@ -1546,6 +1616,74 @@
 (s/def ::ktable-cfg (s/and ::clientless-consumer
                            (s/keys :req-un [::ktable-id]
                                    :opt-un [::caught-up-once?])))
+
+(defprotocol IKTable
+  (ktable-wait-for-catchup
+    [_this topic-partition-offset timeout-period timeout-value]
+    "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
+Supports a timeout operation."))
+
+(defn ktable-atom-wait-for-catchup
+  "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
+  [ktable-atom topic-partition-offset timeout-duration timeout-value]
+  (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
+        timeout-chan (csp/timeout timeout-ms)
+
+        initial-ktable-value @ktable-atom
+
+        ktable->topic-partition-offsets
+        (fn [ktable-value] (:ktable/topic-partition-offsets (meta ktable-value)))
+
+        caught-up-already? (fn [ktable-value]
+                             (let [ktable-topic-partition-offsets
+                                   (ktable->topic-partition-offsets ktable-value)]
+
+                               (->> topic-partition-offset
+                                    (mapcat (fn [[topic partition-offset]]
+                                              (map (fn [[partition offset]] [topic partition offset])
+                                                   partition-offset)))
+                                    (keep (fn [[topic partition offset]]
+                                            (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
+                                                                                 [topic partition])]
+                                              (when (< ktable-progress-offset offset)
+                                                :not-caught-up-yet))))
+                                    (count)
+                                    (zero?))))]
+    (cond
+      (caught-up-already? initial-ktable-value)
+      (ktable->topic-partition-offsets initial-ktable-value)
+
+      :else
+      (let [watch-id (keyword "ktable-atom-wait-for-catchup" (str (random-uuid)))
+            caught-up?-chan (csp/chan)
+            new-ktable-ch (csp/chan (csp/sliding-buffer 1))]
+
+        ;; notice changes when they happen
+        (add-watch ktable-atom watch-id (fn [_ _ _ _] (csp/>!! new-ktable-ch true)))
+
+        ;; do the job of waiting on a background thread
+        (csp/go
+          (loop [[_v ch] (csp/alts! [new-ktable-ch
+                                     timeout-chan])]
+            (if (= ch timeout-chan)
+              (do (csp/>! caught-up?-chan timeout-value)
+                  (csp/close! caught-up?-chan)
+                  timeout-value)
+              (let [ktable-value @ktable-atom]
+                (if (caught-up-already? ktable-value)
+                  (do (csp/>! caught-up?-chan (ktable->topic-partition-offsets ktable-value))
+                      (csp/close! caught-up?-chan))
+                  (recur (csp/alts! [new-ktable-ch
+                                     timeout-chan
+                                     (csp/timeout (long (/ timeout-ms 10)))]))))))
+          ;; cleanup with the watch
+          (remove-watch ktable-atom watch-id))
+
+        ;; kick of the process
+        (csp/go (csp/>! new-ktable-ch true))
+
+        ;; wait for the result or the timeout-value to arrive
+        (csp/<!! caught-up?-chan)))))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
@@ -1563,6 +1701,8 @@
         _ (csp/go (csp/<! caught-up-ch)
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
+
+        topic-partition-offset-ch (csp/chan)
 
         ktable-state (atom {})
         consumer-client (reify
@@ -1587,6 +1727,10 @@
     (reify
       IHaltable
       (halt [_] (-comp/halt consumer))
+
+      IKTable
+      (ktable-wait-for-catchup [_ topic-partition-offset timeout-period timeout-value]
+        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-period timeout-value))
 
       IDeref
       (deref [_]

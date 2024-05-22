@@ -104,6 +104,22 @@
 ;; #?(:clj (Long/parseLong (str value)))
 ;; #?(:cljs (js/parseInt (str value)))
 
+(defn config-string->bool
+  [value]
+  (boolean (cond
+             (nil? value)     nil ;; (boolean nil) -> false
+             (boolean? value) value
+             ;; environment variables come as strings.
+             (string? value)  (#{"ON" "1" "TRUE"}     ;; any envvar value not exactly these ones will be false
+                               (str/upper-case value))
+             (pos-int? value) true
+             (zero?    value) false
+             :else            value)))
+
+(defmethod aero/reader 'bool
+  [_ _ value]
+  (config-string->bool value))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defonce static-parameter-sources (delay (merge (read-system-env)
