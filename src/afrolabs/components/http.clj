@@ -110,19 +110,19 @@
                      (add-request-id)
                      (ring.middleware.pratchett/wrap-pratchett))
         s (httpkit/run-server handler'
-                              {:worker-name-prefix   worker-thread-name-prefix
-                               :error-logger         (fn [txt ex]
-                                                       (if-not ex
-                                                         (log/error txt)
-                                                         (log/error ex txt)))
-                               :warn-logger          (fn [txt ex]
-                                                       (if-not ex
-                                                         (log/warn txt)
-                                                         (log/warn ex txt)))
-                               ;; :event-logger         (fn [event-name] (log/debug event-name)) ;; replaced with (basic-request-logging)
-                               :legacy-return-value? false
-                               :port                 port
-                               :ip                   ip})]
+                              (cond-> {:error-logger         (fn [txt ex]
+                                                               (if-not ex
+                                                                 (log/error txt)
+                                                                 (log/error ex txt)))
+                                       :warn-logger          (fn [txt ex]
+                                                               (if-not ex
+                                                                 (log/warn txt)
+                                                                 (log/warn ex txt)))
+                                       ;; :event-logger         (fn [event-name] (log/debug event-name)) ;; replaced with (basic-request-logging)
+                                       :legacy-return-value? false
+                                       :port                 port
+                                       :ip                   ip}
+                                worker-thread-name-prefix (assoc :worker-name-prefix   worker-thread-name-prefix)))]
 
     (reify
       IHaltable
