@@ -79,8 +79,11 @@
       (log/info (str "REQUEST: " ip ":" port uri))
       (let [{:as   res
              :keys [status]} (handler req)]
-        (log/with-context+ {:status         status}
-          (log/info (str "RESPONSE: " ip ":" port uri " [" status "]")))
+        ;; status is nil for websocket responses
+        (log/with-context+ (cond-> {} status (assoc :status status))
+          (log/info (str "RESPONSE: " ip ":" port uri
+                         (when status
+                           (str " [" status "]")))))
         res))))
 
 (defn create-http-component
