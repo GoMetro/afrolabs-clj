@@ -72,14 +72,15 @@
         :keys [uri
                remote-addr
                request-method]}]
-    (log/with-context+ logging-context
+    (log/with-context+ (assoc logging-context
+                              :uri            uri
+                              :remote-addr    remote-addr
+                              :request-method request-method)
+      (log/info (str "REQUEST: " ip ":" port uri))
       (let [{:as   res
              :keys [status]} (handler req)]
-        (log/with-context+ {:status         status
-                            :uri            uri
-                            :remote-addr    remote-addr
-                            :request-method request-method}
-          (log/info (str ip ":" port uri " [" status "]")))
+        (log/with-context+ {:status         status}
+          (log/info (str "RESPONSE: " ip ":" port uri " [" status "]")))
         res))))
 
 (defn create-http-component
