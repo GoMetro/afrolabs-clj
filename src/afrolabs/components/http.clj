@@ -122,7 +122,10 @@
                                                                (if-not ex
                                                                  (log/warn txt)
                                                                  (log/warn ex txt)))
-                                       ;; :event-logger         (fn [event-name] (log/debug event-name)) ;; replaced with (basic-request-logging)
+                                        ;; replaced with (basic-request-logging)
+                                       :event-logger         (fn [event-name]
+                                                               (log/debug (str "low-level http-kit event logger: "
+                                                                               event-name)))
                                        :legacy-return-value? false
                                        :port                 port
                                        :ip                   ip}
