@@ -1645,7 +1645,8 @@ Supports a timeout operation."))
                                     (keep (fn [[topic partition offset]]
                                             (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
                                                                                  [topic partition])]
-                                              (when (< ktable-progress-offset offset)
+                                              (when (and ktable-progress-offset
+                                                         (< ktable-progress-offset offset))
                                                 :not-caught-up-yet))))
                                     (count)
                                     (zero?))))]
