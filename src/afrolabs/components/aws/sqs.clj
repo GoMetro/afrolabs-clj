@@ -94,7 +94,7 @@
                                 :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
                                                                           default-visibility-time-seconds))}}}))
 
-        {{:strs [QueueArn]} :Attributes
+        {{:keys [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
