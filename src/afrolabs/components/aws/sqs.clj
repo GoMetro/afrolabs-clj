@@ -151,7 +151,27 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol ISqsClient)
-(s/def ::sqs-client #(satisfies? ISqsClient %))
+(defprotocol ISqsClient2
+  (get-sqs-client [_] "Returns an instance of aws/client"))
+(s/def ::sqs-client #(or (satisfies? ISqsClient %)
+                         (satisfies? ISqsClient2 %)))
+
+(defn- make-derefable-from-client
+  "This is a hack to allow backwards API compatibility.
+
+  Makes something that can be `deref`-ed, based on different ways of providing an
+  sqs-client."
+  [sqs-client-impl]
+  (cond
+    (satisfies? ISqsClient sqs-client-impl)
+    (reify
+      clojure.lang.IDeref
+      (deref [_] @sqs-client-impl))
+
+    (satisfies? ISqsClient2 sqs-client-impl)
+    (reify
+      clojure.lang.IDeref
+      (deref [_] (get-sqs-client sqs-client-impl)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -234,13 +254,14 @@
   (let [QueueUrl (or QueueUrl
                      (get-sqs-queue-url queue-provider))
         delete-ch (csp/chan max-nr-of-messages)
+        sqs-client' (make-derefable-from-client sqs-client)
         message-delete-thread
         (csp/thread
           (loop []
             (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
               (log/trace (format "deleting sqs message: %s" receipt-handle))
               (-aws/throw-when-anomaly
-               (aws/invoke @sqs-client
+               (aws/invoke @sqs-client'
                            {:op      :DeleteMessage
                             :request {:QueueUrl       QueueUrl
                                       :ReceiptHandle  receipt-handle}}))
@@ -251,7 +272,7 @@
       (while @must-run
         (let [{msgs :Messages}
               (-aws/throw-when-anomaly
-               (aws/invoke @sqs-client
+               (aws/invoke @sqs-client'
                            {:op      :ReceiveMessage
                             :request (cond-> {:QueueUrl            QueueUrl
                                               :WaitTimeSeconds     wait-time-seconds
