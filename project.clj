@@ -185,6 +185,9 @@
                  ;; html as data - web scraping
                  [org.clj-commons/hickory "0.7.4"]
 
+                 ;; parsing strings
+                 [instaparse "1.5.0"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes

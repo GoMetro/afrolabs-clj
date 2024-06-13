@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>f6a7e728dc98c5d106cf23b2bebdab03377a57a7</tag>
+    <tag>422518831d3fe1807e391c7e4f52aa036b1c0ab2</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -423,6 +423,11 @@
       <groupId>org.clj-commons</groupId>
       <artifactId>hickory</artifactId>
       <version>0.7.4</version>
+    </dependency>
+    <dependency>
+      <groupId>instaparse</groupId>
+      <artifactId>instaparse</artifactId>
+      <version>1.5.0</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
