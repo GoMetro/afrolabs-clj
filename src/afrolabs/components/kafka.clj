@@ -1623,6 +1623,8 @@
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
 Supports a timeout operation."))
 
+(s/def ::ktable #(satisfies? IKTable %))
+
 (defn ktable-atom-wait-for-catchup
   "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
   [ktable-atom topic-partition-offset timeout-duration timeout-value]
