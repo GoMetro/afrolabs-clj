@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>2f1d437bdf031036673b3c281447d7880e7e9ace</tag>
+    <tag>8857bcbae542b5b3b623a24f81db59cd82dd8920</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -413,6 +413,11 @@
       <groupId>com.clojure-goes-fast</groupId>
       <artifactId>clj-async-profiler</artifactId>
       <version>1.2.2</version>
+    </dependency>
+    <dependency>
+      <groupId>lambdaisland</groupId>
+      <artifactId>uri</artifactId>
+      <version>1.19.155</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>

@@ -179,6 +179,9 @@
                  ;; this is safe to distribute into prod according to the docs
                  [com.clojure-goes-fast/clj-async-profiler "1.2.2"]
 
+                 ;; uri handling
+                 [lambdaisland/uri "1.19.155"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes
