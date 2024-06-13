@@ -182,6 +182,9 @@
                  ;; uri handling
                  [lambdaisland/uri "1.19.155"]
 
+                 ;; html as data - web scraping
+                 [org.clj-commons/hickory "0.7.4"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes

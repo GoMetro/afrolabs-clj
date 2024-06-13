@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>8857bcbae542b5b3b623a24f81db59cd82dd8920</tag>
+    <tag>f6a7e728dc98c5d106cf23b2bebdab03377a57a7</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -418,6 +418,11 @@
       <groupId>lambdaisland</groupId>
       <artifactId>uri</artifactId>
       <version>1.19.155</version>
+    </dependency>
+    <dependency>
+      <groupId>org.clj-commons</groupId>
+      <artifactId>hickory</artifactId>
+      <version>0.7.4</version>
     </dependency>
     <dependency>
       <groupId>com.clojure-goes-fast</groupId>
