@@ -2,6 +2,7 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.aws :as -aws]
             [cognitect.aws.client.api :as aws]
+            [cognitect.aws.retry]
             [clojure.spec.alpha :as s]
             [clojure.core.async :as csp]
             [taoensso.timbre :as log]
@@ -257,17 +258,29 @@
         sqs-client' (make-derefable-from-client sqs-client)
         message-delete-thread
         (csp/thread
-          (loop []
-            (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
-              (log/trace (format "deleting sqs message: %s" receipt-handle))
-              (-aws/throw-when-anomaly
-               (aws/invoke @sqs-client'
-                           {:op      :DeleteMessage
-                            :request {:QueueUrl       QueueUrl
-                                      :ReceiptHandle  receipt-handle}}))
-              (recur)))
+          (try
+            (loop []
+              (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
+                (log/trace (format "deleting sqs message: %s" receipt-handle))
+                (-aws/throw-when-anomaly
+                 (aws/invoke @sqs-client'
+                             {:op         :DeleteMessage
+                              :request    {:QueueUrl      QueueUrl
+                                           :ReceiptHandle receipt-handle}
+                              ;; there is a special kind of retriable error for :DeleteMessage on sqs
+                              ;; https://clojurians-log.clojureverse.org/aws/2022-04-27
+                              :retriable? (fn [{:cognitect.anomalies/keys [category
+                                                                           message]
+                                                :as                       error-info}]
+                                            (or (cognitect.aws.retry/default-retriable? error-info)
+                                                (and (= :cognitect.anomalies/fault category)
+                                                     (= "Abruptly closed by peer" message))))}))
+                (recur)))
+            (catch Throwable t
+              (log/fatal t "Uncaught exception on the delete-thread for sqs consumer. Stopping...")
+              (reset! must-run false)
+              (csp/close! delete-ch)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
-
     (try
       (while @must-run
         (let [{msgs :Messages}
