@@ -72,13 +72,23 @@
   ;; queuery
   (aws/doc @sqs-client :ReceiveMessage)
   (aws/invoke @sqs-client
-              {:op      :ReceiveMessage
-               :request {:QueueUrl            queue-url
-                         :WaitTimeSeconds     10
-                         :MaxNumberOfMessages 1
-                         :AttributeNames ["MessageGroupId"]
-                         :MessageAttributeNames ["All"]}})
+              {:op         :ReceiveMessage
+               :request    {:QueueUrl              queue-url
+                            :WaitTimeSeconds       10
+                            :MaxNumberOfMessages   1
+                            :AttributeNames        ["MessageGroupId"]
+                            :MessageAttributeNames ["All"]}
+               :retriable? sqs-retriable})
   )
+
+
+(def sqs-retriable
+  (fn [{:cognitect.anomalies/keys [category
+                                   message]
+        :as                       error-info}]
+    (or (cognitect.aws.retry/default-retriable? error-info)
+        (and (= :cognitect.anomalies/fault category)
+             (= "Abruptly closed by peer" message)))))
 
 (defn upsert-queue!
   "Upserts a standard/non-fifo AWS SQS queue."
@@ -90,18 +100,20 @@
          :as   create-queue-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :CreateQueue
-                      :request {:QueueName  QueueName
-                                :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
-                                                                          default-visibility-time-seconds))}}}))
+                     {:op         :CreateQueue
+                      :request    {:QueueName  QueueName
+                                   :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
+                                                                             default-visibility-time-seconds))}}
+                      :retriable? sqs-retriable}))
 
         {{:keys [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :GetQueueAttributes
-                      :request {:QueueUrl       QueueUrl
-                                :AttributeNames ["QueueArn"]}}))
+                     {:op         :GetQueueAttributes
+                      :request    {:QueueUrl       QueueUrl
+                                   :AttributeNames ["QueueArn"]}
+                      :retriable? sqs-retriable}))
         ]
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
@@ -134,15 +146,17 @@
                                               (assoc "DeduplicationScope"  "messageGroup"
                                                      "FifoThroughputLimit" "perMessageGroupId")
 
-                                              )}}))
+                                              )}
+                      :retriable? sqs-retriable}))
 
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :GetQueueAttributes
-                      :request {:QueueUrl       QueueUrl
-                                :AttributeNames ["QueueArn"]}}))
+                     {:op         :GetQueueAttributes
+                      :request    {:QueueUrl       QueueUrl
+                                   :AttributeNames ["QueueArn"]}
+                      :retriable? sqs-retriable}))
 
         ]
     {:QueueUrl QueueUrl
@@ -269,12 +283,7 @@
                                            :ReceiptHandle receipt-handle}
                               ;; there is a special kind of retriable error for :DeleteMessage on sqs
                               ;; https://clojurians-log.clojureverse.org/aws/2022-04-27
-                              :retriable? (fn [{:cognitect.anomalies/keys [category
-                                                                           message]
-                                                :as                       error-info}]
-                                            (or (cognitect.aws.retry/default-retriable? error-info)
-                                                (and (= :cognitect.anomalies/fault category)
-                                                     (= "Abruptly closed by peer" message))))}))
+                              :retriable? sqs-retriable}))
                 (recur)))
             (catch Throwable t
               (log/fatal t "Uncaught exception on the delete-thread for sqs consumer. Stopping...")
@@ -286,11 +295,12 @@
         (let [{msgs :Messages}
               (-aws/throw-when-anomaly
                (aws/invoke @sqs-client'
-                           {:op      :ReceiveMessage
-                            :request (cond-> {:QueueUrl            QueueUrl
+                           {:op         :ReceiveMessage
+                            :request    (cond-> {:QueueUrl            QueueUrl
                                               :WaitTimeSeconds     wait-time-seconds
                                               :MaxNumberOfMessages max-nr-of-messages}
-                                       AttributeNames (assoc :AttributeNames AttributeNames))}))]
+                                          AttributeNames (assoc :AttributeNames AttributeNames))
+                            :retriable? sqs-retriable}))]
 
 
           ;; pass on every message to the consumer client (business code)
