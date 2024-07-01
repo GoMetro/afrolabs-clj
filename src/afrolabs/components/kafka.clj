@@ -1579,9 +1579,13 @@
            hdrs :headers} & rest-msgs] new-msgs]
     (if-not head
       old
-      (recur (vary-meta (let [v (if-not hdrs
-                                  v
-                                  (with-meta v {:headers hdrs}))]
+      (recur (vary-meta (let [v (cond
+                                  ;; we want to avoid setting meta-data (headers) on a nil value
+                                  ;; even if that record arrives with headers.
+                                  ;; All we will do with the value is remove it from the ktable anyway.
+                                  (nil? v) v
+                                  hdrs     (with-meta v {:headers hdrs})
+                                  :else    v)]
                           (cond
                             ;; nothing is nil, save the value
                             (not (or (nil? k)
