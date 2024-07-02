@@ -2,6 +2,7 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.aws :as -aws]
             [cognitect.aws.client.api :as aws]
+            [cognitect.aws.retry]
             [clojure.spec.alpha :as s]
             [clojure.core.async :as csp]
             [taoensso.timbre :as log]
@@ -71,13 +72,23 @@
   ;; queuery
   (aws/doc @sqs-client :ReceiveMessage)
   (aws/invoke @sqs-client
-              {:op      :ReceiveMessage
-               :request {:QueueUrl            queue-url
-                         :WaitTimeSeconds     10
-                         :MaxNumberOfMessages 1
-                         :AttributeNames ["MessageGroupId"]
-                         :MessageAttributeNames ["All"]}})
+              {:op         :ReceiveMessage
+               :request    {:QueueUrl              queue-url
+                            :WaitTimeSeconds       10
+                            :MaxNumberOfMessages   1
+                            :AttributeNames        ["MessageGroupId"]
+                            :MessageAttributeNames ["All"]}
+               :retriable? sqs-retriable})
   )
+
+
+(def sqs-retriable
+  (fn [{:cognitect.anomalies/keys [category
+                                   message]
+        :as                       error-info}]
+    (or (cognitect.aws.retry/default-retriable? error-info)
+        (and (= :cognitect.anomalies/fault category)
+             (= "Abruptly closed by peer" message)))))
 
 (defn upsert-queue!
   "Upserts a standard/non-fifo AWS SQS queue."
@@ -89,18 +100,20 @@
          :as   create-queue-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :CreateQueue
-                      :request {:QueueName  QueueName
-                                :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
-                                                                          default-visibility-time-seconds))}}}))
+                     {:op         :CreateQueue
+                      :request    {:QueueName  QueueName
+                                   :Attributes {"VisibilityTimeout" (str (or visibility-time-seconds
+                                                                             default-visibility-time-seconds))}}
+                      :retriable? sqs-retriable}))
 
-        {{:strs [QueueArn]} :Attributes
+        {{:keys [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :GetQueueAttributes
-                      :request {:QueueUrl       QueueUrl
-                                :AttributeNames ["QueueArn"]}}))
+                     {:op         :GetQueueAttributes
+                      :request    {:QueueUrl       QueueUrl
+                                   :AttributeNames ["QueueArn"]}
+                      :retriable? sqs-retriable}))
         ]
     {:QueueUrl QueueUrl
      :QueueArn QueueArn}))
@@ -133,15 +146,17 @@
                                               (assoc "DeduplicationScope"  "messageGroup"
                                                      "FifoThroughputLimit" "perMessageGroupId")
 
-                                              )}}))
+                                              )}
+                      :retriable? sqs-retriable}))
 
         {{:strs [QueueArn]} :Attributes
          :as                get-queue-attributes-result}
         (-aws/throw-when-anomaly
          (aws/invoke @sqs-client
-                     {:op      :GetQueueAttributes
-                      :request {:QueueUrl       QueueUrl
-                                :AttributeNames ["QueueArn"]}}))
+                     {:op         :GetQueueAttributes
+                      :request    {:QueueUrl       QueueUrl
+                                   :AttributeNames ["QueueArn"]}
+                      :retriable? sqs-retriable}))
 
         ]
     {:QueueUrl QueueUrl
@@ -151,7 +166,27 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol ISqsClient)
-(s/def ::sqs-client #(satisfies? ISqsClient %))
+(defprotocol ISqsClient2
+  (get-sqs-client [_] "Returns an instance of aws/client"))
+(s/def ::sqs-client #(or (satisfies? ISqsClient %)
+                         (satisfies? ISqsClient2 %)))
+
+(defn- make-derefable-from-client
+  "This is a hack to allow backwards API compatibility.
+
+  Makes something that can be `deref`-ed, based on different ways of providing an
+  sqs-client."
+  [sqs-client-impl]
+  (cond
+    (satisfies? ISqsClient sqs-client-impl)
+    (reify
+      clojure.lang.IDeref
+      (deref [_] @sqs-client-impl))
+
+    (satisfies? ISqsClient2 sqs-client-impl)
+    (reify
+      clojure.lang.IDeref
+      (deref [_] (get-sqs-client sqs-client-impl)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -234,29 +269,38 @@
   (let [QueueUrl (or QueueUrl
                      (get-sqs-queue-url queue-provider))
         delete-ch (csp/chan max-nr-of-messages)
+        sqs-client' (make-derefable-from-client sqs-client)
         message-delete-thread
         (csp/thread
-          (loop []
-            (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
-              (log/trace (format "deleting sqs message: %s" receipt-handle))
-              (-aws/throw-when-anomaly
-               (aws/invoke @sqs-client
-                           {:op      :DeleteMessage
-                            :request {:QueueUrl       QueueUrl
-                                      :ReceiptHandle  receipt-handle}}))
-              (recur)))
+          (try
+            (loop []
+              (when-let [{receipt-handle :ReceiptHandle} (csp/<!! delete-ch)] ;; v is nil only when channel is closed
+                (log/trace (format "deleting sqs message: %s" receipt-handle))
+                (-aws/throw-when-anomaly
+                 (aws/invoke @sqs-client'
+                             {:op         :DeleteMessage
+                              :request    {:QueueUrl      QueueUrl
+                                           :ReceiptHandle receipt-handle}
+                              ;; there is a special kind of retriable error for :DeleteMessage on sqs
+                              ;; https://clojurians-log.clojureverse.org/aws/2022-04-27
+                              :retriable? sqs-retriable}))
+                (recur)))
+            (catch Throwable t
+              (log/fatal t "Uncaught exception on the delete-thread for sqs consumer. Stopping...")
+              (reset! must-run false)
+              (csp/close! delete-ch)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]
-
     (try
       (while @must-run
         (let [{msgs :Messages}
               (-aws/throw-when-anomaly
-               (aws/invoke @sqs-client
-                           {:op      :ReceiveMessage
-                            :request (cond-> {:QueueUrl            QueueUrl
+               (aws/invoke @sqs-client'
+                           {:op         :ReceiveMessage
+                            :request    (cond-> {:QueueUrl            QueueUrl
                                               :WaitTimeSeconds     wait-time-seconds
                                               :MaxNumberOfMessages max-nr-of-messages}
-                                       AttributeNames (assoc :AttributeNames AttributeNames))}))]
+                                          AttributeNames (assoc :AttributeNames AttributeNames))
+                            :retriable? sqs-retriable}))]
 
 
           ;; pass on every message to the consumer client (business code)

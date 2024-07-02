@@ -1579,9 +1579,13 @@
            hdrs :headers} & rest-msgs] new-msgs]
     (if-not head
       old
-      (recur (vary-meta (let [v (if-not hdrs
-                                  v
-                                  (with-meta v {:headers hdrs}))]
+      (recur (vary-meta (let [v (cond
+                                  ;; we want to avoid setting meta-data (headers) on a nil value
+                                  ;; even if that record arrives with headers.
+                                  ;; All we will do with the value is remove it from the ktable anyway.
+                                  (nil? v) v
+                                  hdrs     (with-meta v {:headers hdrs})
+                                  :else    v)]
                           (cond
                             ;; nothing is nil, save the value
                             (not (or (nil? k)
@@ -1623,6 +1627,8 @@
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
 Supports a timeout operation."))
 
+(s/def ::ktable #(satisfies? IKTable %))
+
 (defn ktable-atom-wait-for-catchup
   "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
   [ktable-atom topic-partition-offset timeout-duration timeout-value]
@@ -1645,7 +1651,8 @@ Supports a timeout operation."))
                                     (keep (fn [[topic partition offset]]
                                             (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
                                                                                  [topic partition])]
-                                              (when (< ktable-progress-offset offset)
+                                              (when (and ktable-progress-offset
+                                                         (< ktable-progress-offset offset))
                                                 :not-caught-up-yet))))
                                     (count)
                                     (zero?))))]

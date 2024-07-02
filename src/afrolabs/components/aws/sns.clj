@@ -24,6 +24,18 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
+(defn get-topic-attributes
+  [{:keys [sns-client]}
+   topic-arn]
+  (let [raw-attributes-result
+        (-aws/throw-when-anomaly
+         (aws/invoke @sns-client
+                     {:op      :GetTopicAttributes
+                      :request {:TopicArn topic-arn}}))]
+    (:Attributes raw-attributes-result)))
+
+;;;;;;;;;;;;;;;;;;;;
+
 (defn query-topic-subscriptions
   "Returns the subscriptions for a specific topic.
 

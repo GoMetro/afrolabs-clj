@@ -9,7 +9,7 @@
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
   :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
                                     :sign-releases false}]]
-  :dependencies [[org.clojure/clojure "1.11.2"]
+  :dependencies [[org.clojure/clojure "1.11.3"]
                  [com.google.javascript/closure-compiler-unshaded "v20240317"]
                  [org.clojure/clojurescript "1.11.132"]
 
@@ -17,7 +17,7 @@
                  [org.clojure/test.check "1.1.1"]
 
                  ;; dependency conflict resolution, also edn reader
-                 [org.clojure/tools.reader "1.4.1"]
+                 [org.clojure/tools.reader "1.4.2"]
 
                  ;; I'm not sure why we're choosing an old version of jetty here.
                  ;; might be cognitect.
@@ -50,7 +50,7 @@
 
                  ;; https://github.com/weavejester/integrant
                  ;; similar to dependency injection
-                 [integrant "0.8.1"]
+                 [integrant "0.10.0"]
 
                  ;; aero - a lib for loading configuration (eg integrant config) from edn files
                  [aero "1.1.6"]
@@ -60,7 +60,7 @@
 
                  ;; https://github.com/http-kit/http-kit
                  ;; http server
-                 [http-kit "2.7.0"]
+                 [http-kit "2.8.0"]
 
                  ;; password-hashing helpers
                  [buddy/buddy-hashers "2.0.167"]
@@ -75,11 +75,11 @@
 
                  ;; http routing library
                  ;; https://github.com/metosin/reitit
-                 [metosin/reitit "0.6.0" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+                 [metosin/reitit "0.7.0" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "1.4.2"]
-                 [org.threeten/threeten-extra "1.7.2"]
+                 [org.threeten/threeten-extra "1.8.0"]
 
                  ;; https://github.com/clj-commons/iapetos
                  [io.prometheus/simpleclient "0.16.0"]
@@ -109,10 +109,11 @@
                  [com.cnuernber/charred "1.034"]
 
                  ;; fip, dependency of both malli and shadow-cljs
+                 [org.clojure/core.rrb-vector "0.2.0"]
                  [fipp "0.6.26"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.15.0"]
+                 [metosin/malli "0.16.1"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
                  [org.slf4j/log4j-over-slf4j "2.0.12"]
@@ -166,7 +167,7 @@
                  [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
-                 [thheller/shadow-cljs "2.28.3"]
+                 [thheller/shadow-cljs "2.28.8"]
 
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
@@ -176,7 +177,16 @@
 
                  ;; profiling
                  ;; this is safe to distribute into prod according to the docs
-                 [com.clojure-goes-fast/clj-async-profiler "1.2.0"]
+                 [com.clojure-goes-fast/clj-async-profiler "1.2.2"]
+
+                 ;; uri handling
+                 [lambdaisland/uri "1.19.155"]
+
+                 ;; html as data - web scraping
+                 [org.clj-commons/hickory "0.7.4"]
+
+                 ;; parsing strings
+                 [instaparse "1.5.0"]
 
                  ]
   :aot [afrolabs.components.kafka.json-serdes

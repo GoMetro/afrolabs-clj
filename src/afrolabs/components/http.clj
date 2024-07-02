@@ -72,14 +72,18 @@
         :keys [uri
                remote-addr
                request-method]}]
-    (log/with-context+ logging-context
+    (log/with-context+ (assoc logging-context
+                              :uri            uri
+                              :remote-addr    remote-addr
+                              :request-method request-method)
+      ;; (log/debug (str "REQUEST: " ip ":" port uri))
       (let [{:as   res
              :keys [status]} (handler req)]
-        (log/with-context+ {:status         status
-                            :uri            uri
-                            :remote-addr    remote-addr
-                            :request-method request-method}
-          (log/info (str ip ":" port uri " [" status "]")))
+        ;; status is nil for websocket responses
+        (log/with-context+ (cond-> {} status (assoc :status status))
+          (log/info (str ip ":" port uri
+                         (when status
+                           (str " [" status "]")))))
         res))))
 
 (defn create-http-component
@@ -110,19 +114,22 @@
                      (add-request-id)
                      (ring.middleware.pratchett/wrap-pratchett))
         s (httpkit/run-server handler'
-                              {:worker-name-prefix   worker-thread-name-prefix
-                               :error-logger         (fn [txt ex]
-                                                       (if-not ex
-                                                         (log/error txt)
-                                                         (log/error ex txt)))
-                               :warn-logger          (fn [txt ex]
-                                                       (if-not ex
-                                                         (log/warn txt)
-                                                         (log/warn ex txt)))
-                               ;; :event-logger         (fn [event-name] (log/debug event-name)) ;; replaced with (basic-request-logging)
-                               :legacy-return-value? false
-                               :port                 port
-                               :ip                   ip})]
+                              (cond-> {:error-logger         (fn [txt ex]
+                                                               (if-not ex
+                                                                 (log/error txt)
+                                                                 (log/error ex txt)))
+                                       :warn-logger          (fn [txt ex]
+                                                               (if-not ex
+                                                                 (log/warn txt)
+                                                                 (log/warn ex txt)))
+                                        ;; replaced with (basic-request-logging)
+                                       ;; :event-logger         (fn [event-name]
+                                       ;;                         (log/debug (str "low-level http-kit event logger: "
+                                       ;;                                         event-name)))
+                                       :legacy-return-value? false
+                                       :port                 port
+                                       :ip                   ip}
+                                worker-thread-name-prefix (assoc :worker-name-prefix   worker-thread-name-prefix)))]
 
     (reify
       IHaltable
