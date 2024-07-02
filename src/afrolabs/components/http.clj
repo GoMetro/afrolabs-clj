@@ -76,12 +76,12 @@
                               :uri            uri
                               :remote-addr    remote-addr
                               :request-method request-method)
-      (log/info (str "REQUEST: " ip ":" port uri))
+      ;; (log/debug (str "REQUEST: " ip ":" port uri))
       (let [{:as   res
              :keys [status]} (handler req)]
         ;; status is nil for websocket responses
         (log/with-context+ (cond-> {} status (assoc :status status))
-          (log/info (str "RESPONSE: " ip ":" port uri
+          (log/info (str ip ":" port uri
                          (when status
                            (str " [" status "]")))))
         res))))
@@ -123,9 +123,9 @@
                                                                  (log/warn txt)
                                                                  (log/warn ex txt)))
                                         ;; replaced with (basic-request-logging)
-                                       :event-logger         (fn [event-name]
-                                                               (log/debug (str "low-level http-kit event logger: "
-                                                                               event-name)))
+                                       ;; :event-logger         (fn [event-name]
+                                       ;;                         (log/debug (str "low-level http-kit event logger: "
+                                       ;;                                         event-name)))
                                        :legacy-return-value? false
                                        :port                 port
                                        :ip                   ip}
