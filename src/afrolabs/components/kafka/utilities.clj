@@ -247,9 +247,11 @@
              confluent-api-key confluent-api-secret ;; confluent
              extra-strategies
              topic-predicate
-             preserve-internal-and-confluent-topics]
+             preserve-internal-and-confluent-topics
+             dry-run?]
       :or {extra-strategies                       []
-           preserve-internal-and-confluent-topics true}}]
+           preserve-internal-and-confluent-topics true
+           dry-run?                               false}}]
   (when-not preserve-internal-and-confluent-topics
     (log/warn "Old option `preserve-internal-and-confluent-topics` used. This option is ignored. No internal topics will be deleted."))
 
@@ -274,8 +276,9 @@
     (when (seq topics-to-be-deleted)
       (log/infof "Deleting these topics:\n%s"
                  (str topics-to-be-deleted))
-      (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
-                           topics-to-be-deleted)))
+      (when-not dry-run?
+        (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
+                             topics-to-be-deleted))))
 
     ;; to release the resources of the admin-client
     (-comp/halt admin-client)))
