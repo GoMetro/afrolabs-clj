@@ -742,18 +742,21 @@
           [_ _]
         (csp/close! caught-up-ch))
 
-      IConsumerPostInitHook
-      (post-init-hook
-          [_ consumer]
-        ;; We save the end offsets at the start, so we can compare later if we've caught up
-        ;; If this times out, the exception will be bubbled up.
-        (reset! end-offsets-at-start
-                (consumer-end-offsets consumer :timeout-value :throw)))
-
       IPostConsumeHook
       (post-consume-hook
           [_ consumer _consumed-records]
+        ;; we have to store the endOffsets, after the first consume (ie after partition assignment)
+        ;; if we have a value in this atom, just keep it
+        ;; otherwise query the end offsets and store it
+        (swap! end-offsets-at-start
+               (fn [old-value]
+                 (if old-value
+                   old-value
+                   (consumer-end-offsets consumer :timeout-value :throw))))
+
         (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)]
+          #_(log/spy :debug "Start offsets & current offsets "
+                   [@end-offsets-at-start current-offsets])
           ;; when the end offsets at the start are less than the current offsets
           ;; we have caught up once
           (csp/go (when (every? (fn [{:keys [topic partition offset]}]
