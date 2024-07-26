@@ -1606,11 +1606,19 @@
                                             (str t) (str k) (str v)))
                               old)))
                         (fn [old-meta]
-                          (if-not (and o p)
-                            old-meta
-                            (update-in old-meta [:ktable/topic-partition-offsets t p]
+                          (cond-> old-meta
+                            (and o p)
+                            (update-in [:ktable/topic-partition-offsets t p]
                                        (fnil #(max % o)
-                                             -1)))))
+                                             -1))
+
+                            hdrs
+                            (assoc-in [:ktable/record-headers t k]
+                                      hdrs)
+
+                            (not hdrs)
+                            (update-in [:ktable/record-headers t]
+                                       #(dissoc % k)))))
              rest-msgs))))
 
 (s/def ::ktable-id (s/and string?
