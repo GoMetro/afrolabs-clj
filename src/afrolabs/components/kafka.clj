@@ -750,9 +750,8 @@
         ;; otherwise query the end offsets and store it
         (swap! end-offsets-at-start
                (fn [old-value]
-                 (if old-value
-                   old-value
-                   (consumer-end-offsets consumer :timeout-value :throw))))
+                 (or old-value
+                     (consumer-end-offsets consumer :timeout-value :throw))))
 
         (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)]
           #_(log/spy :debug "Start offsets & current offsets "
