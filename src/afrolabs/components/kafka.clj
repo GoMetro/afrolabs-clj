@@ -742,18 +742,20 @@
           [_ _]
         (csp/close! caught-up-ch))
 
-      IConsumerPostInitHook
-      (post-init-hook
-          [_ consumer]
-        ;; We save the end offsets at the start, so we can compare later if we've caught up
-        ;; If this times out, the exception will be bubbled up.
-        (reset! end-offsets-at-start
-                (consumer-end-offsets consumer :timeout-value :throw)))
-
       IPostConsumeHook
       (post-consume-hook
           [_ consumer _consumed-records]
+        ;; we have to store the endOffsets, after the first consume (ie after partition assignment)
+        ;; if we have a value in this atom, just keep it
+        ;; otherwise query the end offsets and store it
+        (swap! end-offsets-at-start
+               (fn [old-value]
+                 (or old-value
+                     (consumer-end-offsets consumer :timeout-value :throw))))
+
         (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)]
+          #_(log/spy :debug "Start offsets & current offsets "
+                   [@end-offsets-at-start current-offsets])
           ;; when the end offsets at the start are less than the current offsets
           ;; we have caught up once
           (csp/go (when (every? (fn [{:keys [topic partition offset]}]
@@ -1606,11 +1608,26 @@
                                             (str t) (str k) (str v)))
                               old)))
                         (fn [old-meta]
-                          (if-not (and o p)
-                            old-meta
-                            (update-in old-meta [:ktable/topic-partition-offsets t p]
+                          (cond-> old-meta
+
+                            ;; If we have an offset and a partition (int) value we will store it,
+                            ;; keeping the max of all offsets per partition we've encountered.
+                            ;; `max` throws with `nil` so we need a non-nil value to compare
+                            ;; the encountered offset with. Choose `-1` because it is less than
+                            ;; any offset we will encounter (ie invalid offset value) but still
+                            ;; an int that will not throw inside max.
+                            (and o p)
+                            (update-in [:ktable/topic-partition-offsets t p]
                                        (fnil #(max % o)
-                                             -1)))))
+                                             -1))
+
+                            hdrs
+                            (assoc-in [:ktable/record-headers t k]
+                                      hdrs)
+
+                            (not hdrs)
+                            (update-in [:ktable/record-headers t]
+                                       #(dissoc % k)))))
              rest-msgs))))
 
 (s/def ::ktable-id (s/and string?
