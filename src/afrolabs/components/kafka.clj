@@ -1609,6 +1609,13 @@
                               old)))
                         (fn [old-meta]
                           (cond-> old-meta
+
+                            ;; If we have an offset and a partition (int) value we will store it,
+                            ;; keeping the max of all offsets per partition we've encountered.
+                            ;; `max` throws with `nil` so we need a non-nil value to compare
+                            ;; the encountered offset with. Choose `-1` because it is less than
+                            ;; any offset we will encounter (ie invalid offset value) but still
+                            ;; an int that will not throw inside max.
                             (and o p)
                             (update-in [:ktable/topic-partition-offsets t p]
                                        (fnil #(max % o)
