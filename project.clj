@@ -178,6 +178,7 @@
                  ;; profiling
                  ;; this is safe to distribute into prod according to the docs
                  [com.clojure-goes-fast/clj-async-profiler "1.2.2"]
+                 [com.clojure-goes-fast/clj-memory-meter "0.3.0"]
 
                  ;; uri handling
                  [lambdaisland/uri "1.19.155"]
