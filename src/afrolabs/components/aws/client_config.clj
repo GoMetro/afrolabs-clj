@@ -11,17 +11,20 @@
 (s/def ::access-key-id (s/nilable string?))
 (s/def ::secret-access-key (s/nilable string?))
 (s/def ::region (s/nilable string?))
+(s/def ::load-sso? boolean?)
 (s/def ::aws-client-config-cfg
   (s/keys :req-un [::access-key-id
                    ::secret-access-key
                    ::region]
-          :opt-un [::profile]))
+          :opt-un [::profile
+                   ::load-sso?]))
 
 (defn make-aws-client
   [{:keys [region
            access-key-id
            secret-access-key
-           profile]
+           profile
+           load-sso?]
     :as _cfg}]
 
   (cond-> {}
@@ -39,14 +42,16 @@
               secret-access-key))
     (assoc :credentials-provider
            (aws-creds/chain-credentials-provider
-            [(aws-creds/default-credentials-provider (aws/default-http-client))
-             ;; this crazy shit provides a work-around because
-             ;; cognitect's profile credentials provider does not work for sso.
-             ;; We are adding it at the end of the chain.
-             (-aws-sso-profile-provider/provider (or profile
-                                                     (System/getenv "AWS_PROFILE")
-                                                     (System/getProperty "aws.profile")
-                                                     "default"))]))))
+            (remove nil?
+                    [(aws-creds/default-credentials-provider (aws/default-http-client))
+                     ;; this crazy shit provides a work-around because
+                     ;; cognitect's profile credentials provider does not work for sso.
+                     ;; We are adding it at the end of the chain.
+                     (when load-sso?
+                       (-aws-sso-profile-provider/provider (or profile
+                                                               (System/getenv "AWS_PROFILE")
+                                                               (System/getProperty "aws.profile")
+                                                               "default")))])))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::aws-client-config
                      ::-comp/config-spec ::aws-client-config-cfg}
