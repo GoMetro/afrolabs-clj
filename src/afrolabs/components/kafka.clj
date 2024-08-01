@@ -1401,6 +1401,9 @@
                                                 :d (s/and double?
                                                           #(< 0.0 % 1.0))))
 (s/def ::recreate-topics-with-bad-config boolean?)
+(s/def ::ktable-compaction-policy #{"compact"
+                                    "delete,compact"
+                                    "compact,delete"})
 (s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
                                     (s/keys :req-un [::topic-name-providers]
                                             :opt-un [::nr-of-partitions
@@ -1408,7 +1411,8 @@
                                                      ::ktable-segment-ms
                                                      ::ktable-min-cleanable-dirty-ratio
                                                      ::recreate-topics-with-bad-config
-                                                     ::ktable-max-compaction-lag-ms])))
+                                                     ::ktable-max-compaction-lag-ms
+                                                     ::ktable-compaction-policy])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
@@ -1419,8 +1423,10 @@
            ktable-segment-ms
            ktable-min-cleanable-dirty-ratio
            ktable-max-compaction-lag-ms
-           recreate-topics-with-bad-config]
-    :or   {recreate-topics-with-bad-config false}}]
+           recreate-topics-with-bad-config
+           ktable-compaction-policy]
+    :or   {recreate-topics-with-bad-config false
+           ktable-compaction-policy        "compact"}}]
 
   (let [nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
@@ -1451,21 +1457,25 @@
                                                                               (.value (.get cfg "cleanup.policy"))]))
                                                                       (into {}))]
                                    (->> topic-to-cleanup-policies
-                                        (filter (fn [[_ compaction-strategy]] (not= "compact" compaction-strategy)))
+                                        (filter (fn [[_ compaction-strategy]] (not= ktable-compaction-policy
+                                                                                    compaction-strategy)))
                                         (map first)
                                         vec))
 
         ;; delete the topics with the wrong config
         ;; OR throw when incorrectly created
-        _ (if (pos-int? (count topics-with-wrong-config))
+        _ (when (pos-int? (count topics-with-wrong-config))
             (if-not recreate-topics-with-bad-config
-              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == 'compact', but they are not. Cannot continue.\n%s"
+              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
+                                      ktable-compaction-policy
                                       (str topics-with-wrong-config))
-                              {:topics topics-with-wrong-config}))
+                              {:topics         topics-with-wrong-config
+                               :desired-policy ktable-compaction-policy}))
 
               ;; here the topics will be deleted
               (do
-                (warn (format "These topics ['%s'] were created incorrectly ('cleanup.policy' != 'compact'). They will now be deleted and re-created. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                (warn (format "These topics ['%s'] were created incorrectly ('cleanup.policy' != '%s'). They will now be deleted and re-created. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                              ktable-compaction-policy
                               (str topics-with-wrong-config)))
                 (-> (.deleteTopics ^AdminClient @ac
                                    topics-with-wrong-config)
@@ -1479,17 +1489,18 @@
                                   #{}))
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
-                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
                                                       topic-name
                                                       (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                      "CLUSTER_DEFAULT"))
+                                                      "CLUSTER_DEFAULT"
+                                                      ktable-compaction-policy))
                                         (let [new-topic (NewTopic. ^String   topic-name
                                                                    ^Optional (if nr-of-partitions
                                                                                (Optional/of nr-of-partitions)
                                                                                (Optional/empty))
                                                                    ^Optional (Optional/empty))
                                               _ (.configs new-topic
-                                                          (cond-> {"cleanup.policy" "compact"}
+                                                          (cond-> {"cleanup.policy" ktable-compaction-policy}
                                                             topic-delete-retention-ms        (assoc "delete.retention.ms" (str topic-delete-retention-ms))
                                                             ktable-segment-ms                (assoc "segment.ms" (str ktable-segment-ms))
                                                             ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty.ratio" (str ktable-min-cleanable-dirty-ratio))
