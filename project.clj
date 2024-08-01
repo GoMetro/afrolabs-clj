@@ -9,9 +9,10 @@
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
   :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
                                     :sign-releases false}]]
-  :dependencies [[org.clojure/clojure "1.11.3"]
+  :dependencies [[org.clojure/spec.alpha "0.5.238"]
+                 [org.clojure/clojure "1.11.3"]
                  [com.google.javascript/closure-compiler-unshaded "v20240317"]
-                 [org.clojure/clojurescript "1.11.132"]
+                 [org.clojure/clojurescript "1.11.132" :exclusions [com.cognitect/transit-java]]
 
                  ;; property-based testing, generative testing
                  [org.clojure/test.check "1.1.1"]
@@ -22,16 +23,16 @@
                  ;; I'm not sure why we're choosing an old version of jetty here.
                  ;; might be cognitect.
                  ;; https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-util
-                 [org.eclipse.jetty/jetty-util "9.4.54.v20240208"]
-                 [org.eclipse.jetty/jetty-http "9.4.54.v20240208"]
-                 [org.eclipse.jetty/jetty-client "9.4.54.v20240208"]
+                 [org.eclipse.jetty/jetty-util "9.4.55.v20240627"]
+                 [org.eclipse.jetty/jetty-http "9.4.55.v20240627"]
+                 [org.eclipse.jetty/jetty-client "9.4.55.v20240627"]
 
                  ;; conversions between different kinds of casing
                  ;; camelCase -> snake_case -> kebab-case -> PascalCase
                  [camel-snake-kebab "0.4.3"]
 
 
-                 [metosin/jsonista "0.3.8" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+                 [metosin/jsonista "0.3.9" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; monadic utilities for validation, failure and error checking
                  ;; https://github.com/adambard/failjure
@@ -63,40 +64,44 @@
                  [http-kit "2.8.0"]
 
                  ;; password-hashing helpers
+                 [buddy/buddy-core "1.12.0-430"]
                  [buddy/buddy-hashers "2.0.167"]
                  [buddy/buddy-auth "3.0.323"]
-                 [buddy/buddy-sign "3.5.351"]
+                 [buddy/buddy-sign "3.6.1-359"]
 
-                 [ring/ring-core "1.12.1"]
+                 [ring/ring-core "1.12.2"]
 
                  ;; https://github.com/metosin/ring-http-response
                  ;; ring response helper fns
-                 [metosin/ring-http-response "0.9.3"]
+                 [metosin/ring-http-response "0.9.4"]
 
                  ;; http routing library
                  ;; https://github.com/metosin/reitit
-                 [metosin/reitit "0.7.0" :exclusions [com.fasterxml.jackson.core/jackson-core]]
+                 [metosin/reitit "0.7.1" :exclusions [com.fasterxml.jackson.core/jackson-core]]
 
                  ;; https://github.com/dm3/clojure.java-time
                  [clojure.java-time "1.4.2"]
                  [org.threeten/threeten-extra "1.8.0"]
 
+                 ;; jaxb, common between iapetos & transit
+                 [javax.xml.bind/jaxb-api "2.4.0-b180830.0359"]
+
                  ;; https://github.com/clj-commons/iapetos
                  [io.prometheus/simpleclient "0.16.0"]
                  [io.prometheus/simpleclient_hotspot "0.16.0"]
-                 [clj-commons/iapetos "0.1.13"]
+                 [clj-commons/iapetos "0.1.14"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
                  [com.cognitect.aws/api "0.8.692"]
-                 [com.cognitect.aws/endpoints "1.1.12.682"]
+                 [com.cognitect.aws/endpoints "1.1.12.718"]
                  [com.cognitect.aws/sns "857.2.1574.0"]
-                 [com.cognitect.aws/sqs "857.2.1574.0"]
+                 [com.cognitect.aws/sqs "869.2.1616.0"]
                  [com.cognitect.aws/s3 "868.2.1580.0"]
-                 [com.cognitect.aws/monitoring "857.2.1574.0"]
+                 [com.cognitect.aws/monitoring "868.2.1599.0"]
                  [com.cognitect.aws/logs "868.2.1584.0"]
 
                  ;; NREPL
-                 [nrepl "1.1.1"]
+                 [nrepl "1.2.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
                  [com.taoensso/timbre "6.5.0"]
@@ -113,12 +118,12 @@
                  [fipp "0.6.26"]
 
                  ;; malli; schema-driven development and utilities
-                 [metosin/malli "0.16.1"]
+                 [metosin/malli "0.16.2"]
 
                  ;; hooking in the result of other java logging frameworks into slf4j
-                 [org.slf4j/log4j-over-slf4j "2.0.12"]
-                 [org.slf4j/jul-to-slf4j "2.0.12"]
-                 [org.slf4j/jcl-over-slf4j "2.0.12"]
+                 [org.slf4j/log4j-over-slf4j "2.0.13"]
+                 [org.slf4j/jul-to-slf4j "2.0.13"]
+                 [org.slf4j/jcl-over-slf4j "2.0.13"]
 
                  ;; then routing slf4j to timbre
                  ;; This will allow us to receive, log (and configure) the logs provided by libraries
@@ -126,10 +131,10 @@
                  [com.fzakaria/slf4j-timbre "0.4.1"]
 
                  ;; possibility to log to json, for use in cloud environments like GCK
-                 [viesti/timbre-json-appender "0.2.13"]
+                 [viesti/timbre-json-appender "0.2.14"]
 
-                 [com.fasterxml.jackson.core/jackson-databind "2.17.0"]
-                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.17.0"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.17.2"]
+                 [com.fasterxml.jackson.datatype/jackson-datatype-jsr310 "2.17.2"]
 
 
                  ;; https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients
@@ -143,7 +148,7 @@
                  ;; dependency conflict resolution introduced by confluent libraries
                  ;; [com.fasterxml.jackson.datatype/jackson-datatype-jdk8 "2.16.1"]
                  [com.google.re2j/re2j "1.7"]
-                 [org.bouncycastle/bcpkix-jdk18on "1.77"]
+                 [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
                  [ch.qos.reload4j/reload4j "1.2.25"]
                  [org.javassist/javassist "3.29.0-GA"]
 
@@ -158,16 +163,17 @@
                  ;;                                                                 org.glassfish.jersey.core/jersey-common]]
 
                  ;; for use with ksqld, the java client
+                 ;; I've tried updating this to 7.6.1, but some dependencies could not resolve... (Thu Aug  1 03:43:59 PM SAST 2024)
                  [io.confluent.ksql/ksqldb-api-client "7.6.0" :exclusions [org.slf4j/slf4j-log4j12
                                                                            org.bouncycastle/bc-fips
                                                                            org.javassist/javassist]]
 
-                 [org.slf4j/slf4j-api "2.0.12"]
+                 [org.slf4j/slf4j-api "2.0.13"]
                  ;; [org.slf4j/slf4j-log4j12 "1.7.32"]
                  [io.confluent/confluent-log4j "1.2.17-cp5"]
 
                  
-                 [thheller/shadow-cljs "2.28.8"]
+                 [thheller/shadow-cljs "2.28.11"]
 
                  ;; middleware that adds "X-Clacks-Overhead" to responses
                  [gsnewmark/ring-pratchett "0.1.0"]
@@ -189,10 +195,13 @@
                  ;; parsing strings
                  [instaparse "1.5.0"]
 
+                 ;; transit
+                 [com.cognitect/transit-clj "1.0.333"]
+
                  ]
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes
         afrolabs.components.kafka.bytes-serdes
         afrolabs.components.confluent.schema-registry-compatible-serdes]
   :repl-options {}
-  :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.4"]]}})
+  :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.6"]]}})
