@@ -5,6 +5,7 @@
    [afrolabs.components.internal-include :as -inc]
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
+   [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
    [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
    [clojure.set :as set]
@@ -444,7 +445,7 @@
   (let [allowed-values #{:key :value :both :none}]
     (when-not (or (allowed-values producer-option)
                   (allowed-values consumer-option))
-      (throw (ex-info "EdnSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (EdnSerializery :producer :both :consumer :key)"
+      (throw (ex-info "EdnSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (EdnSerializer :producer :both :consumer :key)"
                       {::allowed-values  allowed-values
                        ::consumer-option consumer-option
                        ::producer-option producer-option}))))
@@ -465,6 +466,36 @@
                                                   (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer"
                                                   (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)))))
+
+(defstrategy TransitSerializer
+  [& {producer-option :producer
+      consumer-option :consumer
+
+      :or   {producer-option         :none
+             consumer-option         :none}}]
+
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "TransitSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (TransitSerializer :producer :both :consumer :key)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (reify
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.transit_serdes.Serializer")
+        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.transit_serdes.Serializer")))
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.transit_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.transit_serdes.Deserializer")))))
 
 (defprotocol IConsumerAwareRebalanceListener
   "Wrapping ConsumerRebalanceListener; adds the consumer to the parameter list"

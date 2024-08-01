@@ -202,6 +202,7 @@
   :aot [afrolabs.components.kafka.json-serdes
         afrolabs.components.kafka.edn-serdes
         afrolabs.components.kafka.bytes-serdes
+        afrolabs.components.kafka.transit-serdes
         afrolabs.components.confluent.schema-registry-compatible-serdes]
   :repl-options {}
   :profiles {:dev {:dependencies [[com.clojure-goes-fast/clj-java-decompiler "0.3.6"]]}})
