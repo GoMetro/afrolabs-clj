@@ -49,3 +49,8 @@
        (defmacro ~redeclaration-macro-name [kw#]
          `(-write-integrant-multis ~kw# ~~init-fn-name)))))
 
+
+(s/def ::identity-component-cfg any?)
+(defcomponent {::ig-kw       ::identity-component
+               ::config-spec ::identity-component-cfg}
+  [self] self)
