@@ -104,6 +104,7 @@
                  [nrepl "1.2.0"]
 
                  ;; logging for clj(s) https://github.com/ptaoussanis/timbre
+                 [com.taoensso/encore "3.114.0"]
                  [com.taoensso/timbre "6.5.0"]
 
                  ;; https://github.com/clojure/data.json

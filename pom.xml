@@ -18,7 +18,7 @@
     <url>https://github.com/Afrolabs/afrolabs-clj</url>
     <connection>scm:git:git://github.com/Afrolabs/afrolabs-clj.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/Afrolabs/afrolabs-clj.git</developerConnection>
-    <tag>aa289f95a0778ca6993af9104c7692b3a22a5fb3</tag>
+    <tag>83b4c84fbd7d17d03ea6d6e39756fceb279bfef1</tag>
   </scm>
   <build>
     <sourceDirectory>src</sourceDirectory>
@@ -290,6 +290,11 @@
       <groupId>nrepl</groupId>
       <artifactId>nrepl</artifactId>
       <version>1.2.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.taoensso</groupId>
+      <artifactId>encore</artifactId>
+      <version>3.114.0</version>
     </dependency>
     <dependency>
       <groupId>com.taoensso</groupId>
