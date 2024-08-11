@@ -29,18 +29,25 @@
            [org.apache.kafka.clients.admin ListTopicsOptions]))
 
 (defn load-messages-from-confluent-topic
-  "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the very latest offsets.
+  "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the
+   very latest offsets.
 
   Intended for interactive use. Returns items in an unspecified order.
 
   - Specify :topics (a collection of strings) for which topics to subscribe to.
-  - If you want to limit the number of messages you load, use :nr-msgs to specify a lower bound of loaded messages. You will get at least this many, unless there are too few messages in the topic, in which case you will get everything in the topic.
+  - If you want to limit the number of messages you load, use :nr-msgs to specify a lower bound of loaded messages.
+    You will get at least this many, unless there are too few messages in the topic, in which case you will get
+    everything in the topic.
   - Use the :msg-filter to keep a subset of messages of the ones in the topic(s)
   - Optionally specify consumer-group-id, otherwise a fresh and unique consumer-group-id will be used.
   - Optionally specify :offset-reset (one of #{\"earliest\" \"latest\"}. Default \"earliest\".)
   - ConfluentCloud specific: when :api-key and :api-secret are both nil, the ConfluentCloud strategy will not be used.
+  - You may optionally set `collect-messages?` to false, in which case no records will be returned. This is useful
+    in streaming mode.
+  - You may specify `stream-ch`, which will accept a collection of kafka messages. This is useful in conjunction with
+    setting `collect-messages?` to `false`. NOTE: `stream-ch` will be closed when consumption is done.
 
-  - use :extra-strategies is useful for specifying deserialization settings.
+  - use :extra-strategies is useful for specifying deserialization settings, seeking to offsets &c.
 
 
   eg (def invalid-msgs
@@ -61,12 +68,15 @@
              extra-strategies
              msg-filter
              consumer-group-id
-             offset-reset]
-      :or {nr-msgs          :all
-           msg-filter       identity
-           extra-strategies []
-           offset-reset     "earliest"}}]
-  (let [loaded-msgs (atom [])
+             offset-reset
+             collect-messages?
+             stream-ch]
+      :or {nr-msgs           :all
+           msg-filter        identity
+           extra-strategies  []
+           offset-reset      "earliest"
+           collect-messages? true}}]
+  (let [loaded-msgs (atom (transient []))
         loaded-enough-msgs (promise)
 
         running-total (atom 0)
@@ -85,8 +95,13 @@
           (consume-messages
               [_ msgs]
             (let [msgs (filter msg-filter msgs)
-                  _ (swap! loaded-msgs conj msgs)
+                  _ (when collect-messages?
+                      (swap! loaded-msgs conj! msgs))
                   how-many (swap! running-total + (count msgs))]
+
+              ;; is streaming defined? if so, send it on
+              (when stream-ch
+                (csp/>!! stream-ch msgs))
 
               ;; do we have enough yet? is anything ever enough?
               (when (and (not= nr-msgs :all)
@@ -130,11 +145,21 @@
       (ig/halt! system)
       (info "System done shutting down.")
 
+      (when stream-ch
+        (csp/close! stream-ch))
+
       ;; return value
-      (or (when (and nr-msgs
-                     (number? nr-msgs))
-            (vec (take nr-msgs (apply concat @loaded-msgs))))
-          (apply concat @loaded-msgs))
+      (when collect-messages?
+        (let [all-msgs (persistent! @loaded-msgs)]
+          (or (when (and nr-msgs
+                         (number? nr-msgs))
+                (into []
+                      (comp (mapcat identity)
+                            (take nr-msgs))
+                      all-msgs))
+              (into []
+                    (mapcat identity)
+                    all-msgs))))
 
       (catch Throwable t
         (warn t "Caught a throwable while waiting for messages to load. Stopping the system...")
