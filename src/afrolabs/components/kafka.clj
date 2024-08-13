@@ -1316,9 +1316,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn assert-topics
+  "Makes sure topics exist with the given number of partitions.
+  If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
+  increased to match (when `increase-existing-partitions?` is `true`)."
   [^AdminClient admin-client
    desired-topics
-   & {:keys [nr-of-partitions]}]
+   & {:keys [nr-of-partitions
+             increase-existing-partitions?]
+      :or   {increase-existing-partitions? false}}]
   (let [existing-topics (-> admin-client
                             (.listTopics)
                             (.names)
@@ -1336,17 +1341,45 @@
                                  (NewTopic. ^String topic-name
                                             ^java.util.Optional
                                             (if nr-of-partitions
-                                              (Optional/of (Integer. nr-of-partitions))
+                                              (Optional/of (Integer. ^long nr-of-partitions))
                                               (Optional/empty))
                                             ^java.util.Optional
                                             (Optional/empty)))))
                          desired-topics)
-        topic-create-result (.createTopics admin-client new-topics)]
+        topic-create-result (.createTopics admin-client new-topics)
+
+        ^java.util.Collection existing-topics-to-check
+        (set/intersection existing-topics
+                          (set desired-topics))
+        topic-update-partitions-result (when increase-existing-partitions?
+                                         (let [describe-result (-> (.describeTopics admin-client
+                                                                                    existing-topics-to-check)
+                                                                   (.allTopicNames)
+                                                                   (.get))
+
+                                               topics-with-too-few-partitions
+                                               (into {}
+                                                     (for [topic existing-topics-to-check
+                                                           :let [^org.apache.kafka.clients.admin.TopicDescription
+                                                                 topic-describe-result (get describe-result topic)
+                                                                 max-partition (apply max (map #(.partition ^org.apache.kafka.common.TopicPartitionInfo %)
+                                                                                               (.partitions topic-describe-result)))]
+                                                           :when (< max-partition (dec nr-of-partitions))]
+                                                       [topic (org.apache.kafka.clients.admin.NewPartitions/increaseTo nr-of-partitions)]))
+
+                                               topic-mod-result
+                                               (when (seq topics-with-too-few-partitions)
+                                                 (.createPartitions admin-client
+                                                                    topics-with-too-few-partitions))]
+                                           topic-mod-result))]
 
     ;; wait for complete success
     (-> topic-create-result
         (.all)
-        (.get))))
+        (.get))
+    (when topic-update-partitions-result
+      (.all topic-update-partitions-result))
+    nil))
 
 (defn delete-topics!
   [^AdminClient admin-client
@@ -1366,19 +1399,23 @@
         (.all)
         (.get))))
 
+(s/def ::increase-existing-partitions? (s/or :b boolean?))
 (s/def ::nr-of-partitions (s/or :nil nil?
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
                                            (catch NumberFormatException _ false))))
 (s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
                                    (s/keys :req-un [::topic-name-providers]
-                                           :opt-un [::nr-of-partitions])))
+                                           :opt-un [::nr-of-partitions
+                                                    ::increase-existing-partitions?])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
                      ::-comp/config-spec ::topic-asserter-cfg}
-  [{:as cfg
+  [{:as   cfg
     :keys [topic-name-providers
-           nr-of-partitions]}]
+           nr-of-partitions
+           increase-existing-partitions?]
+    :or   {increase-existing-partitions? false}}]
 
   (let [^java.lang.Integer
         nr-of-partitions (or (when (and nr-of-partitions
@@ -1391,7 +1428,8 @@
 
     (assert-topics @ac
                    (mapcat #(get-topic-names %) topic-name-providers)
-                   :nr-of-partitions nr-of-partitions)
+                   :nr-of-partitions              nr-of-partitions
+                   :increase-existing-partitions? increase-existing-partitions?)
 
     ;; stop the admin client
     (-comp/halt ac)
