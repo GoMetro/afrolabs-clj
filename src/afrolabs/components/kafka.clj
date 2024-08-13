@@ -21,9 +21,9 @@
    [net.cgrand.xforms :as x])
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
-           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
+           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config AlterConfigOp AlterConfigOp$OpType ConfigEntry]
            [org.apache.kafka.common.header Header Headers]
-           [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
+           [org.apache.kafka.common.config ConfigResource ConfigResource$Type ]
            [org.apache.kafka.common TopicPartition]
            [java.util.concurrent Future]
            [java.util Map Collection UUID Optional]
@@ -1470,6 +1470,7 @@
                                                 :d (s/and double?
                                                           #(< 0.0 % 1.0))))
 (s/def ::recreate-topics-with-bad-config boolean?)
+(s/def ::update-topics-with-bad-config boolean?)
 (s/def ::ktable-compaction-policy #{"compact"
                                     "delete,compact"
                                     "compact,delete"})
@@ -1480,6 +1481,7 @@
                                                      ::ktable-segment-ms
                                                      ::ktable-min-cleanable-dirty-ratio
                                                      ::recreate-topics-with-bad-config
+                                                     ::update-topics-with-bad-config
                                                      ::ktable-max-compaction-lag-ms
                                                      ::ktable-compaction-policy])))
 
@@ -1492,12 +1494,22 @@
            ktable-segment-ms
            ktable-min-cleanable-dirty-ratio
            ktable-max-compaction-lag-ms
-           recreate-topics-with-bad-config
+           update-topics-with-bad-config
            ktable-compaction-policy]
-    :or   {recreate-topics-with-bad-config false
-           ktable-compaction-policy        "compact"}}]
+    :or   {ktable-compaction-policy        "compact"}}]
 
-  (let [nr-of-partitions (or (when (and nr-of-partitions
+  (when-not (nil? (:recreate-topics-with-bad-config cfg))
+    (log/info "Ktable asserter option `recreate-topics-with-bad-config` has been deprecated in favour of `update-topics-with-bad-config`."))
+
+  (let [update-topics-with-bad-config (or (when-not (nil? update-topics-with-bad-config)
+                                            update-topics-with-bad-config)
+                                          (let [recreate-topics-with-bad-config (:recreate-topics-with-bad-config cfg)]
+                                            (when-not (nil? recreate-topics-with-bad-config)
+                                              recreate-topics-with-bad-config)))
+        ktable-compaction-policy (if (= ktable-compaction-policy "delete,compact")
+                                   "compact,delete" ;; normalize on this order
+                                   ktable-compaction-policy)
+        nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
                              (when (number? nr-of-partitions)
@@ -1513,49 +1525,62 @@
         ;; we can't CHANGE a topic that has been created the wrong way
         ;; and neither can we let it be.
         ;; The app is in a broken state if a topic that must be compacted is not.
-        topics-with-wrong-config (let [existing-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
-                                                            (distinct)
-                                                            (filter existing-topics))
-                                       topic-to-cleanup-policies (->> existing-topics
-                                                                      (map #(ConfigResource. ConfigResource$Type/TOPIC %))
-                                                                      (.describeConfigs ^AdminClient @ac)
-                                                                      (.all)
-                                                                      (.get)
-                                                                      (map (fn [[^ConfigResource resource ^Config cfg]]
-                                                                             [(.name resource)
-                                                                              (.value (.get cfg "cleanup.policy"))]))
-                                                                      (into {}))]
-                                   (->> topic-to-cleanup-policies
-                                        (filter (fn [[_ compaction-strategy]] (not= ktable-compaction-policy
-                                                                                    compaction-strategy)))
-                                        (map first)
-                                        vec))
+        topics-with-wrong-config
+        (let [existing-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
+                                   (distinct)
+                                   (filter existing-topics))
+
+              existing-topic-cleanup-policies
+              (->> existing-topics
+                   (map #(ConfigResource. ConfigResource$Type/TOPIC %))
+                   (.describeConfigs ^AdminClient @ac)
+                   (.all)
+                   (.get)
+                   (map (fn [[^ConfigResource resource ^Config cfg]]
+                          [(.name resource)
+                           (.value (.get cfg "cleanup.policy"))]))
+                   (into {}))]
+          (->> existing-topic-cleanup-policies
+               (filter (fn [[_ topic-compaction-strategy]]
+                         (let [topic-compaction-strategy (if (= topic-compaction-strategy
+                                                                "delete,compact")
+                                                           "compact,delete" ;; normalize
+                                                           topic-compaction-strategy)]
+                           (not= ktable-compaction-policy
+                                 topic-compaction-strategy))))
+               (map first)
+               vec))
 
         ;; delete the topics with the wrong config
         ;; OR throw when incorrectly created
         _ (when (pos-int? (count topics-with-wrong-config))
-            (if-not recreate-topics-with-bad-config
+            (if-not update-topics-with-bad-config
               (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
                                       ktable-compaction-policy
                                       (str topics-with-wrong-config))
                               {:topics         topics-with-wrong-config
                                :desired-policy ktable-compaction-policy}))
 
-              ;; here the topics will be deleted
+              ;; here the topics will be modified
               (do
-                (warn (format "These topics ['%s'] were created incorrectly ('cleanup.policy' != '%s'). They will now be deleted and re-created. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
-                              ktable-compaction-policy
-                              (str topics-with-wrong-config)))
-                (-> (.deleteTopics ^AdminClient @ac
-                                   topics-with-wrong-config)
-                    (.all)
-                    (.get)))))
+                (warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                              (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
+                              ktable-compaction-policy))
 
-        new-topics (set/union (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
-                                              existing-topics)
-                              (or (when recreate-topics-with-bad-config
-                                    (set topics-with-wrong-config))
-                                  #{}))
+                (let [change-spec [(AlterConfigOp. (ConfigEntry. "cleanup.policy"
+                                                                 ktable-compaction-policy)
+                                                   AlterConfigOp$OpType/SET)]]
+                  (-> (.incrementalAlterConfigs ^AdminClient @ac
+                                                (into {}
+                                                      (map (fn [topic-name]
+                                                             [(ConfigResource. ConfigResource$Type/TOPIC
+                                                                               topic-name)
+                                                              change-spec]))
+                                                      topics-with-wrong-config))
+                      (.all))))))
+
+        new-topics (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
+                                   existing-topics)
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
                                         (info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
