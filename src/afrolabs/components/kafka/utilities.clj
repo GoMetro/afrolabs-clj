@@ -151,8 +151,7 @@
       ;; return value
       (when collect-messages?
         (let [all-msgs (persistent! @loaded-msgs)]
-          (or (when (and nr-msgs
-                         (number? nr-msgs))
+          (or (when (number? nr-msgs)
                 (into []
                       (comp (mapcat identity)
                             (take nr-msgs))
