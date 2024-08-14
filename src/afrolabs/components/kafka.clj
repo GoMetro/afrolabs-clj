@@ -1550,33 +1550,28 @@
         ;; and neither can we let it be.
         ;; The app is in a broken state if a topic that must be compacted is not.
         topics-with-wrong-config
-        (let [existing-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
-                                   (distinct)
-                                   (filter existing-topics))
+        (->> (mapcat #(get-topic-names %) topic-name-providers)
+             (distinct)
+             (filter existing-topics)
+             (map #(ConfigResource. ConfigResource$Type/TOPIC %))
+             (.describeConfigs ^AdminClient @ac)
+             (.all)
+             (.get)
+             (map (fn [[^ConfigResource resource ^Config cfg]]
+                    [(.name resource)
+                     (.value (.get cfg "cleanup.policy"))]))
+             (filter (fn [[_ topic-compaction-strategy]]
+                       (let [topic-compaction-strategy (if (= topic-compaction-strategy
+                                                              "delete,compact")
+                                                         "compact,delete" ;; normalize
+                                                         topic-compaction-strategy)]
+                         (not= ktable-compaction-policy
+                               topic-compaction-strategy))))
+             (map first)
+             vec)
 
-              existing-topic-cleanup-policies
-              (->> existing-topics
-                   (map #(ConfigResource. ConfigResource$Type/TOPIC %))
-                   (.describeConfigs ^AdminClient @ac)
-                   (.all)
-                   (.get)
-                   (map (fn [[^ConfigResource resource ^Config cfg]]
-                          [(.name resource)
-                           (.value (.get cfg "cleanup.policy"))]))
-                   (into {}))]
-          (->> existing-topic-cleanup-policies
-               (filter (fn [[_ topic-compaction-strategy]]
-                         (let [topic-compaction-strategy (if (= topic-compaction-strategy
-                                                                "delete,compact")
-                                                           "compact,delete" ;; normalize
-                                                           topic-compaction-strategy)]
-                           (not= ktable-compaction-policy
-                                 topic-compaction-strategy))))
-               (map first)
-               vec))
-
-        ;; delete the topics with the wrong config
-        ;; OR throw when incorrectly created
+        ;; we want to either alert (by throwing) that a topic is misconfigured
+        ;; or we will modify the topic in-place. governed by `update-topics-with-bad-config` flag.
         _ (when (pos-int? (count topics-with-wrong-config))
             (if-not update-topics-with-bad-config
               (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
