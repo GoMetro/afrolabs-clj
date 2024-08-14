@@ -1574,21 +1574,21 @@
                             (.get)
                             (set))
 
-        desired-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
-                            (distinct))
+        desired-topics (set (mapcat #(get-topic-names %) topic-name-providers))
 
         ;; make sure topics have the correct number of partitions
         _ (when increase-existing-partitions?
             (increase-topic-partitions! @ac
-                                        (filter existing-topics desired-topics)
+                                        (set/intersection desired-topics
+                                                          existing-topics)
                                         nr-of-partitions))
 
         ;; we can't CHANGE a topic that has been created the wrong way
         ;; and neither can we let it be.
         ;; The app is in a broken state if a topic that must be compacted is not.
         topics-with-wrong-config
-        (->> desired-topics
-             (filter existing-topics)
+        (->> (set/intersection desired-topics
+                               existing-topics)
              (map #(ConfigResource. ConfigResource$Type/TOPIC %))
              (.describeConfigs ^AdminClient @ac)
              (.all)
