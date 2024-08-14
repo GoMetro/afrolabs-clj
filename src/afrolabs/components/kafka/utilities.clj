@@ -327,9 +327,9 @@
                 extra-strategies)
         admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
                                            :strategies       admin-client-strategies})]
-    (-kafka/assert-topics @admin-client
-                          topics
-                          {:nr-of-partitions nr-of-partitions})
+    (-kafka/assert-topics! @admin-client
+                           topics
+                           {:nr-of-partitions nr-of-partitions})
     (-comp/halt admin-client)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -585,8 +585,8 @@
 
       ;; create the backup topic if it does not exist
       (when-not (all-server-topics dest-topic)
-        (-kafka/assert-topics @admin-client [dest-topic]
-                              :nr-of-partitions nr-of-partitions))
+        (-kafka/assert-topics! @admin-client [dest-topic]
+                               :nr-of-partitions nr-of-partitions))
       (finally
         (-comp/halt admin-client)))
 
