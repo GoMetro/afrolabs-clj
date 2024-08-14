@@ -1378,23 +1378,20 @@
                                                                    (.allTopicNames)
                                                                    (.get))
 
-                                               topics-with-too-few-partitions
-                                               (into {}
-                                                     (for [topic existing-topics-to-check
-                                                           :let [^TopicDescription topic-describe-result
-                                                                 (get describe-result topic)
+                                               topics-createPartitions-parameter
+                                               (->> (for [topic existing-topics-to-check
+                                                          :let [^TopicDescription topic-describe-result
+                                                                (get describe-result topic)
 
-                                                                 max-partition
-                                                                 (apply max (map #(.partition ^TopicPartitionInfo %)
-                                                                                 (.partitions topic-describe-result)))]
-                                                           :when (< max-partition (dec nr-of-partitions))]
-                                                       [topic (NewPartitions/increaseTo nr-of-partitions)]))
-
-                                               topic-mod-result
-                                               (when (seq topics-with-too-few-partitions)
-                                                 (.createPartitions admin-client
-                                                                    topics-with-too-few-partitions))]
-                                           topic-mod-result))]
+                                                                max-partition
+                                                                (apply max (map #(.partition ^TopicPartitionInfo %)
+                                                                                (.partitions topic-describe-result)))]
+                                                          :when (< max-partition (dec nr-of-partitions))]
+                                                      [topic (NewPartitions/increaseTo nr-of-partitions)])
+                                                    (into {}))]
+                                           (when (seq topics-with-too-few-partitions)
+                                             (.createPartitions admin-client
+                                                                topics-createPartitions-parameter))))]
 
     ;; wait for complete success
     (-> topic-create-result
