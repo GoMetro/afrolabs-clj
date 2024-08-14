@@ -5,6 +5,7 @@
    [afrolabs.components.internal-include :as -inc]
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
+   [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
    [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
    [clojure.set :as set]
@@ -14,20 +15,41 @@
    [iapetos.core :as prom]
    [integrant.core :as ig]
    [java-time :as t]
+   [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
+   )
+  (:import [org.apache.kafka.clients.producer
+            ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
 
-   [net.cgrand.xforms :as x])
-  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
-           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
-           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config]
-           [org.apache.kafka.common.header Header Headers]
-           [org.apache.kafka.common.config ConfigResource ConfigResource$Type]
-           [org.apache.kafka.common TopicPartition]
-           [java.util.concurrent Future]
-           [java.util Map Collection UUID Optional]
-           [afrolabs.components IHaltable]
-           [clojure.lang IDeref IRef IBlockingDeref]))
+           [org.apache.kafka.clients.consumer
+            ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer
+            ConsumerRebalanceListener OffsetAndTimestamp]
+
+           [org.apache.kafka.clients.admin
+            AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config AlterConfigOp
+            AlterConfigOp$OpType ConfigEntry TopicDescription NewPartitions]
+
+           [org.apache.kafka.common.header
+            Header Headers]
+
+           [org.apache.kafka.common.config
+            ConfigResource ConfigResource$Type]
+
+           [org.apache.kafka.common
+            TopicPartition TopicPartitionInfo]
+
+           [java.util.concurrent
+            Future]
+
+           [java.util
+            Map Collection UUID Optional]
+
+           [afrolabs.components
+            IHaltable]
+
+           [clojure.lang
+            IDeref IRef IBlockingDeref]))
 
 
 (comment
@@ -444,7 +466,7 @@
   (let [allowed-values #{:key :value :both :none}]
     (when-not (or (allowed-values producer-option)
                   (allowed-values consumer-option))
-      (throw (ex-info "EdnSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (EdnSerializery :producer :both :consumer :key)"
+      (throw (ex-info "EdnSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (EdnSerializer :producer :both :consumer :key)"
                       {::allowed-values  allowed-values
                        ::consumer-option consumer-option
                        ::producer-option producer-option}))))
@@ -465,6 +487,36 @@
                                                   (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer"
                                                   (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)))))
+
+(defstrategy TransitSerializer
+  [& {producer-option :producer
+      consumer-option :consumer
+
+      :or   {producer-option         :none
+             consumer-option         :none}}]
+
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "TransitSerializer expects one of #{:key :value :both} for each of :producer or :consumer, eg (TransitSerializer :producer :both :consumer :key)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (reify
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.transit_serdes.Serializer")
+        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.transit_serdes.Serializer")))
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.transit_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.transit_serdes.Deserializer")))))
 
 (defprotocol IConsumerAwareRebalanceListener
   "Wrapping ConsumerRebalanceListener; adds the consumer to the parameter list"
@@ -1285,9 +1337,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn assert-topics
+  "Makes sure topics exist with the given number of partitions.
+  If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
+  increased to match (when `increase-existing-partitions?` is `true`)."
   [^AdminClient admin-client
    desired-topics
-   & {:keys [nr-of-partitions]}]
+   & {:keys [nr-of-partitions
+             increase-existing-partitions?]
+      :or   {increase-existing-partitions? false}}]
   (let [existing-topics (-> admin-client
                             (.listTopics)
                             (.names)
@@ -1305,17 +1362,44 @@
                                  (NewTopic. ^String topic-name
                                             ^java.util.Optional
                                             (if nr-of-partitions
-                                              (Optional/of (Integer. nr-of-partitions))
+                                              (Optional/of (Integer. ^long nr-of-partitions))
                                               (Optional/empty))
                                             ^java.util.Optional
                                             (Optional/empty)))))
                          desired-topics)
-        topic-create-result (.createTopics admin-client new-topics)]
+        topic-create-result (.createTopics admin-client new-topics)
+
+        ^java.util.Collection existing-topics-to-check
+        (set/intersection existing-topics
+                          (set desired-topics))
+        topic-update-partitions-result (when increase-existing-partitions?
+                                         (let [describe-result (-> (.describeTopics admin-client
+                                                                                    existing-topics-to-check)
+                                                                   (.allTopicNames)
+                                                                   (.get))
+
+                                               topics-createPartitions-parameter
+                                               (->> (for [topic existing-topics-to-check
+                                                          :let [^TopicDescription topic-describe-result
+                                                                (get describe-result topic)
+
+                                                                max-partition
+                                                                (apply max (map #(.partition ^TopicPartitionInfo %)
+                                                                                (.partitions topic-describe-result)))]
+                                                          :when (< max-partition (dec nr-of-partitions))]
+                                                      [topic (NewPartitions/increaseTo nr-of-partitions)])
+                                                    (into {}))]
+                                           (when (seq topics-with-too-few-partitions)
+                                             (.createPartitions admin-client
+                                                                topics-createPartitions-parameter))))]
 
     ;; wait for complete success
     (-> topic-create-result
         (.all)
-        (.get))))
+        (.get))
+    (when topic-update-partitions-result
+      (.all topic-update-partitions-result))
+    nil))
 
 (defn delete-topics!
   [^AdminClient admin-client
@@ -1335,19 +1419,23 @@
         (.all)
         (.get))))
 
+(s/def ::increase-existing-partitions? (s/or :b boolean?))
 (s/def ::nr-of-partitions (s/or :nil nil?
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
                                            (catch NumberFormatException _ false))))
 (s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
                                    (s/keys :req-un [::topic-name-providers]
-                                           :opt-un [::nr-of-partitions])))
+                                           :opt-un [::nr-of-partitions
+                                                    ::increase-existing-partitions?])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
                      ::-comp/config-spec ::topic-asserter-cfg}
-  [{:as cfg
+  [{:as   cfg
     :keys [topic-name-providers
-           nr-of-partitions]}]
+           nr-of-partitions
+           increase-existing-partitions?]
+    :or   {increase-existing-partitions? false}}]
 
   (let [^java.lang.Integer
         nr-of-partitions (or (when (and nr-of-partitions
@@ -1360,7 +1448,8 @@
 
     (assert-topics @ac
                    (mapcat #(get-topic-names %) topic-name-providers)
-                   :nr-of-partitions nr-of-partitions)
+                   :nr-of-partitions              nr-of-partitions
+                   :increase-existing-partitions? increase-existing-partitions?)
 
     ;; stop the admin client
     (-comp/halt ac)
@@ -1401,6 +1490,14 @@
                                                 :d (s/and double?
                                                           #(< 0.0 % 1.0))))
 (s/def ::recreate-topics-with-bad-config boolean?)
+(s/def ::update-topics-with-bad-config boolean?)
+(s/def ::ktable-compaction-policy #{;; normal compaction, keeps the last value of records by key
+                                    "compact"
+                                    ;; keeps the last value of a record by key, for the retention period
+                                    ;; If no updates are received, the record is deleted
+                                    "delete,compact"
+                                    ;; same as `delete,compact`
+                                    "compact,delete"})
 (s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
                                     (s/keys :req-un [::topic-name-providers]
                                             :opt-un [::nr-of-partitions
@@ -1408,7 +1505,9 @@
                                                      ::ktable-segment-ms
                                                      ::ktable-min-cleanable-dirty-ratio
                                                      ::recreate-topics-with-bad-config
-                                                     ::ktable-max-compaction-lag-ms])))
+                                                     ::update-topics-with-bad-config
+                                                     ::ktable-max-compaction-lag-ms
+                                                     ::ktable-compaction-policy])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
@@ -1419,10 +1518,22 @@
            ktable-segment-ms
            ktable-min-cleanable-dirty-ratio
            ktable-max-compaction-lag-ms
-           recreate-topics-with-bad-config]
-    :or   {recreate-topics-with-bad-config false}}]
+           update-topics-with-bad-config
+           ktable-compaction-policy]
+    :or   {ktable-compaction-policy        "compact"}}]
 
-  (let [nr-of-partitions (or (when (and nr-of-partitions
+  (when-not (nil? (:recreate-topics-with-bad-config cfg))
+    (log/info "Ktable asserter option `recreate-topics-with-bad-config` has been deprecated in favour of `update-topics-with-bad-config`."))
+
+  (let [update-topics-with-bad-config (or (when-not (nil? update-topics-with-bad-config)
+                                            update-topics-with-bad-config)
+                                          (let [recreate-topics-with-bad-config (:recreate-topics-with-bad-config cfg)]
+                                            (when-not (nil? recreate-topics-with-bad-config)
+                                              recreate-topics-with-bad-config)))
+        ktable-compaction-policy (if (= ktable-compaction-policy "delete,compact")
+                                   "compact,delete" ;; normalize on this order
+                                   ktable-compaction-policy)
+        nr-of-partitions (or (when (and nr-of-partitions
                                         (string? nr-of-partitions))
                                (Integer/parseInt nr-of-partitions))
                              (when (number? nr-of-partitions)
@@ -1438,58 +1549,71 @@
         ;; we can't CHANGE a topic that has been created the wrong way
         ;; and neither can we let it be.
         ;; The app is in a broken state if a topic that must be compacted is not.
-        topics-with-wrong-config (let [existing-topics (->> (mapcat #(get-topic-names %) topic-name-providers)
-                                                            (distinct)
-                                                            (filter existing-topics))
-                                       topic-to-cleanup-policies (->> existing-topics
-                                                                      (map #(ConfigResource. ConfigResource$Type/TOPIC %))
-                                                                      (.describeConfigs ^AdminClient @ac)
-                                                                      (.all)
-                                                                      (.get)
-                                                                      (map (fn [[^ConfigResource resource ^Config cfg]]
-                                                                             [(.name resource)
-                                                                              (.value (.get cfg "cleanup.policy"))]))
-                                                                      (into {}))]
-                                   (->> topic-to-cleanup-policies
-                                        (filter (fn [[_ compaction-strategy]] (not= "compact" compaction-strategy)))
-                                        (map first)
-                                        vec))
+        topics-with-wrong-config
+        (->> (mapcat #(get-topic-names %) topic-name-providers)
+             (distinct)
+             (filter existing-topics)
+             (map #(ConfigResource. ConfigResource$Type/TOPIC %))
+             (.describeConfigs ^AdminClient @ac)
+             (.all)
+             (.get)
+             (map (fn [[^ConfigResource resource ^Config cfg]]
+                    [(.name resource)
+                     (.value (.get cfg "cleanup.policy"))]))
+             (filter (fn [[_ topic-compaction-strategy]]
+                       (let [topic-compaction-strategy (if (= topic-compaction-strategy
+                                                              "delete,compact")
+                                                         "compact,delete" ;; normalize
+                                                         topic-compaction-strategy)]
+                         (not= ktable-compaction-policy
+                               topic-compaction-strategy))))
+             (map first)
+             vec)
 
-        ;; delete the topics with the wrong config
-        ;; OR throw when incorrectly created
-        _ (if (pos-int? (count topics-with-wrong-config))
-            (if-not recreate-topics-with-bad-config
-              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == 'compact', but they are not. Cannot continue.\n%s"
+        ;; we want to either alert (by throwing) that a topic is misconfigured
+        ;; or we will modify the topic in-place. governed by `update-topics-with-bad-config` flag.
+        _ (when (pos-int? (count topics-with-wrong-config))
+            (if-not update-topics-with-bad-config
+              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
+                                      ktable-compaction-policy
                                       (str topics-with-wrong-config))
-                              {:topics topics-with-wrong-config}))
+                              {:topics         topics-with-wrong-config
+                               :desired-policy ktable-compaction-policy}))
 
-              ;; here the topics will be deleted
+              ;; here the topics will be modified
               (do
-                (warn (format "These topics ['%s'] were created incorrectly ('cleanup.policy' != 'compact'). They will now be deleted and re-created. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
-                              (str topics-with-wrong-config)))
-                (-> (.deleteTopics ^AdminClient @ac
-                                   topics-with-wrong-config)
-                    (.all)
-                    (.get)))))
+                (warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                              (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
+                              ktable-compaction-policy))
 
-        new-topics (set/union (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
-                                              existing-topics)
-                              (or (when recreate-topics-with-bad-config
-                                    (set topics-with-wrong-config))
-                                  #{}))
+                (let [change-spec [(AlterConfigOp. (ConfigEntry. "cleanup.policy"
+                                                                 ktable-compaction-policy)
+                                                   AlterConfigOp$OpType/SET)]]
+                  (-> (.incrementalAlterConfigs ^AdminClient @ac
+                                                (into {}
+                                                      (map (fn [topic-name]
+                                                             [(ConfigResource. ConfigResource$Type/TOPIC
+                                                                               topic-name)
+                                                              change-spec]))
+                                                      topics-with-wrong-config))
+                      (.all))))))
+
+        new-topics (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
+                                   existing-topics)
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
-                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
                                                       topic-name
                                                       (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                      "CLUSTER_DEFAULT"))
+                                                      "CLUSTER_DEFAULT"
+                                                      ktable-compaction-policy))
                                         (let [new-topic (NewTopic. ^String   topic-name
                                                                    ^Optional (if nr-of-partitions
                                                                                (Optional/of nr-of-partitions)
                                                                                (Optional/empty))
                                                                    ^Optional (Optional/empty))
                                               _ (.configs new-topic
-                                                          (cond-> {"cleanup.policy" "compact"}
+                                                          (cond-> {"cleanup.policy" ktable-compaction-policy}
                                                             topic-delete-retention-ms        (assoc "delete.retention.ms" (str topic-delete-retention-ms))
                                                             ktable-segment-ms                (assoc "segment.ms" (str ktable-segment-ms))
                                                             ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty.ratio" (str ktable-min-cleanable-dirty-ratio))
