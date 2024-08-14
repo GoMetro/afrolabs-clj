@@ -1471,8 +1471,12 @@
                                                           #(< 0.0 % 1.0))))
 (s/def ::recreate-topics-with-bad-config boolean?)
 (s/def ::update-topics-with-bad-config boolean?)
-(s/def ::ktable-compaction-policy #{"compact"
+(s/def ::ktable-compaction-policy #{;; normal compaction, keeps the last value of records by key
+                                    "compact"
+                                    ;; keeps the last value of a record by key, for the retention period
+                                    ;; If no updates are received, the record is deleted
                                     "delete,compact"
+                                    ;; same as `delete,compact`
                                     "compact,delete"})
 (s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
                                     (s/keys :req-un [::topic-name-providers]
