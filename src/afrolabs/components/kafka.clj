@@ -15,10 +15,10 @@
    [iapetos.core :as prom]
    [integrant.core :as ig]
    [java-time :as t]
+   [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
-
-   [net.cgrand.xforms :as x])
+   )
   (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
            [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
            [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config AlterConfigOp AlterConfigOp$OpType ConfigEntry]
