@@ -1389,7 +1389,7 @@
                                                           :when (< max-partition (dec nr-of-partitions))]
                                                       [topic (NewPartitions/increaseTo nr-of-partitions)])
                                                     (into {}))]
-                                           (when (seq topics-with-too-few-partitions)
+                                           (when (seq topics-createPartitions-parameter)
                                              (.createPartitions admin-client
                                                                 topics-createPartitions-parameter))))]
 
