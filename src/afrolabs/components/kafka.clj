@@ -1357,15 +1357,12 @@
                                          (.partitions topic-describe-result)))]
                    :when (< max-partition (dec partition-count))]
                [topic (NewPartitions/increaseTo partition-count)])
-             (into {}))
+             (into {}))]
 
-        create-result
-        (when (seq topics-createPartitions-parameter)
-          (.createPartitions admin-client
-                             topics-createPartitions-parameter))]
-
-    (when create-result
-      (.all create-result))))
+    (when (seq topics-createPartitions-parameter)
+      (-> admin-client
+          (.createPartitions topics-createPartitions-parameter)
+          (.all)))))
 
 (defn ^{:deprecated    true
         :superseded-by "assert-topics!"} assert-topics
