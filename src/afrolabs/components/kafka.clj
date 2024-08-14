@@ -19,16 +19,37 @@
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
    )
-  (:import [org.apache.kafka.clients.producer ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
-           [org.apache.kafka.clients.consumer ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer ConsumerRebalanceListener OffsetAndTimestamp]
-           [org.apache.kafka.clients.admin AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config AlterConfigOp AlterConfigOp$OpType ConfigEntry]
-           [org.apache.kafka.common.header Header Headers]
-           [org.apache.kafka.common.config ConfigResource ConfigResource$Type ]
-           [org.apache.kafka.common TopicPartition]
-           [java.util.concurrent Future]
-           [java.util Map Collection UUID Optional]
-           [afrolabs.components IHaltable]
-           [clojure.lang IDeref IRef IBlockingDeref]))
+  (:import [org.apache.kafka.clients.producer
+            ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
+
+           [org.apache.kafka.clients.consumer
+            ConsumerConfig KafkaConsumer MockConsumer OffsetResetStrategy ConsumerRecord Consumer
+            ConsumerRebalanceListener OffsetAndTimestamp]
+
+           [org.apache.kafka.clients.admin
+            AdminClient AdminClientConfig NewTopic DescribeConfigsResult Config AlterConfigOp
+            AlterConfigOp$OpType ConfigEntry TopicDescription NewPartitions]
+
+           [org.apache.kafka.common.header
+            Header Headers]
+
+           [org.apache.kafka.common.config
+            ConfigResource ConfigResource$Type]
+
+           [org.apache.kafka.common
+            TopicPartition TopicPartitionInfo]
+
+           [java.util.concurrent
+            Future]
+
+           [java.util
+            Map Collection UUID Optional]
+
+           [afrolabs.components
+            IHaltable]
+
+           [clojure.lang
+            IDeref IRef IBlockingDeref]))
 
 
 (comment
@@ -1360,12 +1381,14 @@
                                                topics-with-too-few-partitions
                                                (into {}
                                                      (for [topic existing-topics-to-check
-                                                           :let [^org.apache.kafka.clients.admin.TopicDescription
-                                                                 topic-describe-result (get describe-result topic)
-                                                                 max-partition (apply max (map #(.partition ^org.apache.kafka.common.TopicPartitionInfo %)
-                                                                                               (.partitions topic-describe-result)))]
+                                                           :let [^TopicDescription topic-describe-result
+                                                                 (get describe-result topic)
+
+                                                                 max-partition
+                                                                 (apply max (map #(.partition ^TopicPartitionInfo %)
+                                                                                 (.partitions topic-describe-result)))]
                                                            :when (< max-partition (dec nr-of-partitions))]
-                                                       [topic (org.apache.kafka.clients.admin.NewPartitions/increaseTo nr-of-partitions)]))
+                                                       [topic (NewPartitions/increaseTo nr-of-partitions)]))
 
                                                topic-mod-result
                                                (when (seq topics-with-too-few-partitions)
