@@ -1348,16 +1348,17 @@
                             (.get))
 
         topics-createPartitions-parameter
-        (->> (for [topic topic-names
-                   :let [^TopicDescription topic-describe-result
-                         (get describe-result topic)
+        (into {}
+              (keep (fn [topic-name]
+                      (let [^TopicDescription topic-describe-result
+                            (get describe-result topic-name)
 
-                         max-partition
-                         (apply max (map #(.partition ^TopicPartitionInfo %)
-                                         (.partitions topic-describe-result)))]
-                   :when (< max-partition (dec partition-count))]
-               [topic (NewPartitions/increaseTo partition-count)])
-             (into {}))]
+                            max-partition
+                            (apply max (map #(.partition ^TopicPartitionInfo %)
+                                            (.partitions topic-describe-result)))]
+                        (when (< max-partition (dec partition-count))
+                          [topic-name (NewPartitions/increaseTo partition-count)]))))
+              topic-names)]
 
     (when (seq topics-createPartitions-parameter)
       (-> admin-client
