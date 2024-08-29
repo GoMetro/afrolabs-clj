@@ -1336,8 +1336,39 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn assert-topics
-  "Makes sure topics exist with the given number of partitions.
+(defn increase-topic-partitions!
+  "A common utility that takes a collection of topic names and a desired partition count.
+  Will query the topics to find topics with too few partitions and then increase them in-place.
+  Throws for topics that does not exist."
+  [admin-client topic-names partition-count]
+
+  (let [describe-result (-> (.describeTopics admin-client
+                                             topic-names)
+                            (.allTopicNames)
+                            (.get))
+
+        topics-createPartitions-parameter
+        (into {}
+              (keep (fn [topic-name]
+                      (let [^TopicDescription topic-describe-result
+                            (get describe-result topic-name)
+
+                            max-partition
+                            (apply max (map #(.partition ^TopicPartitionInfo %)
+                                            (.partitions topic-describe-result)))]
+                        (when (< max-partition (dec partition-count))
+                          [topic-name (NewPartitions/increaseTo partition-count)]))))
+              topic-names)]
+
+    (when (seq topics-createPartitions-parameter)
+      (-> admin-client
+          (.createPartitions topics-createPartitions-parameter)
+          (.all)))))
+
+(defn ^{:deprecated    true
+        :superseded-by "assert-topics!"} assert-topics
+  "SUPERSETED-BY `assert-topics!`
+  Makes sure topics exist with the given number of partitions.
   If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
   increased to match (when `increase-existing-partitions?` is `true`)."
   [^AdminClient admin-client
@@ -1371,35 +1402,31 @@
 
         ^java.util.Collection existing-topics-to-check
         (set/intersection existing-topics
-                          (set desired-topics))
-        topic-update-partitions-result (when increase-existing-partitions?
-                                         (let [describe-result (-> (.describeTopics admin-client
-                                                                                    existing-topics-to-check)
-                                                                   (.allTopicNames)
-                                                                   (.get))
+                          (set desired-topics))]
 
-                                               topics-createPartitions-parameter
-                                               (->> (for [topic existing-topics-to-check
-                                                          :let [^TopicDescription topic-describe-result
-                                                                (get describe-result topic)
-
-                                                                max-partition
-                                                                (apply max (map #(.partition ^TopicPartitionInfo %)
-                                                                                (.partitions topic-describe-result)))]
-                                                          :when (< max-partition (dec nr-of-partitions))]
-                                                      [topic (NewPartitions/increaseTo nr-of-partitions)])
-                                                    (into {}))]
-                                           (when (seq topics-createPartitions-parameter)
-                                             (.createPartitions admin-client
-                                                                topics-createPartitions-parameter))))]
+    (when increase-existing-partitions?
+      (increase-topic-partitions! admin-client
+                                  existing-topics-to-check
+                                  nr-of-partitions))
 
     ;; wait for complete success
     (-> topic-create-result
         (.all)
         (.get))
-    (when topic-update-partitions-result
-      (.all topic-update-partitions-result))
     nil))
+
+;; this is the new preferred name
+(defn assert-topics!
+  "Makes sure topics exist with the given number of partitions.
+  If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
+  increased to match (when `increase-existing-partitions?` is `true`)."
+  [^AdminClient admin-client
+   desired-topics
+   & {:keys [nr-of-partitions
+             increase-existing-partitions?]
+      :or   {increase-existing-partitions? false}
+      :as   opts}]
+  (assert-topics admin-client desired-topics opts))
 
 (defn delete-topics!
   [^AdminClient admin-client
@@ -1446,10 +1473,10 @@
                              nr-of-partitions)
         ac (make-admin-client cfg)]
 
-    (assert-topics @ac
-                   (mapcat #(get-topic-names %) topic-name-providers)
-                   :nr-of-partitions              nr-of-partitions
-                   :increase-existing-partitions? increase-existing-partitions?)
+    (assert-topics! @ac
+                    (mapcat #(get-topic-names %) topic-name-providers)
+                    :nr-of-partitions              nr-of-partitions
+                    :increase-existing-partitions? increase-existing-partitions?)
 
     ;; stop the admin client
     (-comp/halt ac)
@@ -1507,7 +1534,8 @@
                                                      ::recreate-topics-with-bad-config
                                                      ::update-topics-with-bad-config
                                                      ::ktable-max-compaction-lag-ms
-                                                     ::ktable-compaction-policy])))
+                                                     ::ktable-compaction-policy
+                                                     ::increase-existing-partitions?])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
@@ -1519,7 +1547,8 @@
            ktable-min-cleanable-dirty-ratio
            ktable-max-compaction-lag-ms
            update-topics-with-bad-config
-           ktable-compaction-policy]
+           ktable-compaction-policy
+           increase-existing-partitions?]
     :or   {ktable-compaction-policy        "compact"}}]
 
   (when-not (nil? (:recreate-topics-with-bad-config cfg))
@@ -1546,13 +1575,21 @@
                             (.get)
                             (set))
 
+        desired-topics (set (mapcat #(get-topic-names %) topic-name-providers))
+
+        ;; make sure topics have the correct number of partitions
+        _ (when increase-existing-partitions?
+            (increase-topic-partitions! @ac
+                                        (set/intersection desired-topics
+                                                          existing-topics)
+                                        nr-of-partitions))
+
         ;; we can't CHANGE a topic that has been created the wrong way
         ;; and neither can we let it be.
         ;; The app is in a broken state if a topic that must be compacted is not.
         topics-with-wrong-config
-        (->> (mapcat #(get-topic-names %) topic-name-providers)
-             (distinct)
-             (filter existing-topics)
+        (->> (set/intersection desired-topics
+                               existing-topics)
              (map #(ConfigResource. ConfigResource$Type/TOPIC %))
              (.describeConfigs ^AdminClient @ac)
              (.all)
@@ -1598,7 +1635,9 @@
                                                       topics-with-wrong-config))
                       (.all))))))
 
-        new-topics (set/difference (set (mapcat #(get-topic-names %) topic-name-providers))
+
+
+        new-topics (set/difference (set desired-topics)
                                    existing-topics)
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]

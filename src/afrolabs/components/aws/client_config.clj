@@ -19,10 +19,22 @@
           :opt-un [::profile
                    ::load-sso?]))
 
+(defn basic-session-token-provider
+  [access-key-id
+   secret-access-key
+   session-token]
+  (reify
+    aws-creds/CredentialsProvider
+    (fetch [_]
+      {:aws/access-key-id     access-key-id
+       :aws/secret-access-key secret-access-key
+       :aws/session-token     session-token})))
+
 (defn make-aws-client
   [{:keys [region
            access-key-id
            secret-access-key
+           session-token
            profile
            load-sso?]
     :as _cfg}]
@@ -32,11 +44,20 @@
     (assoc :region region)
 
     (and access-key-id
-         secret-access-key)
+         secret-access-key
+         (not session-token))
     (assoc :credentials-provider
            (aws-creds/basic-credentials-provider
             {:access-key-id     access-key-id
              :secret-access-key secret-access-key}))
+
+    (and access-key-id
+         secret-access-key
+         session-token)
+    (assoc :credentials-provider
+           (basic-session-token-provider access-key-id
+                                         secret-access-key
+                                         session-token))
 
     (not (and access-key-id
               secret-access-key))
