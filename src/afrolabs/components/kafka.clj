@@ -822,13 +822,31 @@
                     (csp/>!! caught-up-ch
                              current-offsets))))))))
 
+(defn consumer-current-offsets-is-end-offsets?
+  "Checks if the consumer's current offsets is equal to the end offsets.
+
+  This means there is nothing (right now) to consume in the topic.
+
+  Specify `timeout` as a java.time.Duration and `timeout-value` as a constant
+  so that you don't hang on this forever. `timeout-value` may be `:throw`, in which
+  case an exception will be thrown if the timeout expires before an offset value is
+  returned from the consumer.
+
+  Returns the current-offsets as the truthy value."
+  [consumer timeout timeout-value]
+  (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
+        end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
+    (when (= end-offsets current-offsets)
+      end-offsets)))
+
 (defstrategy CaughtUpNotifications
   [& chs]
   (let [caught-up-ch (csp/chan)
         caught-up-mult (csp/mult caught-up-ch)]
 
     ;; tap all of the provided channels into the mult/ch that we notify on
-    (doseq [ch chs] (csp/tap caught-up-mult ch))
+    (doseq [ch chs]
+      (csp/tap caught-up-mult ch))
 
     (reify
       IShutdownHook
@@ -840,11 +858,9 @@
       (post-consume-hook
           [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
-              end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
-          (when (= end-offsets current-offsets)
-            (csp/>!! caught-up-ch
-                     current-offsets)))))))
+        (when-let [current-offsets (consumer-current-offsets-is-end-offsets? consumer)]
+          (csp/>!! caught-up-ch
+                   current-offsets))))))
 
 (defstrategy FreshConsumerGroup
   [& {:keys [group-id-prepend]}]
