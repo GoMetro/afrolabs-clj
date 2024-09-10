@@ -14,7 +14,7 @@
    [clojure.string :as str]
    [iapetos.core :as prom]
    [integrant.core :as ig]
-   [java-time :as t]
+   [java-time.api :as t]
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
@@ -822,7 +822,7 @@
                     (csp/>!! caught-up-ch
                              current-offsets))))))))
 
-(defn consumer-current-offsets-is-end-offsets?
+(defn consumer:fully-current?
   "Checks if the consumer's current offsets is equal to the end offsets.
 
   This means there is nothing (right now) to consume in the topic.
@@ -858,9 +858,10 @@
       (post-consume-hook
           [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (when-let [current-offsets (consumer-current-offsets-is-end-offsets? consumer)]
-          (csp/>!! caught-up-ch
-                   current-offsets))))))
+        (let [current-offsets? (consumer:fully-current? consumer (t/duration 10 :seconds) :timeout)]
+          (when (not= current-offsets? :timeout)
+            (csp/>!! caught-up-ch
+                     current-offsets?)))))))
 
 (defstrategy FreshConsumerGroup
   [& {:keys [group-id-prepend]}]
@@ -1955,31 +1956,36 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value))
       (ktable-wait-until-fully-current [_ timeout-duration timeout-value]
         (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
-              timeout-chan (csp/timeout timeout-ms)]
-          ;; When a ktable is current these `fully-current-notification-ch` will fire often.
-          ;; We will count until we've received two notification channels before returning from this fn.
-          ;; This is done because `fully-current-notification-ch` will likely contain
-          ;; values of having been current before this call, so we need at least one receive
-          ;; to clear it.
-          (loop [current-notifs-received 0
-                 previous-offsets        nil]
-            (let [[v ch] (csp/alts!! [timeout-chan
-                                      fully-current-notification-ch])]
-              (if (= ch timeout-chan)
-                timeout-value
+              timeout-chan (csp/timeout timeout-ms)
+              result
+              ;; When a ktable is current these `fully-current-notification-ch` will fire often.
+              ;; We will count until we've received two notification channels before returning from this fn.
+              ;; This is done because `fully-current-notification-ch` will likely contain
+              ;; values of having been current before this call, so we need at least one receive
+              ;; to clear it.
+              (loop [current-notifs-received 0
+                     previous-offsets        nil]
+                (let [[v ch] (csp/alts!! [timeout-chan
+                                          fully-current-notification-ch])]
+                  (if (= ch timeout-chan)
+                    timeout-value
 
-                ;; if we've received a value, we want to receive the _same_ value
-                ;; from the `fully-current-notification-ch` at least twice
-                ;; to indicate stability, ie fully caught to a stable point.
-                (let [same-as-previous?            (= v previous-offsets)
-                      next-current-notifs-received (if same-as-previous?
-                                                     (inc current-notifs-received)
-                                                     0)]
-                  ;; if we've received the same offsets twice, we're good to return
-                  (if (= 2 next-current-notifs-received)
-                    v
-                    ;; else we wait some more
-                    (recur next-current-notifs-received v))))))))
+                    ;; if we've received a value, we want to receive the _same_ value
+                    ;; from the `fully-current-notification-ch` at least twice
+                    ;; to indicate stability, ie fully caught to a stable point.
+                    (let [same-as-previous?            (= v previous-offsets)
+                          next-current-notifs-received (if same-as-previous?
+                                                         (inc current-notifs-received)
+                                                         0)]
+                      ;; if we've received the same offsets twice, we're good to return
+                      (if (= 2 next-current-notifs-received)
+                        v
+                        ;; else we wait some more
+                        (recur next-current-notifs-received v))))))]
+          (when (= :throw result)
+            (throw (ex-info "KTable timed out waiting to become fully current."
+                            {:timeout timeout-duration})))
+          result))
 
       IDeref
       (deref [_]
