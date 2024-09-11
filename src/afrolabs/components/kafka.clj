@@ -836,7 +836,9 @@
   [consumer timeout timeout-value]
   (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
         end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
-    (when (= end-offsets current-offsets)
+    (when (and current-offsets
+               end-offsets
+               (= end-offsets current-offsets))
       end-offsets)))
 
 (defstrategy CaughtUpNotifications
