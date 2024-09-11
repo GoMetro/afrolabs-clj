@@ -861,7 +861,8 @@
           [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
         (let [current-offsets? (consumer:fully-current? consumer (t/duration 10 :seconds) :timeout)]
-          (when (not= current-offsets? :timeout)
+          (when (and current-offsets ?
+                     (not= current-offsets? :timeout))
             (csp/>!! caught-up-ch
                      current-offsets?)))))))
 
