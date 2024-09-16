@@ -1912,8 +1912,6 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
 
-        ;; topic-partition-offset-ch (csp/chan) ;; why was this here?
-
         ;; `caught-up-once?` mechanism is a way to block the initial ktable (deref) call until the ktable consumer
         ;; was current at least once, relative to when the consumer started.
         ;; latest-offsets are checked initially, and when the consumer's current-offset surpasses this, the
