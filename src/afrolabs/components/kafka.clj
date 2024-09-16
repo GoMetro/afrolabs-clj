@@ -14,7 +14,7 @@
    [clojure.string :as str]
    [iapetos.core :as prom]
    [integrant.core :as ig]
-   [java-time :as t]
+   [java-time.api :as t]
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
@@ -822,13 +822,33 @@
                     (csp/>!! caught-up-ch
                              current-offsets))))))))
 
+(defn consumer:fully-current?
+  "Checks if the consumer's current offsets is equal to the end offsets.
+
+  This means there is nothing (right now) to consume in the topic.
+
+  Specify `timeout` as a java.time.Duration and `timeout-value` as a constant
+  so that you don't hang on this forever. `timeout-value` may be `:throw`, in which
+  case an exception will be thrown if the timeout expires before an offset value is
+  returned from the consumer.
+
+  Returns the current-offsets as the truthy value."
+  [consumer timeout timeout-value]
+  (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
+        end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
+    (when (and current-offsets
+               end-offsets
+               (= end-offsets current-offsets))
+      end-offsets)))
+
 (defstrategy CaughtUpNotifications
   [& chs]
   (let [caught-up-ch (csp/chan)
         caught-up-mult (csp/mult caught-up-ch)]
 
     ;; tap all of the provided channels into the mult/ch that we notify on
-    (doseq [ch chs] (csp/tap caught-up-mult ch))
+    (doseq [ch chs]
+      (csp/tap caught-up-mult ch))
 
     (reify
       IShutdownHook
@@ -840,11 +860,11 @@
       (post-consume-hook
           [_ consumer _consumed-records]
         ;; Test if we've caught up to the last offset for every topic-partition we're consuming from
-        (let [current-offsets (consumer-current-offsets consumer :timeout-value :throw)
-              end-offsets (consumer-end-offsets consumer :timeout-value :throw)]
-          (when (= end-offsets current-offsets)
+        (let [current-offsets? (consumer:fully-current? consumer (t/duration 10 :seconds) :timeout)]
+          (when (and current-offsets?
+                     (not= current-offsets? :timeout))
             (csp/>!! caught-up-ch
-                     current-offsets)))))))
+                     current-offsets?)))))))
 
 (defstrategy FreshConsumerGroup
   [& {:keys [group-id-prepend]}]
@@ -1803,9 +1823,12 @@
 
 (defprotocol IKTable
   (ktable-wait-for-catchup
-    [_this topic-partition-offset timeout-period timeout-value]
+    [_this topic-partition-offset timeout-duration timeout-value]
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
-Supports a timeout operation."))
+Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
+  (ktable-wait-until-fully-current
+    [_this timeout-period timeout-value]
+    "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result."))
 
 (s/def ::ktable #(satisfies? IKTable %))
 
@@ -1889,7 +1912,22 @@ Supports a timeout operation."))
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
 
-        topic-partition-offset-ch (csp/chan)
+        ;; `caught-up-once?` mechanism is a way to block the initial ktable (deref) call until the ktable consumer
+        ;; was current at least once, relative to when the consumer started.
+        ;; latest-offsets are checked initially, and when the consumer's current-offset surpasses this, the
+        ;; check is passed. It is special because it does not check if the consumer is fully
+        ;; current all the time, but instead checks if the consumer caught up to where the offsets were
+        ;; at the time of starting. It is a type of "caught up enough to be useful" check.
+
+        ;; If `caught-up-once?` is false, then the first deref will only return if the consumer's
+        ;; current-offset is the same as latest-offset, which could be tricky of a producer is busy producing
+        ;; records to this topic while the first deref is waiting.
+
+        fully-current-notification-ch (csp/chan (csp/sliding-buffer 1))
+        caught-up-notifications-strategy (apply CaughtUpNotifications
+                                                (remove nil? [fully-current-notification-ch
+                                                              (when-not caught-up-once?
+                                                                caught-up-ch)]))
 
         ktable-state (atom {})
         consumer-client (reify
@@ -1901,12 +1939,11 @@ Supports a timeout operation."))
                                      #(merge-updates-with-ktable % msgs)))))
 
         cfg (-> cfg
-                (update-in [:strategies] concat [(OffsetReset "earliest")
-                                                 (ConsumerGroup consumer-group-id)
-                                                 (if caught-up-once?
-                                                   (CaughtUpOnceNotifications caught-up-ch)
-                                                   (CaughtUpNotifications caught-up-ch))
-                                                 ])
+                (update-in [:strategies] concat (remove nil?
+                                                        [(OffsetReset "earliest")
+                                                         (ConsumerGroup consumer-group-id)
+                                                         (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
+                                                         caught-up-notifications-strategy]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
@@ -1916,8 +1953,40 @@ Supports a timeout operation."))
       (halt [_] (-comp/halt consumer))
 
       IKTable
-      (ktable-wait-for-catchup [_ topic-partition-offset timeout-period timeout-value]
-        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-period timeout-value))
+      (ktable-wait-for-catchup [_ topic-partition-offset timeout-duration timeout-value]
+        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value))
+      (ktable-wait-until-fully-current [_ timeout-duration timeout-value]
+        (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
+              timeout-chan (csp/timeout timeout-ms)
+              result
+              ;; When a ktable is current these `fully-current-notification-ch` will fire often.
+              ;; We will count until we've received two notification channels before returning from this fn.
+              ;; This is done because `fully-current-notification-ch` will likely contain
+              ;; values of having been current before this call, so we need at least one receive
+              ;; to clear it.
+              (loop [current-notifs-received 0
+                     previous-offsets        nil]
+                (let [[v ch] (csp/alts!! [timeout-chan
+                                          fully-current-notification-ch])]
+                  (if (= ch timeout-chan)
+                    timeout-value
+
+                    ;; if we've received a value, we want to receive the _same_ value
+                    ;; from the `fully-current-notification-ch` at least twice
+                    ;; to indicate stability, ie fully caught to a stable point.
+                    (let [same-as-previous?            (= v previous-offsets)
+                          next-current-notifs-received (if same-as-previous?
+                                                         (inc current-notifs-received)
+                                                         0)]
+                      ;; if we've received the same offsets twice, we're good to return
+                      (if (= 2 next-current-notifs-received)
+                        v
+                        ;; else we wait some more
+                        (recur next-current-notifs-received v))))))]
+          (when (= :throw result)
+            (throw (ex-info "KTable timed out waiting to become fully current."
+                            {:timeout timeout-duration})))
+          result))
 
       IDeref
       (deref [_]
