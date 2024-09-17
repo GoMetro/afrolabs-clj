@@ -325,7 +325,25 @@
        (apply ~n (rest strategy-specs#)))))
 
 
-;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defstrategy RenameTopicsForProducer
+  [& {:keys [rename-fn]}]
+  (when-not rename-fn
+    (throw (ex-info (str "strategy RenameTopicsForProducer requires the `rename-fn` to be specified. This function "
+                         "accepts a topic name for every message, and must return a modified version of the topic, "
+                         "OR nil, in which case the original topic value will be kept.")
+                    {})))
+  (reify
+    IProducerPreProduceMiddleware
+    (pre-produce-hook [_ msgs]
+      (map (fn [{:as   msg
+                 :keys [topic]}]
+             (assoc msg :topic (or (rename-fn topic)
+                                   topic)))
+           msgs))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- get-allowed-config-keys
     [config-class]
