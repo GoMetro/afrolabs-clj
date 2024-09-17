@@ -86,6 +86,13 @@
   "Given to a consumer (thread), invoked with received messages, returns messages to be produced."
   (consume-messages [_ msgs] "Consumes a collection of messages from subscribed topics. Returns a collection of messages to be produced."))
 
+(defprotocol IProducerPreProduceMiddleware
+  "Can be applied to a producer. Will pre-process a message before it is handed off to the producer client.
+
+  If multiple `IProducerPreProduceMiddleware` are applied to a producer, they will all be applied to the messages as if
+  they are middleware."
+  (pre-produce-hook [this msgs] "Accepts a sequence of messages and returns a (possibly) modified sequence of messages."))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (s/def :producer.msg/topic (s/and string?
@@ -283,7 +290,8 @@
                                                     IConsumerMiddleware
                                                     IConsumedResultsHandler
                                                     IUpdateAdminClientConfigHook
-                                                    IConsumerPostInitHook]
+                                                    IConsumerPostInitHook
+                                                    IProducerPreProduceMiddleware]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -1061,16 +1069,27 @@
                     (map #(partial update-producer-cfg-hook %))
                     (reverse)
                     (apply comp)) starting-cfg)
-        producer (KafkaProducer. ^Map props)]
+
+        producer (KafkaProducer. ^Map props)
+
+        ;; turn the pre-produce middleware strategies into lambdas
+        ;; then compose them in reverse order, so that strategies defined
+        ;; first, gets called first.
+        pre-produce-middleware (->> strategies
+                                    (filter #(satisfies? IProducerPreProduceMiddleware %))
+                                    (map #(partial pre-produce-hook %))
+                                    (reverse)
+                                    (apply comp))]
     (reify
       IProducer
       (produce! [_ msgs]
-        (producer-produce producer msgs))
+        (producer-produce producer
+                          (pre-produce-middleware msgs)))
       (get-producer [_] producer)
 
       IConsumedResultsHandler
       (handle-consumption-results
-          [_ msgs]
+          [this msgs]
 
         (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
           (when (= ::s/invalid xs)
@@ -1079,10 +1098,10 @@
                             {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
                              ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
           (let [[xs-type _] xs]
-            (producer-produce producer
-                              (condp = xs-type
-                                :single [msgs]
-                                :more   msgs)))))
+            (produce! this
+                      (condp = xs-type
+                        :single [msgs]
+                        :more   msgs)))))
 
       IHaltable
       (halt [_]
