@@ -107,17 +107,17 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn read-instance-id-values
-  "Queries the EC2 instance metadata. This has a fixed IP-based URL. Returns \"not-ec2-instance\" if this call does not work."
-  []
-  (let [{:keys [status error body]}
-        @(http/get "http://169.254.169.254/latest/dynamic/instance-identity/document")]
-    (if (or error (not= 200 status))
-      nil
-      (json/read-str body))))
+;; Queries the EC2 instance metadata. This has a fixed IP-based URL. Returns \"not-ec2-instance\" if this call does not work.
+(def instance-id-values
+  (delay
+    (let [{:keys [status error body]}
+          @(http/get "http://169.254.169.254/latest/dynamic/instance-identity/document")]
+      (if (or error (not= 200 status))
+        nil
+        (json/read-str body)))))
 
-(defmethod aero/reader 'ec2-instance-identity-value
-  [_ _ value] (get (read-instance-id-values) value))
+(defmethod aero/reader 'ec2/instance-identity-data
+  [_ _ value] (get @instance-id-values value))
 
 ;; #?(:clj (Long/parseLong (str value)))
 ;; #?(:cljs (js/parseInt (str value)))
