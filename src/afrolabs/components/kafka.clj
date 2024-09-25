@@ -1854,9 +1854,15 @@
                           #(pos-int? (count %))))
 
 (s/def ::caught-up-once? boolean?)
+(s/def ::store-fn (s/or :symbol symbol?
+                        :fn     fn?))
+(s/def ::key-store-fn (s/or :symbol symbol?
+                            :fn     fn?))
 (s/def ::ktable-cfg (s/and ::clientless-consumer
                            (s/keys :req-un [::ktable-id]
-                                   :opt-un [::caught-up-once?])))
+                                   :opt-un [::caught-up-once?
+                                            ::store-fn
+                                            ::key-store-fn])))
 
 (defprotocol IKTable
   (ktable-wait-for-catchup
@@ -1932,16 +1938,35 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         ;; wait for the result or the timeout-value to arrive
         (csp/<!! caught-up?-chan)))))
 
+(defn- resolve-store-fn
+  "Resolves the `store-fn` or `key-store-fn` symbols into fn values."
+  [store-fn]
+  (or (when store-fn
+        (cond
+          (fn? store-fn)       store-fn
+          (symbol? store-fn)   (let [store-fn-ref (var-get (requiring-resolve store-fn))]
+                                 (if-not (fn? store-fn-ref)
+                                   (throw (ex-info "`store-fn` must be an fn or a symbol that points to an fn."
+                                                   {:store-fn store-fn}))
+                                   store-fn-ref))
+          :else
+          nil))
+      identity))
+
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
     :keys [ktable-id
-           caught-up-once?]
+           caught-up-once?
+           store-fn
+           key-store-fn]
     :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
                                 "-"
                                 (UUID/randomUUID))
+        store-fn' (resolve-store-fn store-fn)
+        key-store-fn' (resolve-store-fn key-store-fn)
 
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
@@ -1972,8 +1997,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                           (consume-messages
                               [_ msgs]
                             (when (seq msgs)
-                              (swap! ktable-state
-                                     #(merge-updates-with-ktable % msgs)))))
+                              (let [msgs' (map (fn [x] (-> x
+                                                           (update :value store-fn')
+                                                           (update :key key-store-fn')))
+                                               msgs)]
+                                (swap! ktable-state
+                                       #(merge-updates-with-ktable % msgs'))))))
 
         cfg (-> cfg
                 (update-in [:strategies] concat (remove nil?
