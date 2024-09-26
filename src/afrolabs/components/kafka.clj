@@ -281,6 +281,11 @@
   to be produced."
   (handle-consumption-results [this xs] "Accepts whatever the (consume-messages ...) from the consumer-client returned."))
 
+(defprotocol IConsumerMessagesPreProcessor
+  "A strategy for intercepting messages between the Consumer and the consumer-client. This strategy may modify
+  messages in flight."
+  (pre-process-messages [this msgs] "Accepts kafka records and returns (possibly modified) kafka records."))
+
 
 (def satisfies-some-of-the-strategy-protocols (->> [IShutdownHook
                                                     IPostConsumeHook
@@ -291,7 +296,8 @@
                                                     IConsumedResultsHandler
                                                     IUpdateAdminClientConfigHook
                                                     IConsumerPostInitHook
-                                                    IProducerPreProduceMiddleware]
+                                                    IProducerPreProduceMiddleware
+                                                    IConsumerMessagesPreProcessor]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -342,6 +348,51 @@
              (assoc msg :topic (or (rename-fn topic)
                                    topic)))
            msgs))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- resolve-fn
+  "Resolves a configuration value that semantically points to an fn, to the actual fn.
+  `the-fn` might be a symbol, in which case the namespace will be recquired and the symbol resolved
+  or an actual `IFn`."
+  [the-fn]
+  (or (when the-fn
+        (cond
+          (fn? the-fn)       the-fn
+          (symbol? the-fn)   (let [the-fn-ref (var-get (requiring-resolve the-fn))]
+                                 (if-not (fn? the-fn-ref)
+                                   (throw (ex-info "`the-fn` must be an fn or a symbol that points to an fn."
+                                                   {:the-fn the-fn}))
+                                   the-fn-ref))
+          :else
+          (do (log/with-context+ {:the-fn the-fn}
+                (log/warn "Unable to resolve the-fn."))
+              nil)))
+      identity))
+
+(defstrategy UpdateConsumedRecordKey
+  [& {:keys [key-fn] :as params}]
+  (when-not key-fn
+    (throw (ex-info "`key-fn` must have a value."
+                    {:key-fn key-fn
+                     :params params})))
+  (let [key-fn' (resolve-fn key-fn)]
+    (reify
+      IConsumerMessagesPreProcessor
+      (pre-process-messages [_ msgs]
+        (map #(update % :key key-fn') msgs)))))
+
+(defstrategy UpdateConsumedRecordValue
+  [& {:keys [value-fn] :as params}]
+  (when-not value-fn
+    (throw (ex-info "`value-fn` must have a value."
+                    {:value-fn value-fn
+                     :params   params})))
+  (let [value-fn' (resolve-fn value-fn)]
+    (reify
+      IConsumerMessagesPreProcessor
+      (pre-process-messages [_ msgs]
+        (map #(update % :value value-fn') msgs)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1207,7 +1258,16 @@
         combined-consumed-results-handler
         (fn [xs]
           (doseq [h consumed-results-handlers]
-            (handle-consumption-results h xs)))]
+            (handle-consumption-results h xs)))
+
+
+        ;; compose up all of the interceptors into one fn chain
+        consumer-messages-pre-processor-chain
+        (->> strategies
+             (filter (partial satisfies? IConsumerMessagesPreProcessor))
+             (map #(partial pre-process-messages %))
+             (reverse)
+             (apply comp))]
     (try
 
       (combined-post-init-hooks consumer)
@@ -1258,7 +1318,9 @@
                                                        consumed-records)]
                         (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
                                   msgs-count))
-                    consumption-results        (consume-messages client consumed-records)]
+                    consumption-results        (->> consumed-records
+                                                    (consumer-messages-pre-processor-chain)
+                                                    (consume-messages client))]
 
                 (when consumption-results
                   (combined-consumed-results-handler consumption-results))
@@ -1938,36 +2000,16 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         ;; wait for the result or the timeout-value to arrive
         (csp/<!! caught-up?-chan)))))
 
-(defn- resolve-store-fn
-  "Resolves the `store-fn` or `key-store-fn` symbols into fn values."
-  [store-fn]
-  (or (when store-fn
-        (cond
-          (fn? store-fn)       store-fn
-          (symbol? store-fn)   (let [store-fn-ref (var-get (requiring-resolve store-fn))]
-                                 (if-not (fn? store-fn-ref)
-                                   (throw (ex-info "`store-fn` must be an fn or a symbol that points to an fn."
-                                                   {:store-fn store-fn}))
-                                   store-fn-ref))
-          :else
-          nil))
-      identity))
-
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
     :keys [ktable-id
-           caught-up-once?
-           store-fn
-           key-store-fn]
+           caught-up-once?]
     :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
                                 "-"
                                 (UUID/randomUUID))
-        store-fn' (resolve-store-fn store-fn)
-        key-store-fn' (resolve-store-fn key-store-fn)
-
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
         _ (csp/go (csp/<! caught-up-ch)
@@ -1997,12 +2039,8 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                           (consume-messages
                               [_ msgs]
                             (when (seq msgs)
-                              (let [msgs' (map (fn [x] (-> x
-                                                           (update :value store-fn')
-                                                           (update :key key-store-fn')))
-                                               msgs)]
-                                (swap! ktable-state
-                                       #(merge-updates-with-ktable % msgs'))))))
+                              (swap! ktable-state
+                                     #(merge-updates-with-ktable % msgs)))))
 
         cfg (-> cfg
                 (update-in [:strategies] concat (remove nil?
