@@ -655,6 +655,45 @@
                           topic-name-providers)
                     ^ConsumerRebalanceListener (with-consumer-rebalance-listeners consumer))))))
 
+(defn resolve-topic-like
+  "Accepts something that must resolve into a string.
+  - a string literal
+  - an fn, in which case it will be called without args, and expects a string back
+  - a symbol, in which case it will be resolved, and
+    - check if it has a string value, in which case that is used
+    - check if it is an fn, in which case it will be called, and a string is expected"
+  [topic-like]
+  (cond
+    (string? topic-like)
+    topic-like
+
+    (fn? topic-like)
+    (try (let [x (topic-like)]
+           (if-not (string? x)
+             (throw (ex-info "topic-like is fn?, but when called does not return a string, which it must."
+                             {:topic-like   topic-like
+                              :return-value x}))
+             x))
+         (catch Throwable t nil
+                (log/warn t "Unable to call topic-like, which is fn?")
+                nil))
+
+    ;; it's a symbol? resolve it, and recur on the value
+    (symbol? topic-like)
+    (resolve-topic-like (var-get (requiring-resolve topic-like)))
+
+    :else
+    (do (log/with-context+ {:topic-like topic-like}
+          (log/warn "Don't know what to do with topic-like."))
+        nil)))
+
+(defn resolve-topic-like-seq
+  "Accepts a sequence of topic-likes, resolving all of them, keeping non-nil values."
+  [xs]
+  (->> xs
+       (map resolve-topic-like)
+       (remove nil?)))
+
 (defstrategy SubscribeWithTopicsCollection
   ([topics]
    (when-not (seq topics)
@@ -664,7 +703,7 @@
      (consumer-init-hook
          [_ consumer]
        (.subscribe ^Consumer consumer
-                   ^Collection topics))))
+                   ^Collection (resolve-topic-like-seq topics)))))
   ([topics
     rebalance-listeners]
    (when-not (seq topics)
@@ -677,7 +716,7 @@
        (consumer-init-hook
            [_ consumer]
          (.subscribe ^Consumer consumer
-                     ^Collection topics
+                     ^Collection (resolve-topic-like-seq topics)
                      ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
 
