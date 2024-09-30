@@ -6,12 +6,14 @@
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
    [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
+   [afrolabs.components.time :as -time]
    [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
    [clojure.set :as set]
    [clojure.spec.alpha :as s]
    [clojure.spec.gen.alpha :as sgen]
    [clojure.string :as str]
+   [com.rpl.specter :as specter]
    [iapetos.core :as prom]
    [integrant.core :as ig]
    [java-time.api :as t]
@@ -772,14 +774,16 @@
       (post-init-hook
           [_ consumer]
         (let [assignment
-              (loop []
+              (loop [remaining 2]
+                (when (zero? remaining)
+                  (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:remaining remaining})))
                 (let [assignment (.assignment ^KafkaConsumer consumer)]
                   (if (seq assignment)
                     assignment
                     (do
                       (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
                       (.poll ^Consumer consumer 5000)
-                      (recur)))))]
+                      (recur (dec remaining))))))]
           (doseq [[^TopicPartition topic-partition
                    ^OffsetAndTimestamp offset-and-timestamp]
                   (.offsetsForTimes ^KafkaConsumer consumer
@@ -1890,80 +1894,187 @@
 
   )
 
+(defn max-instant
+  "Returns the more-recent of two java.time.<moment-in-time> values."
+  [a b]
+  (cond
+    (not (or a b)) nil
+    (and a (not b)) a
+    (and (not a) b) b
+
+    (t/after? a b) a
+    :else          b))
+
+(comment
+
+  (max-instant nil nil) ;; nil
+  (def a (t/instant "2024-09-27T12:00:00.00-00:00"))
+  (def b (t/instant "2024-09-27T13:00:00.00-00:00"))
+
+  (max-instant a b) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+  (max-instant b a) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+  (max-instant nil a) ;; #inst "2024-09-27T12:00:00.000000000-00:00"
+  (max-instant b nil) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+
+  ;; the pramaters don't HAVE to be instants, but they have to be the same
+  (max-instant (t/zoned-date-time a "UTC") ;; #object[java.time.ZonedDateTime 0x23bea94 "2024-09-27T12:00Z[UTC]"]
+               (t/zoned-date-time b "UTC") ;; #object[java.time.ZonedDateTime 0x47c8930b "2024-09-27T13:00Z[UTC]"]
+               ) ;; #object[java.time.ZonedDateTime 0x3f360e49 "2024-09-27T13:00Z[UTC]"]
+
+
+  )
+
 (defn merge-updates-with-ktable
-  [old-ktable new-msgs]
-  (loop [old                      old-ktable
-         [{:as  head
-           k    :key
-           v    :value
-           t    :topic
-           p    :partition
-           o    :offset
-           hdrs :headers} & rest-msgs] new-msgs]
-    (if-not head
-      old
-      (recur (vary-meta (let [v (cond
-                                  ;; we want to avoid setting meta-data (headers) on a nil value
-                                  ;; even if that record arrives with headers.
-                                  ;; All we will do with the value is remove it from the ktable anyway.
-                                  (nil? v) v
-                                  hdrs     (with-meta v {:headers hdrs})
-                                  :else    v)]
-                          (cond
-                            ;; nothing is nil, save the value
-                            (not (or (nil? k)
-                                     (nil? v)
-                                     (nil? t)))
-                            (assoc-in old [t k] v)
+  "Acts like a reduce function.
+  Accepts a starting-state (`old-ktable`) and a collection of kafka-records (`new-msgs`),
+  Merges the `new-messages` into a map, which is returned.
+  The state has the shape {topic-name -> {record-key latest-record-value}}.
+  Each `latest-record-value` has meta-data including `:headers` & `:timestamp`.
+  The result value (state) has meta-data
+  - `:ktable/topic-partition-offsets`
+  - `:ktable/record-headers`
+  that records the max offset, per [topic partition] encountered while building the ktable value.
+  Accepts an optional `opts` parameter:
+  - :retention-ms -- If a `latest-record-value` was created from a kafka-record wit a timestamp
+  thas is older than latest-received-kafka-record-timestamp, then this record will be removed from the ktable."
+  ([old-ktable new-msgs]
+   (merge-updates-with-ktable old-ktable new-msgs {}))
+  ([old-ktable new-msgs {:as   _opts
+                         :keys [retention-ms]}]
+   (let [[result max-timestamp]
+         (loop [old                           old-ktable
+                [{:as  head
+                  k    :key
+                  v    :value
+                  t    :topic
+                  p    :partition
+                  o    :offset
+                  ts   :timestamp
+                  hdrs :headers} & rest-msgs] new-msgs
+                max-timestamp                 ts]
+           (let [new-max-timestamp (max-instant max-timestamp ts)]
+             (if-not head
+               [old max-timestamp]
+               (recur (vary-meta (let [v (some-> (cond
+                                                   ;; we want to avoid setting meta-data (headers) on a nil value
+                                                   ;; even if that record arrives with headers.
+                                                   ;; All we will do with the value is remove it from the ktable anyway.
+                                                   (nil? v) v
+                                                   hdrs     (with-meta v {:headers   hdrs})
+                                                   :else    v)
+                                                 (vary-meta #(assoc % :timestamp ts)))]
+                                   (cond
+                                     ;; nothing is nil, save the value
+                                     (not (or (nil? k)
+                                              (nil? v)
+                                              (nil? t)))
+                                     (assoc-in old [t k] v)
 
-                            ;; value (only) is nil, remove the value (tombstone)
-                            (and (nil? v)
-                                 (not (or (nil? t)
-                                          (nil? k))))
-                            (update old t (fnil #(dissoc % k) {}))
+                                     ;; value (only) is nil, remove the value (tombstone)
+                                     (and (nil? v)
+                                          (not (or (nil? t)
+                                                   (nil? k))))
+                                     (update old t (fnil #(dissoc % k) {}))
 
-                            ;; default, return old value
-                            :else
-                            (do
-                              (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                            (str t) (str k) (str v)))
-                              old)))
-                        (fn [old-meta]
-                          (cond-> old-meta
+                                     ;; default, return old value
+                                     :else
+                                     (do
+                                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                                     (str t) (str k) (str v)))
+                                       old)))
+                                 (fn [old-meta]
+                                   (cond-> old-meta
 
-                            ;; If we have an offset and a partition (int) value we will store it,
-                            ;; keeping the max of all offsets per partition we've encountered.
-                            ;; `max` throws with `nil` so we need a non-nil value to compare
-                            ;; the encountered offset with. Choose `-1` because it is less than
-                            ;; any offset we will encounter (ie invalid offset value) but still
-                            ;; an int that will not throw inside max.
-                            (and o p)
-                            (update-in [:ktable/topic-partition-offsets t p]
-                                       (fnil #(max % o)
-                                             -1))
+                                     ;; If we have an offset and a partition (int) value we will store it,
+                                     ;; keeping the max of all offsets per partition we've encountered.
+                                     ;; `max` throws with `nil` so we need a non-nil value to compare
+                                     ;; the encountered offset with. Choose `-1` because it is less than
+                                     ;; any offset we will encounter (ie invalid offset value) but still
+                                     ;; an int that will not throw inside max.
+                                     (and o p)
+                                     (update-in [:ktable/topic-partition-offsets t p]
+                                                (fnil #(max % o)
+                                                      -1))
 
-                            hdrs
-                            (assoc-in [:ktable/record-headers t k]
-                                      hdrs)
+                                     hdrs
+                                     (assoc-in [:ktable/record-headers t k]
+                                               hdrs)
 
-                            (not hdrs)
-                            (update-in [:ktable/record-headers t]
-                                       #(dissoc % k)))))
-             rest-msgs))))
+                                     (not hdrs)
+                                     (update-in [:ktable/record-headers t]
+                                                #(dissoc % k)))))
+                      rest-msgs
+                      new-max-timestamp))))]
+
+     ;; if the user specified `retention-ms` AND we have `max-timestamp`
+     ;; we may now expunge data that is older than `retention-ms`
+     (if (or (not retention-ms)
+             (not max-timestamp))
+       result
+       ;; NOTE: strategy is to search through kafka records' meta-data for `:timestamp` that is long enough ago
+       ;; if we find such that qualify, we want to remove that entry and also the meta-data on the ktable
+       ;; object itself, related to that entry `[:ktable-record-headers t k]`
+       (let [cutoff-timestamp (t/- max-timestamp
+                                   (t/duration retention-ms))
+             ;; We need the path [topic record-key] to the records we will expunge
+             ;; so we can expunge table-level meta-data too
+             topic-partition-keys (map (juxt first second)
+                                       (specter/select [specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
+                                                        specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect record key, continue to record value
+                                                        specter/META                                                 ;; navigate into the record's meta-data
+                                                        :timestamp                                                   ;; navigate to :timestamp
+                                                        #(t/before? % cutoff-timestamp)                              ;; match only when :timestamp is before cutoff
+                                                        ]
+                                                       result))
+             result-without-records (reduce (fn [acc [topic record-key]]
+                                              (update acc topic dissoc record-key))
+                                            result
+                                            topic-partition-keys)
+             result-with-fixed-meta-data (vary-meta result-without-records
+                                                    (fn [old-meta-data]
+                                                      (assoc old-meta-data
+                                                             :ktable/record-headers
+                                                             (reduce (fn [record-headers [topic record-key]]
+                                                                       (update record-headers topic dissoc record-key))
+                                                                     (:ktable/record-headers old-meta-data)
+                                                                     topic-partition-keys))))]
+         result-with-fixed-meta-data)))))
+
+(comment
+
+  (def data {"one"   {"1" {:a 1}
+                      "2" {:a 2}
+                      "3" {:a 3}}
+             "two"   {"1" {:a 1}
+                      "2" {:a 2}
+                      "5" {:a 5}}
+             "three" {"1" {:a 1}
+                      "7" {:a 7}}})
+
+  (specter/select [specter/ALL (specter/collect-one specter/FIRST) specter/LAST
+                   specter/ALL (specter/collect-one specter/FIRST) specter/LAST
+                   :a odd?]
+                  data)
+
+  [["one" "1" 1] ["one" "3" 3] ["two" "1" 1] ["two" "5" 5] ["three" "1" 1] ["three" "7" 7]]
+
+
+  )
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
 
 (s/def ::caught-up-once? boolean?)
-(s/def ::store-fn (s/or :symbol symbol?
-                        :fn     fn?))
-(s/def ::key-store-fn (s/or :symbol symbol?
-                            :fn     fn?))
+(s/def ::retention-ms pos-int?)
 (s/def ::ktable-cfg (s/and ::clientless-consumer
                            (s/keys :req-un [::ktable-id]
                                    :opt-un [::caught-up-once?
-                                            ::store-fn
-                                            ::key-store-fn])))
+                                            ::retention-ms
+                                            ::-time/clock])
+                           ;; when retention-ms is specified, clock must be too
+                           (fn [{:keys [retention-ms clock]}]
+                             (or (and retention-ms clock)
+                                 (not retention-ms)))))
 
 (defprotocol IKTable
   (ktable-wait-for-catchup
@@ -2043,7 +2154,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
     :keys [ktable-id
-           caught-up-once?]
+           caught-up-once?
+           retention-ms
+           clock]
     :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
@@ -2073,20 +2186,28 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                                                 caught-up-ch)]))
 
         ktable-state (atom {})
+        merge-updates-opts (cond-> {}
+                             retention-ms (assoc :retention-ms retention-ms))
         consumer-client (reify
                           IConsumerClient
                           (consume-messages
                               [_ msgs]
                             (when (seq msgs)
                               (swap! ktable-state
-                                     #(merge-updates-with-ktable % msgs)))))
+                                     #(merge-updates-with-ktable % msgs merge-updates-opts)))))
+
+        retention-ms-seek-back-strategy (when retention-ms
+                                          (let [seek-to-timestamp (t/- (-time/get-current-time clock)
+                                                                       (t/duration retention-ms))]
+                                            (SeekToTimestampOffset seek-to-timestamp)))
 
         cfg (-> cfg
                 (update-in [:strategies] concat (remove nil?
                                                         [(OffsetReset "earliest")
                                                          (ConsumerGroup consumer-group-id)
                                                          (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
-                                                         caught-up-notifications-strategy]))
+                                                         caught-up-notifications-strategy
+                                                         retention-ms-seek-back-strategy]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
