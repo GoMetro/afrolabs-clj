@@ -2030,13 +2030,13 @@
              ;; We need the path [topic record-key] to the records we will expunge
              ;; so we can expunge table-level meta-data too
              topic-partition-keys (map (juxt first second)
-                                       (specter/select [specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
+                                       (specter/select [:ktable/record-data
+                                                        specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
                                                         specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect record key, continue to record value
-                                                        specter/META                                                 ;; navigate into the record's meta-data
                                                         :timestamp                                                   ;; navigate to :timestamp
                                                         #(t/before? % cutoff-timestamp)                              ;; match only when :timestamp is before cutoff
                                                         ]
-                                                       result))
+                                                       (meta result)))
              result-without-records (reduce (fn [acc [topic record-key]]
                                               (update acc topic dissoc record-key))
                                             result
