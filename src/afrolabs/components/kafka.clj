@@ -1955,14 +1955,14 @@
            (let [new-max-timestamp (max-instant max-timestamp ts)]
              (if-not head
                [old max-timestamp]
-               (recur (vary-meta (let [v (some-> (cond
-                                                   ;; we want to avoid setting meta-data (headers) on a nil value
-                                                   ;; even if that record arrives with headers.
-                                                   ;; All we will do with the value is remove it from the ktable anyway.
-                                                   (nil? v) v
-                                                   hdrs     (with-meta v {:headers   hdrs})
-                                                   :else    v)
-                                                 (vary-meta #(assoc % :timestamp ts)))]
+               (recur (vary-meta (let [v-meta-data (cond-> {}
+                                                     hdrs (assoc :headers hdrs)
+                                                     ts   (assoc :timestamp ts)
+                                                     p    (assoc :partition p)
+                                                     o    (assoc :offset o))
+                                       v (if (and v (instance? clojure.lang.IMeta v))
+                                           (with-meta v v-meta-data)
+                                           v)]
                                    (cond
                                      ;; nothing is nil, save the value
                                      (not (or (nil? k)
@@ -1995,6 +1995,17 @@
                                      (update-in [:ktable/topic-partition-offsets t p]
                                                 (fnil #(max % o)
                                                       -1))
+
+                                     ;; in retrospect, `:ktable/recerd-headers` was not a great idea, as it's too limiting
+                                     ;; `:ktable/record-data` is better since it captures all of the kafka record data,
+                                     ;; instead of just some of it.
+                                     (or o p ts hdrs)
+                                     (assoc-in [:ktable/record-data t k] (->> {:offset    o
+                                                                               :partition p
+                                                                               :timestamp ts
+                                                                               :headers   hdrs}
+                                                                              (remove (comp nil? second))
+                                                                              (into {})))
 
                                      hdrs
                                      (assoc-in [:ktable/record-headers t k]
@@ -2037,6 +2048,12 @@
                                                              (reduce (fn [record-headers [topic record-key]]
                                                                        (update record-headers topic dissoc record-key))
                                                                      (:ktable/record-headers old-meta-data)
+                                                                     topic-partition-keys)
+
+                                                             :ktable/record-data
+                                                             (reduce (fn [record-data [topic record-key]]
+                                                                       (update record-data topic dissoc record-key))
+                                                                     (:ktable/record-data old-meta-data)
                                                                      topic-partition-keys))))]
          result-with-fixed-meta-data)))))
 
