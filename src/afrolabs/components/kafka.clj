@@ -358,24 +358,21 @@
   `the-fn` might be a symbol, in which case the namespace will be recquired and the symbol resolved
   or an actual `IFn`."
   [the-fn]
-  (or (when the-fn
-        (cond
-          (fn? the-fn)       the-fn
-          (symbol? the-fn)   (let [the-fn-ref (var-get (requiring-resolve the-fn))]
-                                 (if-not (fn? the-fn-ref)
-                                   (throw (ex-info "`the-fn` must be an fn or a symbol that points to an fn."
-                                                   {:the-fn the-fn}))
-                                   the-fn-ref))
-          :else
-          (do (log/with-context+ {:the-fn the-fn}
-                (log/warn "Unable to resolve the-fn."))
-              nil)))
-      identity))
+  (when the-fn
+    (cond
+      (fn? the-fn)       the-fn
+      (symbol? the-fn)   (let [the-fn-ref (var-get (requiring-resolve the-fn))]
+                           (if-not (fn? the-fn-ref)
+                             (throw (ex-info "`the-fn` must be an fn or a symbol that points to an fn."
+                                             {:the-fn the-fn}))
+                             the-fn-ref))
+      :else
+      (throw (ex-info "Unable to resolve `the-fn` to a function." {:the-fn the-fn})))))
 
 (defstrategy UpdateConsumedRecordKey
   [& {:keys [key-fn] :as params}]
   (when-not key-fn
-    (throw (ex-info "`key-fn` must have a value."
+    (throw (ex-info "In `UpdateConsumedRecordKey` strategy, `key-fn` parameter must have a value."
                     {:key-fn key-fn
                      :params params})))
   (let [key-fn' (resolve-fn key-fn)]
