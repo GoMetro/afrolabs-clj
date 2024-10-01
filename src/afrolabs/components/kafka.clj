@@ -6,12 +6,14 @@
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
    [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
+   [afrolabs.components.time :as -time]
    [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
    [clojure.set :as set]
    [clojure.spec.alpha :as s]
    [clojure.spec.gen.alpha :as sgen]
    [clojure.string :as str]
+   [com.rpl.specter :as specter]
    [iapetos.core :as prom]
    [integrant.core :as ig]
    [java-time.api :as t]
@@ -85,6 +87,13 @@
 (defprotocol IConsumerClient
   "Given to a consumer (thread), invoked with received messages, returns messages to be produced."
   (consume-messages [_ msgs] "Consumes a collection of messages from subscribed topics. Returns a collection of messages to be produced."))
+
+(defprotocol IProducerPreProduceMiddleware
+  "Can be applied to a producer. Will pre-process a message before it is handed off to the producer client.
+
+  If multiple `IProducerPreProduceMiddleware` are applied to a producer, they will all be applied to the messages as if
+  they are middleware."
+  (pre-produce-hook [this msgs] "Accepts a sequence of messages and returns a (possibly) modified sequence of messages."))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -274,6 +283,11 @@
   to be produced."
   (handle-consumption-results [this xs] "Accepts whatever the (consume-messages ...) from the consumer-client returned."))
 
+(defprotocol IConsumerMessagesPreProcessor
+  "A strategy for intercepting messages between the Consumer and the consumer-client. This strategy may modify
+  messages in flight."
+  (pre-process-messages [this msgs] "Accepts kafka records and returns (possibly modified) kafka records."))
+
 
 (def satisfies-some-of-the-strategy-protocols (->> [IShutdownHook
                                                     IPostConsumeHook
@@ -283,7 +297,9 @@
                                                     IConsumerMiddleware
                                                     IConsumedResultsHandler
                                                     IUpdateAdminClientConfigHook
-                                                    IConsumerPostInitHook]
+                                                    IConsumerPostInitHook
+                                                    IProducerPreProduceMiddleware
+                                                    IConsumerMessagesPreProcessor]
                                                    (map #(partial satisfies? %))
                                                    (apply some-fn)))
 
@@ -317,7 +333,67 @@
        (apply ~n (rest strategy-specs#)))))
 
 
-;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defstrategy RenameTopicsForProducer
+  [& {:keys [rename-fn]}]
+  (when-not rename-fn
+    (throw (ex-info (str "strategy RenameTopicsForProducer requires the `rename-fn` to be specified. This function "
+                         "accepts a topic name for every message, and must return a modified version of the topic, "
+                         "OR nil, in which case the original topic value will be kept.")
+                    {})))
+  (reify
+    IProducerPreProduceMiddleware
+    (pre-produce-hook [_ msgs]
+      (map (fn [{:as   msg
+                 :keys [topic]}]
+             (assoc msg :topic (or (rename-fn topic)
+                                   topic)))
+           msgs))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- resolve-fn
+  "Resolves a configuration value that semantically points to an fn, to the actual fn.
+  `the-fn` might be a symbol, in which case the namespace will be recquired and the symbol resolved
+  or an actual `IFn`."
+  [the-fn]
+  (when the-fn
+    (cond
+      (fn? the-fn)       the-fn
+      (symbol? the-fn)   (let [the-fn-ref (var-get (requiring-resolve the-fn))]
+                           (if-not (fn? the-fn-ref)
+                             (throw (ex-info "`the-fn` must be an fn or a symbol that points to an fn."
+                                             {:the-fn the-fn}))
+                             the-fn-ref))
+      :else
+      (throw (ex-info "Unable to resolve `the-fn` to a function." {:the-fn the-fn})))))
+
+(defstrategy UpdateConsumedRecordKey
+  [& {:keys [key-fn] :as params}]
+  (when-not key-fn
+    (throw (ex-info "In `UpdateConsumedRecordKey` strategy, `key-fn` parameter must have a value."
+                    {:key-fn key-fn
+                     :params params})))
+  (let [key-fn' (resolve-fn key-fn)]
+    (reify
+      IConsumerMessagesPreProcessor
+      (pre-process-messages [_ msgs]
+        (map #(update % :key key-fn') msgs)))))
+
+(defstrategy UpdateConsumedRecordValue
+  [& {:keys [value-fn] :as params}]
+  (when-not value-fn
+    (throw (ex-info "`value-fn` must have a value."
+                    {:value-fn value-fn
+                     :params   params})))
+  (let [value-fn' (resolve-fn value-fn)]
+    (reify
+      IConsumerMessagesPreProcessor
+      (pre-process-messages [_ msgs]
+        (map #(update % :value value-fn') msgs)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- get-allowed-config-keys
     [config-class]
@@ -578,6 +654,45 @@
                           topic-name-providers)
                     ^ConsumerRebalanceListener (with-consumer-rebalance-listeners consumer))))))
 
+(defn resolve-topic-like
+  "Accepts something that must resolve into a string.
+  - a string literal
+  - an fn, in which case it will be called without args, and expects a string back
+  - a symbol, in which case it will be resolved, and
+    - check if it has a string value, in which case that is used
+    - check if it is an fn, in which case it will be called, and a string is expected"
+  [topic-like]
+  (cond
+    (string? topic-like)
+    topic-like
+
+    (fn? topic-like)
+    (try (let [x (topic-like)]
+           (if-not (string? x)
+             (throw (ex-info "topic-like is fn?, but when called does not return a string, which it must."
+                             {:topic-like   topic-like
+                              :return-value x}))
+             x))
+         (catch Throwable t nil
+                (log/warn t "Unable to call topic-like, which is fn?")
+                nil))
+
+    ;; it's a symbol? resolve it, and recur on the value
+    (symbol? topic-like)
+    (resolve-topic-like (var-get (requiring-resolve topic-like)))
+
+    :else
+    (do (log/with-context+ {:topic-like topic-like}
+          (log/warn "Don't know what to do with topic-like."))
+        nil)))
+
+(defn resolve-topic-like-seq
+  "Accepts a sequence of topic-likes, resolving all of them, keeping non-nil values."
+  [xs]
+  (->> xs
+       (map resolve-topic-like)
+       (remove nil?)))
+
 (defstrategy SubscribeWithTopicsCollection
   ([topics]
    (when-not (seq topics)
@@ -587,7 +702,7 @@
      (consumer-init-hook
          [_ consumer]
        (.subscribe ^Consumer consumer
-                   ^Collection topics))))
+                   ^Collection (resolve-topic-like-seq topics)))))
   ([topics
     rebalance-listeners]
    (when-not (seq topics)
@@ -600,7 +715,7 @@
        (consumer-init-hook
            [_ consumer]
          (.subscribe ^Consumer consumer
-                     ^Collection topics
+                     ^Collection (resolve-topic-like-seq topics)
                      ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
 
@@ -656,14 +771,16 @@
       (post-init-hook
           [_ consumer]
         (let [assignment
-              (loop []
+              (loop [remaining 2]
+                (when (zero? remaining)
+                  (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:remaining remaining})))
                 (let [assignment (.assignment ^KafkaConsumer consumer)]
                   (if (seq assignment)
                     assignment
                     (do
                       (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
                       (.poll ^Consumer consumer 5000)
-                      (recur)))))]
+                      (recur (dec remaining))))))]
           (doseq [[^TopicPartition topic-partition
                    ^OffsetAndTimestamp offset-and-timestamp]
                   (.offsetsForTimes ^KafkaConsumer consumer
@@ -1061,16 +1178,27 @@
                     (map #(partial update-producer-cfg-hook %))
                     (reverse)
                     (apply comp)) starting-cfg)
-        producer (KafkaProducer. ^Map props)]
+
+        producer (KafkaProducer. ^Map props)
+
+        ;; turn the pre-produce middleware strategies into lambdas
+        ;; then compose them in reverse order, so that strategies defined
+        ;; first, gets called first.
+        pre-produce-middleware (->> strategies
+                                    (filter #(satisfies? IProducerPreProduceMiddleware %))
+                                    (map #(partial pre-produce-hook %))
+                                    (reverse)
+                                    (apply comp))]
     (reify
       IProducer
       (produce! [_ msgs]
-        (producer-produce producer msgs))
+        (producer-produce producer
+                          (pre-produce-middleware msgs)))
       (get-producer [_] producer)
 
       IConsumedResultsHandler
       (handle-consumption-results
-          [_ msgs]
+          [this msgs]
 
         (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
           (when (= ::s/invalid xs)
@@ -1079,10 +1207,10 @@
                             {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
                              ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
           (let [[xs-type _] xs]
-            (producer-produce producer
-                              (condp = xs-type
-                                :single [msgs]
-                                :more   msgs)))))
+            (produce! this
+                      (condp = xs-type
+                        :single [msgs]
+                        :more   msgs)))))
 
       IHaltable
       (halt [_]
@@ -1170,7 +1298,16 @@
         combined-consumed-results-handler
         (fn [xs]
           (doseq [h consumed-results-handlers]
-            (handle-consumption-results h xs)))]
+            (handle-consumption-results h xs)))
+
+
+        ;; compose up all of the interceptors into one fn chain
+        consumer-messages-pre-processor-chain
+        (->> strategies
+             (filter (partial satisfies? IConsumerMessagesPreProcessor))
+             (map #(partial pre-process-messages %))
+             (reverse)
+             (apply comp))]
     (try
 
       (combined-post-init-hooks consumer)
@@ -1221,7 +1358,9 @@
                                                        consumed-records)]
                         (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
                                   msgs-count))
-                    consumption-results        (consume-messages client consumed-records)]
+                    consumption-results        (->> consumed-records
+                                                    (consumer-messages-pre-processor-chain)
+                                                    (consume-messages client))]
 
                 (when consumption-results
                   (combined-consumed-results-handler consumption-results))
@@ -1752,74 +1891,204 @@
 
   )
 
+(defn max-instant
+  "Returns the more-recent of two java.time.<moment-in-time> values."
+  [a b]
+  (cond
+    (not (or a b)) nil
+    (and a (not b)) a
+    (and (not a) b) b
+
+    (t/after? a b) a
+    :else          b))
+
+(comment
+
+  (max-instant nil nil) ;; nil
+  (def a (t/instant "2024-09-27T12:00:00.00-00:00"))
+  (def b (t/instant "2024-09-27T13:00:00.00-00:00"))
+
+  (max-instant a b) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+  (max-instant b a) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+  (max-instant nil a) ;; #inst "2024-09-27T12:00:00.000000000-00:00"
+  (max-instant b nil) ;; #inst "2024-09-27T13:00:00.000000000-00:00"
+
+  ;; the pramaters don't HAVE to be instants, but they have to be the same
+  (max-instant (t/zoned-date-time a "UTC") ;; #object[java.time.ZonedDateTime 0x23bea94 "2024-09-27T12:00Z[UTC]"]
+               (t/zoned-date-time b "UTC") ;; #object[java.time.ZonedDateTime 0x47c8930b "2024-09-27T13:00Z[UTC]"]
+               ) ;; #object[java.time.ZonedDateTime 0x3f360e49 "2024-09-27T13:00Z[UTC]"]
+
+
+  )
+
 (defn merge-updates-with-ktable
-  [old-ktable new-msgs]
-  (loop [old                      old-ktable
-         [{:as  head
-           k    :key
-           v    :value
-           t    :topic
-           p    :partition
-           o    :offset
-           hdrs :headers} & rest-msgs] new-msgs]
-    (if-not head
-      old
-      (recur (vary-meta (let [v (cond
-                                  ;; we want to avoid setting meta-data (headers) on a nil value
-                                  ;; even if that record arrives with headers.
-                                  ;; All we will do with the value is remove it from the ktable anyway.
-                                  (nil? v) v
-                                  hdrs     (with-meta v {:headers hdrs})
-                                  :else    v)]
-                          (cond
-                            ;; nothing is nil, save the value
-                            (not (or (nil? k)
-                                     (nil? v)
-                                     (nil? t)))
-                            (assoc-in old [t k] v)
+  "Acts like a reduce function.
+  Accepts a starting-state (`old-ktable`) and a collection of kafka-records (`new-msgs`),
+  Merges the `new-messages` into a map, which is returned.
+  The state has the shape {topic-name -> {record-key latest-record-value}}.
+  Each `latest-record-value` has meta-data including `:headers` & `:timestamp`.
+  The result value (state) has meta-data
+  - `:ktable/topic-partition-offsets`
+  - `:ktable/record-headers`
+  that records the max offset, per [topic partition] encountered while building the ktable value.
+  Accepts an optional `opts` parameter:
+  - :retention-ms -- If a `latest-record-value` was created from a kafka-record wit a timestamp
+  thas is older than latest-received-kafka-record-timestamp, then this record will be removed from the ktable."
+  ([old-ktable new-msgs]
+   (merge-updates-with-ktable old-ktable new-msgs {}))
+  ([old-ktable new-msgs {:as   _opts
+                         :keys [retention-ms]}]
+   (let [[result max-timestamp]
+         (loop [old                           old-ktable
+                [{:as  head
+                  k    :key
+                  v    :value
+                  t    :topic
+                  p    :partition
+                  o    :offset
+                  ts   :timestamp
+                  hdrs :headers} & rest-msgs] new-msgs
+                max-timestamp                 ts]
+           (let [new-max-timestamp (max-instant max-timestamp ts)]
+             (if-not head
+               [old max-timestamp]
+               (recur (vary-meta (let [v-meta-data (cond-> {}
+                                                     hdrs (assoc :headers hdrs)
+                                                     ts   (assoc :timestamp ts)
+                                                     p    (assoc :partition p)
+                                                     o    (assoc :offset o))
+                                       v (if (and v (instance? clojure.lang.IMeta v))
+                                           (with-meta v v-meta-data)
+                                           v)]
+                                   (cond
+                                     ;; nothing is nil, save the value
+                                     (not (or (nil? k)
+                                              (nil? v)
+                                              (nil? t)))
+                                     (assoc-in old [t k] v)
 
-                            ;; value (only) is nil, remove the value (tombstone)
-                            (and (nil? v)
-                                 (not (or (nil? t)
-                                          (nil? k))))
-                            (update old t (fnil #(dissoc % k) {}))
+                                     ;; value (only) is nil, remove the value (tombstone)
+                                     (and (nil? v)
+                                          (not (or (nil? t)
+                                                   (nil? k))))
+                                     (update old t (fnil #(dissoc % k) {}))
 
-                            ;; default, return old value
-                            :else
-                            (do
-                              (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                            (str t) (str k) (str v)))
-                              old)))
-                        (fn [old-meta]
-                          (cond-> old-meta
+                                     ;; default, return old value
+                                     :else
+                                     (do
+                                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                                     (str t) (str k) (str v)))
+                                       old)))
+                                 (fn [old-meta]
+                                   (cond-> old-meta
 
-                            ;; If we have an offset and a partition (int) value we will store it,
-                            ;; keeping the max of all offsets per partition we've encountered.
-                            ;; `max` throws with `nil` so we need a non-nil value to compare
-                            ;; the encountered offset with. Choose `-1` because it is less than
-                            ;; any offset we will encounter (ie invalid offset value) but still
-                            ;; an int that will not throw inside max.
-                            (and o p)
-                            (update-in [:ktable/topic-partition-offsets t p]
-                                       (fnil #(max % o)
-                                             -1))
+                                     ;; If we have an offset and a partition (int) value we will store it,
+                                     ;; keeping the max of all offsets per partition we've encountered.
+                                     ;; `max` throws with `nil` so we need a non-nil value to compare
+                                     ;; the encountered offset with. Choose `-1` because it is less than
+                                     ;; any offset we will encounter (ie invalid offset value) but still
+                                     ;; an int that will not throw inside max.
+                                     (and o p)
+                                     (update-in [:ktable/topic-partition-offsets t p]
+                                                (fnil #(max % o)
+                                                      -1))
 
-                            hdrs
-                            (assoc-in [:ktable/record-headers t k]
-                                      hdrs)
+                                     ;; in retrospect, `:ktable/recerd-headers` was not a great idea, as it's too limiting
+                                     ;; `:ktable/record-data` is better since it captures all of the kafka record data,
+                                     ;; instead of just some of it.
+                                     (or o p ts hdrs)
+                                     (assoc-in [:ktable/record-data t k] (->> {:offset    o
+                                                                               :partition p
+                                                                               :timestamp ts
+                                                                               :headers   hdrs}
+                                                                              (remove (comp nil? second))
+                                                                              (into {})))
 
-                            (not hdrs)
-                            (update-in [:ktable/record-headers t]
-                                       #(dissoc % k)))))
-             rest-msgs))))
+                                     hdrs
+                                     (assoc-in [:ktable/record-headers t k]
+                                               hdrs)
+
+                                     (not hdrs)
+                                     (update-in [:ktable/record-headers t]
+                                                #(dissoc % k)))))
+                      rest-msgs
+                      new-max-timestamp))))]
+
+     ;; if the user specified `retention-ms` AND we have `max-timestamp`
+     ;; we may now expunge data that is older than `retention-ms`
+     (if (or (not retention-ms)
+             (not max-timestamp))
+       result
+       ;; NOTE: strategy is to search through kafka records' meta-data for `:timestamp` that is long enough ago
+       ;; if we find such that qualify, we want to remove that entry and also the meta-data on the ktable
+       ;; object itself, related to that entry `[:ktable-record-headers t k]`
+       (let [cutoff-timestamp (t/- max-timestamp
+                                   (t/duration retention-ms))
+             ;; We need the path [topic record-key] to the records we will expunge
+             ;; so we can expunge table-level meta-data too
+             topic-partition-keys (map (juxt first second)
+                                       (specter/select [:ktable/record-data
+                                                        specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
+                                                        specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect record key, continue to record value
+                                                        :timestamp                                                   ;; navigate to :timestamp
+                                                        #(t/before? % cutoff-timestamp)                              ;; match only when :timestamp is before cutoff
+                                                        ]
+                                                       (meta result)))
+             result-without-records (reduce (fn [acc [topic record-key]]
+                                              (update acc topic dissoc record-key))
+                                            result
+                                            topic-partition-keys)
+             result-with-fixed-meta-data (vary-meta result-without-records
+                                                    (fn [old-meta-data]
+                                                      (assoc old-meta-data
+                                                             :ktable/record-headers
+                                                             (reduce (fn [record-headers [topic record-key]]
+                                                                       (update record-headers topic dissoc record-key))
+                                                                     (:ktable/record-headers old-meta-data)
+                                                                     topic-partition-keys)
+
+                                                             :ktable/record-data
+                                                             (reduce (fn [record-data [topic record-key]]
+                                                                       (update record-data topic dissoc record-key))
+                                                                     (:ktable/record-data old-meta-data)
+                                                                     topic-partition-keys))))]
+         result-with-fixed-meta-data)))))
+
+(comment
+
+  (def data {"one"   {"1" {:a 1}
+                      "2" {:a 2}
+                      "3" {:a 3}}
+             "two"   {"1" {:a 1}
+                      "2" {:a 2}
+                      "5" {:a 5}}
+             "three" {"1" {:a 1}
+                      "7" {:a 7}}})
+
+  (specter/select [specter/ALL (specter/collect-one specter/FIRST) specter/LAST
+                   specter/ALL (specter/collect-one specter/FIRST) specter/LAST
+                   :a odd?]
+                  data)
+
+  [["one" "1" 1] ["one" "3" 3] ["two" "1" 1] ["two" "5" 5] ["three" "1" 1] ["three" "7" 7]]
+
+
+  )
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
 
 (s/def ::caught-up-once? boolean?)
+(s/def ::retention-ms pos-int?)
 (s/def ::ktable-cfg (s/and ::clientless-consumer
                            (s/keys :req-un [::ktable-id]
-                                   :opt-un [::caught-up-once?])))
+                                   :opt-un [::caught-up-once?
+                                            ::retention-ms
+                                            ::-time/clock])
+                           ;; when retention-ms is specified, clock must be too
+                           (fn [{:keys [retention-ms clock]}]
+                             (or (and retention-ms clock)
+                                 (not retention-ms)))))
 
 (defprotocol IKTable
   (ktable-wait-for-catchup
@@ -1899,13 +2168,14 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
     :keys [ktable-id
-           caught-up-once?]
+           caught-up-once?
+           retention-ms
+           clock]
     :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
                                 "-"
                                 (UUID/randomUUID))
-
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
         _ (csp/go (csp/<! caught-up-ch)
@@ -1930,20 +2200,28 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                                                 caught-up-ch)]))
 
         ktable-state (atom {})
+        merge-updates-opts (cond-> {}
+                             retention-ms (assoc :retention-ms retention-ms))
         consumer-client (reify
                           IConsumerClient
                           (consume-messages
                               [_ msgs]
                             (when (seq msgs)
                               (swap! ktable-state
-                                     #(merge-updates-with-ktable % msgs)))))
+                                     #(merge-updates-with-ktable % msgs merge-updates-opts)))))
+
+        retention-ms-seek-back-strategy (when retention-ms
+                                          (let [seek-to-timestamp (t/- (-time/get-current-time clock)
+                                                                       (t/duration retention-ms))]
+                                            (SeekToTimestampOffset seek-to-timestamp)))
 
         cfg (-> cfg
                 (update-in [:strategies] concat (remove nil?
                                                         [(OffsetReset "earliest")
                                                          (ConsumerGroup consumer-group-id)
                                                          (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
-                                                         caught-up-notifications-strategy]))
+                                                         caught-up-notifications-strategy
+                                                         retention-ms-seek-back-strategy]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]

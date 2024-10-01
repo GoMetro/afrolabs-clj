@@ -1,11 +1,15 @@
 (ns afrolabs.config
-  (:require [aero.core :as aero]
-            [clojure.java.io :as io]
-            [clojure.string :as str]
-            [integrant.core :as ig]
-            [taoensso.timbre :as log]
-            [clojure.data.csv :as csv]
-            [clojure.edn :as edn]))
+  (:require
+   [aero.core :as aero]
+   [clojure.data.csv :as csv]
+   [clojure.edn :as edn]
+   [clojure.data.json :as json]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [integrant.core :as ig]
+   [org.httpkit.client :as http]
+   [taoensso.timbre :as log]
+   ))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -100,6 +104,20 @@
 (defmethod aero/reader 'ip-hostname
   [_ _ _value]
   (.getHostName (java.net.InetAddress/getLocalHost)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Queries the EC2 instance metadata. This has a fixed IP-based URL. Returns \"not-ec2-instance\" if this call does not work.
+(def instance-id-values
+  (delay
+    (let [{:keys [status error body]}
+          @(http/get "http://169.254.169.254/latest/dynamic/instance-identity/document")]
+      (if (or error (not= 200 status))
+        nil
+        (json/read-str body)))))
+
+(defmethod aero/reader 'ec2/instance-identity-data
+  [_ _ value] (get @instance-id-values value))
 
 ;; #?(:clj (Long/parseLong (str value)))
 ;; #?(:cljs (js/parseInt (str value)))

@@ -12,8 +12,9 @@
 
 (s/def :topic-forwarder-cfg/msg-filter fn?)
 (s/def :topic-forwarder-cfg/msg-transform fn?)
-(s/def :topic-forwarder-cfg/topics (s/or :string-col     ::-kafka/topics
-                                         :topic-provider ::-kafka/topic-name-provider))
+(s/def :topic-forwarder-cfg/topics (s/or :string-col         ::-kafka/topics
+                                         :topic-provider     ::-kafka/topic-name-provider
+                                         :topic-provider-col (s/coll-of ::-kafka/topic-name-provider)))
 
 (s/def :topic-forwarder-cfg/src (s/and ::topic-forwarder-cluster-cfg
                                        (s/keys :req-un [:topic-forwarder-cfg/topics]
@@ -102,9 +103,11 @@
     :as                          config}]
   (assoc-in config [:src-cluster-cfg :topics]
             (case option-kw
-              :string-col     [:strategy/SubscribeWithTopicsCollection topics]
-              :topic-provider [:strategy/SubscribeWithTopicNameProvider
-                               :topic-name-providers [topics]])))
+              :string-col         [:strategy/SubscribeWithTopicsCollection topics]
+              :topic-provider     [:strategy/SubscribeWithTopicNameProvider
+                                   :topic-name-providers [topics]]
+              :topic-provider-col [:strategy/SubscribeWithTopicNameProvider
+                                   :topic-name-providers topics])))
 
 (defn create-system-config
   [& cfg]
