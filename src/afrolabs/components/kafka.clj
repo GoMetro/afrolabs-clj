@@ -393,6 +393,32 @@
       (pre-process-messages [_ msgs]
         (map #(update % :value value-fn') msgs)))))
 
+;; We have this "wrapper" for a producer because the strategy system
+;; attempts to call -comp/halt on any strategies. If this is called on
+;; the producer itself, it is closed/halted BEFORE it has finished producing
+;; records that are in flight. By wrapping it like this, we are shielding it
+;; from that -comp/halt call, and instead integrant will call halt on the producer
+;; at the right time, depending on the dependency chain.
+(defstrategy ProduceConsumerResultsWithProducer
+  [producer]
+  (when-not (s/valid? ::kafka-producer producer)
+    (throw (ex-info "`ProduceConsumerResultsWithProducer` requires a producer component."
+                    {:producer-value producer})))
+  (reify
+    IConsumedResultsHandler
+    (handle-consumption-results [_ msgs]
+      (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
+        (when (= ::s/invalid xs)
+          ;; horrible place to throw, but this is the best we've got.
+          (throw (ex-info "The producer can only handle the result of consume-messages, if the value is either a single message to be produced, or a collection of messages to be produced."
+                          {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
+                           ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
+        (let [[xs-type _] xs]
+          (produce! producer
+                    (condp = xs-type
+                      :single [msgs]
+                      :more   msgs)))))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- get-allowed-config-keys
@@ -1200,6 +1226,8 @@
       (handle-consumption-results
           [this msgs]
 
+        (log/warn "Using a producer component's `IConsumedResultsHandler` implementation is now considered harmful.")
+
         (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
           (when (= ::s/invalid xs)
             ;; horrible place to throw, but this is the best we've got.
@@ -1645,8 +1673,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::topics (s/coll-of (s/and string?
-                                  #(pos-int? (count %)))))
+(s/def ::topic (s/and string?
+                      (comp pos-int? count)))
+(s/def ::topics (s/coll-of ::topic))
 (s/def ::list-of-topics-cfg (s/keys :req-un [::topics]))
 
 (-comp/defcomponent {::-comp/config-spec ::list-of-topics-cfg
