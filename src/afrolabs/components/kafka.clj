@@ -1278,10 +1278,14 @@
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
+
+(-prom/register-metric (prom/summary ::consumer-lag:measure-cost
+                                     {:description "Measurement of how many milliseconds it takes to measure the consumer lag and report it."
+                                      :labels [:consumer-group-id]}))
 ;; part of commented-out code below.
 ;; This technique of determining lag on the consumer is not smart.
 ;; It should probably be a strategy.
-#_(-prom/register-metric (prom/gauge ::consumer-partition-lag
+(-prom/register-metric (prom/gauge ::consumer-partition-lag
                                    {:description "The lag in offsets per consumer-group-id and partition."
                                     :labels [:consumer-group-id
                                              :topic
@@ -1360,24 +1364,24 @@
                                                                    :timestamp (t/instant (.timestamp r))}
                                                                 (seq hdrs) (assoc :headers hdrs)))))
                                                      (.poll consumer ^long poll-timeout))
-                    ;;;;;;;;;;;;;;;;;;;;;;
-                    ;; This code naively tries to determine consumer lag.
-                    ;; The problem is dealing with the timeouts in an intelligent way and complicated by the additional
-                    ;; processing time added to every .poll loop.
-                    ;; This should also probably be a strategy and not applied to every consumer.
-                    ;;;;;;;;;;;;;;;;;;;;;
-                    ;; end-offsets (consumer-end-offsets consumer)
-                    ;; current-offsets (consumer-current-offsets consumer)
-                    ;; _ (doseq [{:keys [topic partition offset]} current-offsets
-                    ;;           :let [end-offset (:offset
-                    ;;                             (first
-                    ;;                              (filter #(and (= (:partition %) partition)
-                    ;;                                            (= (:topic %) topic))
-                    ;;                                      end-offsets)))]]
-                    ;;     (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
-                    ;;                                                  :topic             topic
-                    ;;                                                  :partition         partition})
-                    ;;               (- end-offset offset)))
+
+                    ;; request the consumer lag on this consumer's topic-partition assignment
+                    ;; and record it as a guage, per topic and per partition
+                    ;; ALSO - measure how long it takes to make this measurement
+                    _ (let [start-millis (System/currentTimeMillis)]
+                        (doseq [^TopicPartition assignment (.assignment consumer)
+                                :let [assignment-lag (.currentLag consumer assignment)]
+                                :when (not (.isEmpty assignment-lag))]
+                          (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
+                                                                       :topic             (.topic assignment)
+                                                                       :partition         (.partition assignment)})
+                                    (.getAsLong assignment-lag)))
+                        (let [end-millis (System/currentTimeMillis)
+                              duration (t/duration (- end-millis start-millis))]
+                          ;; (log/debug (str "Measuring consumer lag and setting gauge took " duration))
+                          (prom/observe (get-summary-consumer-lag:measure-cost {:consumer-group-id consumer-group-id})
+                                        (- end-millis start-millis))))
+
 
                     _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
                     ;; register prometheus metrics for msgs consumed per topic
