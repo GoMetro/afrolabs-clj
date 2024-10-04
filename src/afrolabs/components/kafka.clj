@@ -2125,7 +2125,7 @@
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
 Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
   (ktable-wait-until-fully-current
-    [_this timeout-period timeout-value]
+    [_this timeout-duration timeout-value]
     "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result."))
 
 (s/def ::ktable #(satisfies? IKTable %))
