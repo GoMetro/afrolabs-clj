@@ -146,7 +146,8 @@
                                          :strategies       (map second dest-strategies)}
                 ::-kafka/kafka-consumer {:bootstrap-server src-bootstrap-server
                                          :strategies       (let [r (concat (map second src-strategies)
-                                                                           [(ig/ref ::-kafka/kafka-producer)
+                                                                           [[:strategy/ProduceConsumerResultsWithProducer
+                                                                             (ig/ref ::-kafka/kafka-producer)]
                                                                             src-topics-strategy ;; unify-src-topics makes a strategy for use here
                                                                             ])]
                                                              r)
