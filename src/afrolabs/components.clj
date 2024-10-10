@@ -19,6 +19,7 @@
      ))
 
 (defmacro defcomponent
+  "Defines a new component."
   [{::keys [config-spec ig-kw]}
    body-destruct
    & body]

@@ -45,7 +45,9 @@
   - You may optionally set `collect-messages?` to false, in which case no records will be returned. This is useful
     in streaming mode.
   - You may specify `stream-ch`, which will accept a collection of kafka messages. This is useful in conjunction with
-    setting `collect-messages?` to `false`. NOTE: `stream-ch` will be closed when consumption is done.
+    setting `collect-messages?` to `false`.
+    NOTE: `stream-ch` will be closed when consumption is done.
+    NOTE: The client-side may close `stream-ch`, at which point the consumer will stop.
 
   - use :extra-strategies is useful for specifying deserialization settings, seeking to offsets &c.
 
@@ -101,7 +103,8 @@
 
               ;; is streaming defined? if so, send it on
               (when stream-ch
-                (csp/>!! stream-ch msgs))
+                (when-not (csp/>!! stream-ch msgs)
+                  (deliver loaded-enough-msgs true)))
 
               ;; do we have enough yet? is anything ever enough?
               (when (and (not= nr-msgs :all)

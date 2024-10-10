@@ -393,6 +393,32 @@
       (pre-process-messages [_ msgs]
         (map #(update % :value value-fn') msgs)))))
 
+;; We have this "wrapper" for a producer because the strategy system
+;; attempts to call -comp/halt on any strategies. If this is called on
+;; the producer itself, it is closed/halted BEFORE it has finished producing
+;; records that are in flight. By wrapping it like this, we are shielding it
+;; from that -comp/halt call, and instead integrant will call halt on the producer
+;; at the right time, depending on the dependency chain.
+(defstrategy ProduceConsumerResultsWithProducer
+  [producer]
+  (when-not (s/valid? ::kafka-producer producer)
+    (throw (ex-info "`ProduceConsumerResultsWithProducer` requires a producer component."
+                    {:producer-value producer})))
+  (reify
+    IConsumedResultsHandler
+    (handle-consumption-results [_ msgs]
+      (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
+        (when (= ::s/invalid xs)
+          ;; horrible place to throw, but this is the best we've got.
+          (throw (ex-info "The producer can only handle the result of consume-messages, if the value is either a single message to be produced, or a collection of messages to be produced."
+                          {::explain-str (s/explain-str ::producer-consumption-results-xs-spec msgs)
+                           ::explain-data (s/explain-data ::producer-consumption-results-xs-spec msgs)})))
+        (let [[xs-type _] xs]
+          (produce! producer
+                    (condp = xs-type
+                      :single [msgs]
+                      :more   msgs)))))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- get-allowed-config-keys
@@ -1200,6 +1226,8 @@
       (handle-consumption-results
           [this msgs]
 
+        (log/warn "Using a producer component's `IConsumedResultsHandler` implementation is now considered harmful.")
+
         (let [xs (s/conform ::producer-consumption-results-xs-spec msgs)]
           (when (= ::s/invalid xs)
             ;; horrible place to throw, but this is the best we've got.
@@ -1250,10 +1278,14 @@
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
+
+(-prom/register-metric (prom/summary ::consumer-lag:measure-cost
+                                     {:description "Measurement of how many milliseconds it takes to measure the consumer lag and report it."
+                                      :labels [:consumer-group-id]}))
 ;; part of commented-out code below.
 ;; This technique of determining lag on the consumer is not smart.
 ;; It should probably be a strategy.
-#_(-prom/register-metric (prom/gauge ::consumer-partition-lag
+(-prom/register-metric (prom/gauge ::consumer-partition-lag
                                    {:description "The lag in offsets per consumer-group-id and partition."
                                     :labels [:consumer-group-id
                                              :topic
@@ -1332,24 +1364,24 @@
                                                                    :timestamp (t/instant (.timestamp r))}
                                                                 (seq hdrs) (assoc :headers hdrs)))))
                                                      (.poll consumer ^long poll-timeout))
-                    ;;;;;;;;;;;;;;;;;;;;;;
-                    ;; This code naively tries to determine consumer lag.
-                    ;; The problem is dealing with the timeouts in an intelligent way and complicated by the additional
-                    ;; processing time added to every .poll loop.
-                    ;; This should also probably be a strategy and not applied to every consumer.
-                    ;;;;;;;;;;;;;;;;;;;;;
-                    ;; end-offsets (consumer-end-offsets consumer)
-                    ;; current-offsets (consumer-current-offsets consumer)
-                    ;; _ (doseq [{:keys [topic partition offset]} current-offsets
-                    ;;           :let [end-offset (:offset
-                    ;;                             (first
-                    ;;                              (filter #(and (= (:partition %) partition)
-                    ;;                                            (= (:topic %) topic))
-                    ;;                                      end-offsets)))]]
-                    ;;     (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
-                    ;;                                                  :topic             topic
-                    ;;                                                  :partition         partition})
-                    ;;               (- end-offset offset)))
+
+                    ;; request the consumer lag on this consumer's topic-partition assignment
+                    ;; and record it as a guage, per topic and per partition
+                    ;; ALSO - measure how long it takes to make this measurement
+                    _ (let [start-millis (System/currentTimeMillis)]
+                        (doseq [^TopicPartition assignment (.assignment consumer)
+                                :let [assignment-lag (.currentLag consumer assignment)]
+                                :when (not (.isEmpty assignment-lag))]
+                          (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
+                                                                       :topic             (.topic assignment)
+                                                                       :partition         (.partition assignment)})
+                                    (.getAsLong assignment-lag)))
+                        (let [end-millis (System/currentTimeMillis)
+                              duration (t/duration (- end-millis start-millis))]
+                          ;; (log/debug (str "Measuring consumer lag and setting gauge took " duration))
+                          (prom/observe (get-summary-consumer-lag:measure-cost {:consumer-group-id consumer-group-id})
+                                        (- end-millis start-millis))))
+
 
                     _ (prom/inc (get-counter-consumer-poll {:consumer-group-id consumer-group-id}))
                     ;; register prometheus metrics for msgs consumed per topic
@@ -1645,8 +1677,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::topics (s/coll-of (s/and string?
-                                  #(pos-int? (count %)))))
+(s/def ::topic (s/and string?
+                      (comp pos-int? count)))
+(s/def ::topics (s/coll-of ::topic))
 (s/def ::list-of-topics-cfg (s/keys :req-un [::topics]))
 
 (-comp/defcomponent {::-comp/config-spec ::list-of-topics-cfg
@@ -2096,7 +2129,7 @@
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
 Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
   (ktable-wait-until-fully-current
-    [_this timeout-period timeout-value]
+    [_this timeout-duration timeout-value]
     "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result."))
 
 (s/def ::ktable #(satisfies? IKTable %))
