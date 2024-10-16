@@ -287,6 +287,7 @@
                 (recur)))
             (catch Throwable t
               (log/fatal t "Uncaught exception on the delete-thread for sqs consumer. Stopping...")
+              (-health/indicate-unhealthy! service-health-trip-switch ::sqs-consumer)
               (reset! must-run false)
               (csp/close! delete-ch)))
           (log/trace "Done with sqs consumer-main loop's message-delete-thread."))]

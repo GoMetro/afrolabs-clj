@@ -100,8 +100,9 @@
           (and anomaly?#
                (not throttled?#))
           (do
-            (log/warnf "There was a problem ('%s') but it's not something we can retry."
-                        anomaly?#)
+            (log/with-context+ {:raw-result result#}
+              (log/warnf "There was a problem ('%s') but it's not something we can retry."
+                         anomaly?#))
             result#)
 
           (and throttled?#
