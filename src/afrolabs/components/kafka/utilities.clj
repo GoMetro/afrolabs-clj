@@ -133,7 +133,6 @@
                                                (k/OffsetReset offset-reset)
                                                (k/CaughtUpNotifications caught-up-ch)])
                                         extra-strategies)]
-          (log/debug (with-out-str (clojure.pprint/pprint strategies-result)))
           {::k/kafka-consumer
            {:bootstrap-server           bootstrap-server
             :consumer/client            consumer-client
