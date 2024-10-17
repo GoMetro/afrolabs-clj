@@ -230,7 +230,8 @@
 (s/def ::QueueUrl (s/and string?
                          #(pos-int? (count %))))
 (s/def ::queue-provider #(satisfies? ISqsQueueProvider %))
-(s/def ::wait-time-seconds int?)
+(s/def ::wait-time-seconds pos-int?)
+(s/def ::visibility-timeout pos-int?)
 (s/def ::max-nr-of-messages (s/and pos-int?
                                    #(> 11 %)))
 (s/def ::AttributeNames (s/coll-of (s/and string?
@@ -240,6 +241,7 @@
                                                   ::-health/service-health-trip-switch]
                                          :opt-un [::wait-time-seconds
                                                   ::max-nr-of-messages
+                                                  ::visibility-timeout
                                                   ::queue-provider
                                                   ::QueueUrl
                                                   ::AttributeNames])
@@ -260,6 +262,7 @@
            queue-provider
            wait-time-seconds
            max-nr-of-messages
+           visibility-timeout
            service-health-trip-switch
            AttributeNames]
     :or   {wait-time-seconds  5 ;; 5 seconds is not really that long. could easily be 30 seconds and would save on compute resources
@@ -298,9 +301,10 @@
                (aws/invoke @sqs-client'
                            {:op         :ReceiveMessage
                             :request    (cond-> {:QueueUrl            QueueUrl
-                                              :WaitTimeSeconds     wait-time-seconds
-                                              :MaxNumberOfMessages max-nr-of-messages}
-                                          AttributeNames (assoc :AttributeNames AttributeNames))
+                                                 :WaitTimeSeconds     wait-time-seconds
+                                                 :MaxNumberOfMessages max-nr-of-messages}
+                                          AttributeNames (assoc :AttributeNames AttributeNames)
+                                          visibility-timeout (assoc :VisibilityTimeout visibility-timeout))
                             :retriable? sqs-retriable}))]
 
 
