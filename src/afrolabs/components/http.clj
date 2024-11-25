@@ -34,7 +34,8 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::health-component #(satisfies? -health/IServiceHealthTripSwitch %))
+(s/def ::health-component #(satisfies? -health/IServiceHealthTripSwitch %)
+  )
 ;; non-priveleged port number
 (s/def ::port (s/and pos-int?
                      #(> % 1024)
@@ -42,9 +43,14 @@
 (s/def ::ip valid-ip4?)
 
 (defprotocol IHttpRequestHandler
+  :extend-via-metadata true
   "Allows components to provide ring-like HTTP handler to an HTTP component."
   (handle-http-request [_ req] "httpkit-compatible http handler."))
-(s/def ::http-request-handler #(satisfies? IHttpRequestHandler %))
+
+(s/def ::http-request-handler
+  (s/or :protocol #(satisfies? IHttpRequestHandler %)
+        :meta-data #(meta %)))
+
 (s/def ::worker-thread-name-prefix (s/and string?
                                           #(pos-int? (count %))))
 (s/def ::middleware-providers (s/coll-of #(satisfies? IRingMiddlewareProvider %)))

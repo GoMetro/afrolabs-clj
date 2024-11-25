@@ -3,6 +3,7 @@
             [clojure.spec.alpha :as s]))
 
 (defprotocol IHaltable
+  :extend-via-metadata true
   (halt [_] "Performs any state cleanup associated with a component."))
 
 (defmacro -write-integrant-multis
