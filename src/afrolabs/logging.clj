@@ -76,3 +76,10 @@
 
   )
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn setup-simple-cli-logging!
+  "Sets up logging with the context-aware println logger."
+  []
+  (timbre/merge-config! {:appenders
+                         {:println (context-println-appender :colorized-output? true)}}))
