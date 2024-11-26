@@ -63,6 +63,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defprotocol ITopicNameProvider
+  :extend-via-metadata true
   "A protocol for providing topic names. Could be used for subscribing to topics or for asserting them."
   (get-topic-names [_] "Returns a seq of names for kafka topics."))
 
