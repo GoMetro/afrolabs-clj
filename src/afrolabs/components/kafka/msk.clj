@@ -1,12 +1,17 @@
 (ns afrolabs.components.kafka.msk
   (:require
-   [afrolabs.components.kafka :as -kafka]))
+   [afrolabs.components.kafka :as -kafka]
+   [taoensso.timbre :as log]))
 
 
 (-kafka/defstrategy AwsMsk
   ;; "Sets the required and recommended config to connect to a kafka cluster in confluent cloud.
   ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
   [& {:aws.msk/keys [username password]}]
+
+  (log/info (str "Connection to kafka configured with AwsMsk strategy..."
+                 (when-not (and username password)
+                   " (don't have username & password.)")))
 
   (letfn [(merge-common
             [cfg]
@@ -54,6 +59,8 @@
 (-kafka/defstrategy AwsMskIam
   ;; "Sets the config to connect to a kafka cluster hosted in AWS MSK, using IAM authn/authz.
   [& {:as _cfg}]
+
+  (log/info "Connection to kafka configured with AwsMskIam strategy...")
 
   (letfn [(merge-common
             [cfg]
