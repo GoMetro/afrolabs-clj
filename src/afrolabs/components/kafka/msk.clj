@@ -4,7 +4,7 @@
    [taoensso.timbre :as log]))
 
 
-(-kafka/defstrategy AwsMsk
+(-kafka/defstrategy AwsMskScram
   ;; "Sets the required and recommended config to connect to a kafka cluster in confluent cloud.
   ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
   [& {:aws.msk/keys [username password]}]
