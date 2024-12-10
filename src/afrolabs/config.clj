@@ -140,7 +140,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defmethod aero/reader 'config/pick
+(defmethod aero/reader 'config/case
   [_opts _ value]
   (when-not (odd? (count value))
     (throw (ex-info "Provide the case value and the cases as pairs." {})))
