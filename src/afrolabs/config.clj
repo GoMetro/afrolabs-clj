@@ -146,11 +146,8 @@
     (throw (ex-info "Provide the case value and the cases as pairs." {})))
   (let [[the-case & cases] value
         all-cases (into {} (map vec (partition 2 cases)))]
-    (or (get all-cases the-case)
-        (throw (ex-info "No case found"
-                        {:the-case  the-case
-                         :cases     cases
-                         :all-cases all-cases})))))
+    (get all-cases the-case) ;; might return nil...
+    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
