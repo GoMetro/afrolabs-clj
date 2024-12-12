@@ -9,7 +9,7 @@
   ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
   [& {:aws.msk/keys [username password]}]
 
-  (log/info (str "Connection to kafka configured with AwsMsk strategy..."
+  (log/info (str "Connection to kafka configured with AwsMskScram strategy..."
                  (when-not (and username password)
                    " (don't have username & password.)")))
 
