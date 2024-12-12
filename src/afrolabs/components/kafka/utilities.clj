@@ -26,7 +26,8 @@
            [java.util UUID]
            [afrolabs.components.kafka IPostConsumeHook IConsumerClient]
            [clojure.lang IDeref]
-           [org.apache.kafka.clients.admin ListTopicsOptions]))
+           [org.apache.kafka.clients.admin ListTopicsOptions]
+           ))
 
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the
@@ -459,6 +460,8 @@
            :host      (.host node)}
     (.hasRack node) (assoc :rack (.rack node))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn describe-topics
   [admin-client topics]
   (let [partitions-info (->> (let [topics (-> @admin-client
@@ -661,3 +664,32 @@
       @system-must-stop
       (do-halt)
       @halted?)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn describe-acls
+  [& {:as admin-client-component}]
+
+  (-> @admin-client-component
+      (.describeAcls org.apache.kafka.common.acl.AclBindingFilter/ANY)
+      (.values)
+      (.get)))
+
+;; (defn create-acls!
+;;   "Idempotent because of api."
+;;   [admin-client-component
+;;    acls]
+
+;;   (.createAcls ^org.apache.kafka.clients.admin.Admin @admin-client-component
+;;                [(->> acls
+;;                      (map (fn [acl]
+;;                             (org.apache.kafka.common.acl.AclBinding.
+;;                              (org.apache.kafka.common.resource.ResourcePattern. org.apache.kafka.common.resource.ResourceType/USER
+;;                                                                                 "*"
+;;                                                                                 org.apache.kafka.common.resource.PatternType/)
+;;                              (org.apache.kafka.common.acl.AccessControlEntry. )))))])
+
+
+
+;;   )
