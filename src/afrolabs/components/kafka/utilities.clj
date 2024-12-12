@@ -26,7 +26,8 @@
            [java.util UUID]
            [afrolabs.components.kafka IPostConsumeHook IConsumerClient]
            [clojure.lang IDeref]
-           [org.apache.kafka.clients.admin ListTopicsOptions]))
+           [org.apache.kafka.clients.admin ListTopicsOptions]
+           ))
 
 (defn load-messages-from-confluent-topic
   "Loads a collection of messages from confluent kafka topics. Will stop consuming when the consumer has reached the
@@ -274,7 +275,8 @@
              extra-strategies
              topic-predicate
              preserve-internal-and-confluent-topics
-             dry-run?]
+             dry-run?
+             admin-client]
       :or {extra-strategies                       []
            preserve-internal-and-confluent-topics true
            dry-run?                               false}}]
@@ -288,13 +290,14 @@
                                               [(when (and confluent-api-key confluent-api-secret)
                                                  (-confluent/ConfluentCloud :api-key confluent-api-key :api-secret confluent-api-secret))])
                                         extra-strategies)
-        admin-client (k/make-admin-client {:bootstrap-server bootstrap-server
-                                           :strategies       admin-client-strategies})
+        admin-client' (or admin-client
+                          (k/make-admin-client {:bootstrap-server bootstrap-server
+                                                :strategies       admin-client-strategies}))
         list-topics-options (-> (ListTopicsOptions.)
                                 (.listInternal false))
         topics-to-be-deleted (into #{}
                                    (filter topic-predicate')
-                                   (-> @admin-client
+                                   (-> @admin-client'
                                        (.listTopics list-topics-options)
                                        (.names)
                                        (.get)))]
@@ -303,11 +306,12 @@
       (log/infof "Deleting these topics:\n%s"
                  (str topics-to-be-deleted))
       (when-not dry-run?
-        (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client
+        (.all (.deleteTopics ^org.apache.kafka.clients.admin.AdminClient @admin-client'
                              topics-to-be-deleted))))
 
     ;; to release the resources of the admin-client
-    (-comp/halt admin-client)))
+    (when-not admin-client
+      (-comp/halt admin-client'))))
 
 (defn delete-all-topics-on-cluster!
   "Deletes ALL of the topics on a kafka cluster."
@@ -455,6 +459,8 @@
            :port      (.port node)
            :host      (.host node)}
     (.hasRack node) (assoc :rack (.rack node))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn describe-topics
   [admin-client topics]
@@ -658,3 +664,32 @@
       @system-must-stop
       (do-halt)
       @halted?)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn describe-acls
+  [& {:as admin-client-component}]
+
+  (-> @admin-client-component
+      (.describeAcls org.apache.kafka.common.acl.AclBindingFilter/ANY)
+      (.values)
+      (.get)))
+
+;; (defn create-acls!
+;;   "Idempotent because of api."
+;;   [admin-client-component
+;;    acls]
+
+;;   (.createAcls ^org.apache.kafka.clients.admin.Admin @admin-client-component
+;;                [(->> acls
+;;                      (map (fn [acl]
+;;                             (org.apache.kafka.common.acl.AclBinding.
+;;                              (org.apache.kafka.common.resource.ResourcePattern. org.apache.kafka.common.resource.ResourceType/USER
+;;                                                                                 "*"
+;;                                                                                 org.apache.kafka.common.resource.PatternType/)
+;;                              (org.apache.kafka.common.acl.AccessControlEntry. )))))])
+
+
+
+;;   )

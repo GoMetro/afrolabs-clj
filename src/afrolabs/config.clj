@@ -140,6 +140,17 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defmethod aero/reader 'config/case
+  [_opts _ value]
+  (when-not (odd? (count value))
+    (throw (ex-info "Provide the case value and the cases as pairs." {})))
+  (let [[the-case & cases] value
+        all-cases (into {} (map vec (partition 2 cases)))]
+    (get all-cases the-case) ;; might return nil...
+    ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defonce static-parameter-sources (delay (merge (read-system-env)
                                                 (read-system-props))))
 
