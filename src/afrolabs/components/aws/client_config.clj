@@ -5,6 +5,7 @@
    [clojure.spec.alpha :as s]
    [cognitect.aws.client.api :as aws]
    [cognitect.aws.credentials :as aws-creds]
+   [taoensso.timbre :as log]
    ))
 
 (s/def ::profile string?)
@@ -63,17 +64,17 @@
               secret-access-key))
     (assoc :credentials-provider
            (aws-creds/chain-credentials-provider
-            (remove nil?
-                    [(aws-creds/default-credentials-provider (aws/default-http-client))
-                     ;; this crazy shit provides a work-around because
-                     ;; cognitect's profile credentials provider does not work for sso.
-                     ;; We are adding it at the end of the chain.
-                     (when load-sso?
-                       (-aws-sso-profile-provider/provider (or profile
-                                                               (System/getenv "AWS_PROFILE")
-                                                               (System/getProperty "aws.profile")
-                                                               "default")))])))))
+            (vec (remove nil?
+                         [(aws-creds/default-credentials-provider (aws/default-http-client))
+                          ;; this crazy shit provides a work-around because
+                          ;; cognitect's profile credentials provider does not work for sso.
+                          ;; We are adding it at the end of the chain.
+                          (when load-sso?
+                            (-aws-sso-profile-provider/provider (or profile
+                                                                    (System/getenv "AWS_PROFILE")
+                                                                    (System/getProperty "aws.profile")
+                                                                    "default")))]))))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::aws-client-config
                      ::-comp/config-spec ::aws-client-config-cfg}
-  [cfg] (make-aws-client cfg))
+  [cfg] (#'make-aws-client cfg))

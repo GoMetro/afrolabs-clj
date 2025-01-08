@@ -9,6 +9,7 @@
   :repositories [["confluent" "https://packages.confluent.io/maven/"]]
   :deploy-repositories [["clojars" {:url           "https://clojars.org/repo"
                                     :sign-releases false}]]
+  ;; NOTE: These dependencies MUST be kept up-to-date with `deps.edn`
   :dependencies [[org.clojure/spec.alpha "0.5.238"]
                  [org.clojure/clojure "1.11.3"]
                  [com.google.javascript/closure-compiler-unshaded "v20240317"]
