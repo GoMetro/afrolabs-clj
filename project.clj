@@ -93,8 +93,8 @@
                  [clj-commons/iapetos "0.1.14"]
 
                  ;; cognitect (custodians of clojure) has a very nice data driven API interface to AWS
-                 [com.cognitect.aws/api "0.8.692"]
-                 [com.cognitect.aws/endpoints "1.1.12.718"]
+                 [com.cognitect.aws/api "0.8.723"]
+                 [com.cognitect.aws/endpoints "871.2.29.39"]
                  [com.cognitect.aws/sns "857.2.1574.0"]
                  [com.cognitect.aws/sqs "869.2.1616.0"]
                  [com.cognitect.aws/s3 "868.2.1580.0"]
