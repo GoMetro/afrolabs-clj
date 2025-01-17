@@ -2,3 +2,6 @@ target/
 .nrepl-port
 *~
 /.envrc
+/.clj-kondo/
+/.cpcache/
+/.lsp/
