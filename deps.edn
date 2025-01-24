@@ -79,11 +79,11 @@
   instaparse/instaparse                                  {:mvn/version "1.5.0"},
   com.cognitect/transit-clj                              {:mvn/version "1.0.333"}}
 
- :paths         ["src" "resources"]
+ :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
  :deps/prep-lib {:ensure "target/classes"
                  :alias  :build
-                 :fn     compile}
+                 :fn     compile-aot}
  :aliases       {:build/task ;; will build using `build.clj`
                  {:replace-paths ["."]
                   :replace-deps  {io.github.clojure/tools.build
