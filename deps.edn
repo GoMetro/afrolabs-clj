@@ -82,8 +82,8 @@
  :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
  :deps/prep-lib {:ensure "target/classes"
-                 :alias  :build
-                 :fn     compile-aot}
+                 :alias  :build/task
+                 :fn     build/compile-aot}
  :aliases       {:build/task ;; will build using `build.clj`
                  {:replace-paths ["."]
                   :replace-deps  {io.github.clojure/tools.build
