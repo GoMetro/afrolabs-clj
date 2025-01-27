@@ -27,7 +27,6 @@
 (defn compile-aot
   "Pre-compile namespace that generate .class files."
   [& _]
-  (println "hello world")
   (let [{:keys [project-basis
                 class-directory]} project-config]
     (build-api/compile-clj {:basis      project-basis
