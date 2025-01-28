@@ -1,5 +1,4 @@
-{:paths     ["src" "resources"],
- :deps
+{:deps
  {org.clojure/spec.alpha                                 {:mvn/version "0.5.238"},
   org.clojure/clojure                                    {:mvn/version "1.11.3"},
   ;; com.google.javascript/closure-compiler-unshaded {:mvn/version "v20240317"},
@@ -62,7 +61,8 @@
   ch.qos.reload4j/reload4j                               {:mvn/version "1.2.25"},
   org.javassist/javassist                                {:mvn/version "3.29.0-GA"},
   joda-time/joda-time                                    {:mvn/version "2.12.7"},
-  #_#_io.confluent.ksql/ksqldb-api-client                    {:mvn/version "7.6.0",
+  org.apache.kafka/kafka-clients                         {:mvn/version "3.9.0"}
+  #_#_io.confluent.ksql/ksqldb-api-client                {:mvn/version "7.6.0",
                                                           :exclusions
                                                           [org.slf4j/slf4j-log4j12
                                                            org.bouncycastle/bc-fips
@@ -77,5 +77,18 @@
   lambdaisland/uri                                       {:mvn/version "1.19.155"},
   org.clj-commons/hickory                                {:mvn/version "0.7.4"},
   instaparse/instaparse                                  {:mvn/version "1.5.0"},
-  com.cognitect/transit-clj                              {:mvn/version "1.0.333"}},
- :mvn/repos {"confluent" {:url "https://packages.confluent.io/maven/"}}}
+  com.cognitect/transit-clj                              {:mvn/version "1.0.333"}}
+
+ :paths         ["src" "resources" "target/classes"]
+ :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
+ :deps/prep-lib {:ensure "target/classes"
+                 :alias  :build/task
+                 :fn     build/compile-aot}
+ :aliases       {:build/task ;; will build using `build.clj`
+                 {:replace-paths ["."]
+                  :replace-deps  {io.github.clojure/tools.build
+                                  {:git/tag "v0.9.6" :git/sha "8e78bcc"}}
+                  :ns-default    build}}
+
+
+ }
