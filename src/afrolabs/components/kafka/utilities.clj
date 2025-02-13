@@ -12,7 +12,7 @@
              :refer [log  trace  debug  info  warn  error  fatal  report
                      logf tracef debugf infof warnf errorf fatalf reportf
                      spy get-env]]
-            [java-time :as time]
+            [java-time.api :as time]
             [afrolabs.csp :as -csp]
             [net.cgrand.xforms :as x]
             [clojure.spec.alpha :as s]
@@ -27,6 +27,8 @@
            [afrolabs.components.kafka IPostConsumeHook IConsumerClient]
            [clojure.lang IDeref]
            [org.apache.kafka.clients.admin ListTopicsOptions]
+           [org.apache.kafka.clients.consumer Consumer OffsetAndTimestamp]
+           [org.apache.kafka.common TopicPartition TopicPartitionInfo]
            ))
 
 (defn load-messages-from-confluent-topic
@@ -49,6 +51,10 @@
     setting `collect-messages?` to `false`.
     NOTE: `stream-ch` will be closed when consumption is done.
     NOTE: The client-side may close `stream-ch`, at which point the consumer will stop.
+  - `from-timestamp` & `to-timestamp` will be used to load data from a certain interval of time.
+    `from-timestamp` will be used to seek to the offset before consuming starts.
+    `end-timestamp` will be used to *pause* the consumer on a partition, when messages are encountered beyond that timestamp.
+    If all subscribed partitions have encountered messages beyond the timestamp, the consumer will stop.
 
   - use :extra-strategies is useful for specifying deserialization settings, seeking to offsets &c.
 
@@ -73,7 +79,9 @@
              consumer-group-id
              offset-reset
              collect-messages?
-             stream-ch]
+             stream-ch
+             from-timestamp
+             to-timestamp]
       :or {nr-msgs           :all
            msg-filter        identity
            extra-strategies  []
@@ -97,7 +105,27 @@
           k/IConsumerClient
           (consume-messages
               [_ msgs]
-            (let [msgs (filter msg-filter msgs)
+            (let [from-to-timestamp-filter (if-not (and from-timestamp
+                                                        to-timestamp)
+                                             identity
+                                             (fn [{:keys [timestamp]}]
+                                               (cond
+                                                 (and from-timestamp to-timestamp)
+                                                 (time/after? to-timestamp timestamp from-timestamp)
+
+                                                 from-timestamp
+                                                 (time/after? timestamp from-timestamp)
+
+                                                 to-timestamp
+                                                 (time/after? to-timestamp timestamp)
+
+                                                 ;; we want to throw if no clause matches
+                                                 )))
+                  msgs (filter (fn [msg]
+                                 (and (msg-filter msg)
+                                      (from-to-timestamp-filter msg)))
+                               msgs)
+
                   _ (when collect-messages?
                       (swap! loaded-msgs conj! msgs))
                   how-many (swap! running-total + (count msgs))]
@@ -132,7 +160,67 @@
                                                  (k/FreshConsumerGroup)
                                                  (k/ConsumerGroup consumer-group-id))
                                                (k/OffsetReset offset-reset)
-                                               (k/CaughtUpNotifications caught-up-ch)])
+                                               (k/CaughtUpNotifications caught-up-ch)
+                                               (when from-timestamp
+                                                 (k/SeekToTimestampOffset from-timestamp))
+                                               (when to-timestamp
+                                                 (let [to-timestamp-ms (k/->millis-from-epoch to-timestamp)
+                                                       topic-partition-end-offsets (atom nil)
+                                                       remaining-topic-partitions (atom nil)]
+                                                   (reify
+                                                     k/IPostConsumeHook
+                                                     (post-consume-hook [_ consumer consumed-records]
+                                                       ;; we only want to do this once
+                                                       ;; find out which partitions have been assigned to this consumer
+                                                       ;; so we know which partitions to monitor and pause once past the to-timestamp
+                                                       (when-not @topic-partition-end-offsets
+                                                         (let [partition-assignment (.assignment ^Consumer consumer)
+                                                               end-offsets (.offsetsForTimes ^Consumer consumer
+                                                                                             (into {}
+                                                                                                   (map #(vector % to-timestamp-ms))
+                                                                                                   partition-assignment))
+                                                               topic-partitions-without-data (->> end-offsets
+                                                                                                  (keep (fn [[tp otst]]
+                                                                                                          (when-not otst tp)))
+                                                                                                  (set))
+                                                               offsets-with-data (->> end-offsets
+                                                                                      (keep (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
+                                                                                              (when otst
+                                                                                                {(.topic tp) {(.partition tp) (.offset otst)}})))
+                                                                                      (apply merge-with merge))]
+                                                           (reset! remaining-topic-partitions
+                                                                   (set/difference (set partition-assignment)
+                                                                                   topic-partitions-without-data))
+                                                           (reset! topic-partition-end-offsets
+                                                                   offsets-with-data)))
+
+
+                                                       ;; now we inspect the consumed-records and pause partitions
+                                                       ;; where we see offsets higher than what is in topic-partition-end-offsets
+                                                       (let [max-offsets-per-topic-partition (k/msgs->topic-partition-maxoffsets consumed-records)
+                                                             overrun-topic-partitions (->> max-offsets-per-topic-partition
+                                                                                           (mapcat (fn [[topic partition->maxoffsets]]
+                                                                                                     (map #(vector topic (first %) (second %))
+                                                                                                          partition->maxoffsets)))
+                                                                                           (filter (fn [[topic partition max-encountered-offset]]
+                                                                                                     (< (get-in @topic-partition-end-offsets
+                                                                                                                [topic partition])
+                                                                                                        max-encountered-offset)))
+                                                                                           (mapv (fn [[topic partition _]]
+                                                                                                   (TopicPartition. topic partition))))]
+
+                                                         ;; pause the partition that has overrun
+                                                         ;; AND remove it from the list of partitions we are consuming from (assignment)
+                                                         (when (seq overrun-topic-partitions)
+                                                           (.pause ^Consumer consumer overrun-topic-partitions)
+                                                           (swap! remaining-topic-partitions
+                                                                  (fn [remaining]
+                                                                    (set/difference remaining
+                                                                                    (set overrun-topic-partitions)))))
+
+                                                         ;; when we're no longer remaining with any partitions, stop the consumer
+                                                         (when-not (seq @remaining-topic-partitions)
+                                                           (deliver loaded-enough-msgs true)))))))])
                                         extra-strategies)]
           {::k/kafka-consumer
            {:bootstrap-server           bootstrap-server
