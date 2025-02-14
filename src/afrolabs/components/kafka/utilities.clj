@@ -105,8 +105,8 @@
           k/IConsumerClient
           (consume-messages
               [_ msgs]
-            (let [from-to-timestamp-filter (if-not (and from-timestamp
-                                                        to-timestamp)
+            (let [from-to-timestamp-filter (if (and (nil? from-timestamp)
+                                                    (nil? to-timestamp))
                                              identity
                                              (fn [{:keys [timestamp]}]
                                                (cond
@@ -179,18 +179,16 @@
                                                                                              (into {}
                                                                                                    (map #(vector % to-timestamp-ms))
                                                                                                    partition-assignment))
-                                                               topic-partitions-without-data (->> end-offsets
-                                                                                                  (keep (fn [[tp otst]]
-                                                                                                          (when-not otst tp)))
-                                                                                                  (set))
-                                                               offsets-with-data (->> end-offsets
-                                                                                      (keep (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
-                                                                                              (when otst
-                                                                                                {(.topic tp) {(.partition tp) (.offset otst)}})))
+                                                               {partitions-with-data    true
+                                                                partitions-without-data false} (group-by #(boolean (second %))
+                                                                                                         end-offsets)
+                                                               offsets-with-data (->> partitions-with-data
+                                                                                      (map (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
+                                                                                             {(.topic tp) {(.partition tp) (.offset otst)}}))
                                                                                       (apply merge-with merge))]
                                                            (reset! remaining-topic-partitions
                                                                    (set/difference (set partition-assignment)
-                                                                                   topic-partitions-without-data))
+                                                                                   (set partitions-without-data)))
                                                            (reset! topic-partition-end-offsets
                                                                    offsets-with-data)))
 
