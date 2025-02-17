@@ -779,20 +779,31 @@
                    (TopicPartition. topic partition)
                    ^long offset)))))))
 
+(defn ->millis-from-epoch
+  "A utility function that can take something representing an instant
+  and convert it to millis-since-the-epoch.
+
+  Inputs:
+  - integer : returns itself. An integer value is considered to be the right thing already
+  - string : parsed as an instant, and converted to the instant's millis-since-epoch value
+  - java.time.Instant or ZonedDateTime : converted to instant's millis-since-epoch value"
+  [x]
+  (cond
+    (integer? x)
+    x
+
+    (string? x)
+    (-> x
+        (t/instant)
+        (t/to-millis-from-epoch))
+
+    (#{java.time.Instant
+       java.time.ZonedDateTime} (type x))
+    (t/to-millis-from-epoch x)))
+
 (defstrategy SeekToTimestampOffset
   [offset]
-  (let [offset (cond
-                 (integer? offset)
-                 offset
-
-                 (string? offset)
-                 (-> offset
-                     (t/instant)
-                     (t/to-millis-from-epoch))
-
-                 (#{java.time.Instant
-                    java.time.ZonedDateTime} (type offset))
-                 (t/to-millis-from-epoch offset))]
+  (let [offset (->millis-from-epoch offset)]
     (reify
       IConsumerPostInitHook
       (post-init-hook
