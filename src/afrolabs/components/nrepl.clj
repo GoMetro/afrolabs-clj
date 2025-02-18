@@ -11,8 +11,8 @@
 
 (s/def ::enabled? (s/nilable boolean?))
 (s/def ::port (s/nilable pos-int?))
-(s/def ::bind-address (s/and string?
-                             (comp pos? count)))
+(s/def ::bind-address (s/nilable (s/and string?
+                                        (comp pos? count))))
 (s/def ::nrepl-cfg
   (s/keys :req-un []
           :opt-un [::enabled?
@@ -22,25 +22,29 @@
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn make-nrepl-instance
-  [{::keys [enabled?
-            port
-            bind-address]
-    :or    {enabled?     false
-            port         42069
-            bind-address "localhost"}}]
+  [{:as   cfg
+    :keys [enabled?
+           port
+           bind-address]}]
+  (tap> cfg)
 
-  (let [stop-nrepl (csp/chan)
-        halt!      (fn [] (csp/close! stop-nrepl))
-        t          (if-not enabled?
-                     (csp/timeout 10)
-                     (csp/thread (with-open [server (start-server :port port
-                                                                  :bind bind-address)]
-                                   (csp/<!! stop-nrepl)
-                                   (stop-server server)
-                                   (log/debug (format "Done with nrepl thread on %s:%d"
-                                                      bind-address
-                                                      port)))
-                                 nil))]
+  (let [port         (or port 42069)
+        bind-address (or bind-address "localhost")
+        stop-nrepl   (csp/chan)
+        halt!        (fn [] (csp/close! stop-nrepl))
+        t            (if (not enabled?)
+                       (csp/timeout 10)
+                       (csp/thread (do (log/debug (format "Starting nrepl thread on %s:%d"
+                                                          bind-address
+                                                          port))
+                                       (with-open [server (start-server :port port
+                                                                        :bind bind-address)]
+                                         (csp/<!! stop-nrepl)
+                                         (stop-server server)
+                                         (log/debug (format "Done with nrepl thread on %s:%d"
+                                                            bind-address
+                                                            port))))
+                                   nil))]
     (reify
 
       -comp/IHaltable
