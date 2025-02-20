@@ -1070,6 +1070,7 @@
   [& {:keys [consumer-fetch-min-bytes
              consumer-fetch-max-wait-ms
              consumer-max-poll-records
+             consumer-max-poll-interval
 
              producer-batch-size
              producer-linger-ms
@@ -1079,6 +1080,7 @@
       :or   {consumer-fetch-min-bytes   50000   ;; default is 1...
              consumer-fetch-max-wait-ms 1000    ;; default is 500
              consumer-max-poll-records  5000    ;; default is 500
+             consumer-max-poll-interval 300000  ;; default, 5 minutes
 
              producer-batch-size       131072    ;; ¯\_(ツ)_/¯
              producer-linger-ms        100       ;; default 0
@@ -1092,7 +1094,8 @@
       (-> cfg
           (assoc ConsumerConfig/FETCH_MIN_BYTES_CONFIG (int consumer-fetch-min-bytes))
           (assoc ConsumerConfig/FETCH_MAX_WAIT_MS_CONFIG (int consumer-fetch-max-wait-ms))
-          (assoc ConsumerConfig/MAX_POLL_RECORDS_CONFIG (int consumer-max-poll-records))))
+          (assoc ConsumerConfig/MAX_POLL_RECORDS_CONFIG (int consumer-max-poll-records))
+          (assoc ConsumerConfig/MAX_POLL_INTERVAL_MS_CONFIG (int consumer-max-poll-interval))))
 
     IUpdateProducerConfigHook
     (update-producer-cfg-hook
