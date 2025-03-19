@@ -175,17 +175,31 @@
                                                        ;; so we know which partitions to monitor and pause once past the to-timestamp
                                                        (when-not @topic-partition-end-offsets
                                                          (let [partition-assignment (.assignment ^Consumer consumer)
-                                                               end-offsets (.offsetsForTimes ^Consumer consumer
-                                                                                             (into {}
-                                                                                                   (map #(vector % to-timestamp-ms))
-                                                                                                   partition-assignment))
+
+                                                               end-offsets (into {}
+                                                                                 (map (fn [[^TopicPartition tp offset]]
+                                                                                        [tp (OffsetAndTimestamp. offset to-timestamp-ms)]))
+                                                                                 (.endOffsets ^Consumer consumer
+                                                                                              partition-assignment))
+                                                               offsets-for-times (.offsetsForTimes ^Consumer consumer
+                                                                                                   (into {}
+                                                                                                         (map #(vector % to-timestamp-ms))
+                                                                                                         partition-assignment))
+
+                                                               effective-offsets (into {}
+                                                                                       (for [[tp otst] offsets-for-times]
+                                                                                         [tp (or otst
+                                                                                                 (get end-offsets tp))]))
+
                                                                {partitions-with-data    true
-                                                                partitions-without-data false} (group-by #(boolean (second %))
-                                                                                                         end-offsets)
-                                                               offsets-with-data (->> partitions-with-data
-                                                                                      (map (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
-                                                                                             {(.topic tp) {(.partition tp) (.offset otst)}}))
-                                                                                      (apply merge-with merge))]
+                                                                partitions-without-data false} (group-by (fn [[_k v]] (boolean v))
+                                                                                                         effective-offsets)
+                                                               offsets-with-data (or (when (seq partitions-with-data)
+                                                                                       (->> partitions-with-data
+                                                                                            (map (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
+                                                                                                   {(.topic tp) {(.partition tp) (.offset otst)}}))
+                                                                                            (apply merge-with merge)))
+                                                                                     {})]
                                                            (reset! remaining-topic-partitions
                                                                    (set/difference (set partition-assignment)
                                                                                    (set partitions-without-data)))
