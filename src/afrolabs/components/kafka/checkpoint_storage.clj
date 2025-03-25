@@ -16,10 +16,12 @@
   (:require
    [afrolabs.components :as -comp]
    [afrolabs.components.time :as -time]
+   [afrolabs.components.health :as -health]
    [clojure.spec.alpha :as s]
    [clojure.java.io :as io]
    [clojure.core.async :as csp]
    [clojure.edn :as edn]
+   [clojure.string :as str]
    [taoensso.timbre :as log]
    [java-time.api :as t]
    [miner.tagged :as tag]
@@ -42,31 +44,35 @@
 
   Therefore, the implementation of this protocol will silently drop most registered checkpoint values and only keep some.
   "
-  (register-checkpoint-value [_ ktable-id ktable-value] "Stores a ktable value as a checkpoint.")
+  (register-ktable-value [_ ktable-id ktable-value] "Stores a ktable value as a checkpoint.")
   (retrieve-latest-checkpoint [_ ktable-id] "Retrieves the most up-to-date ktable checkpoint value"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn- ensure-storage-path!
-  "Checks that the path exists and is a directory, or creates it, or throws."
-  [storage-path]
-  (let [storage-path-f (File. storage-path)]
-    (try
-      (if (.exists storage-path-f)
-        (when-not (.isDirectory storage-path-f)
-          (throw (ex-info "The storage path for filesystem-checkpoint-storage must point to a directory."
-                          {:path storage-path})))
-        (when-not (.mkdirs storage-path-f)
-          (throw (ex-info "Unable to create the file system ktable storage path."
-                          {:path storage-path}))))
-      (catch Throwable t
-        (let [error-msg "Unable to initialize the filesystem checkpoint storage path."]
-          (log/error t error-msg)
-          (throw (ex-info error-msg
-                          {:path storage-path}
-                          t)))))))
+(def ^{:arglists '([storage-path])
+       :doc      "Checks that the path exists and is a directory, or creates it, or throws. Caches results per storage-path."
+       :private  true}
+  ensure-fs-directory-path!
+  (memoize (fn [storage-path]
+             (let [storage-path-f (File. storage-path)]
+               (try
+                 (if (.exists storage-path-f)
+                   (when-not (.isDirectory storage-path-f)
+                     (throw (ex-info "The storage path for filesystem-checkpoint-storage must point to a directory."
+                                     {:path storage-path})))
+                   (when-not (.mkdirs storage-path-f)
+                     (throw (ex-info "Unable to create the file system ktable storage path."
+                                     {:path storage-path}))))
+                 (catch Throwable t
+                   (let [error-msg "Unable to initialize the filesystem checkpoint storage path."]
+                     (log/error t error-msg)
+                     (throw (ex-info error-msg
+                                     {:path storage-path}
+                                     t)))))
+               storage-path-f))))
 
 (defn normalize-duration
+  "Accepts something that represents or is a duration, and turns it into a duration object."
   [duration-like]
   (cond
     (instance? java.time.Duration duration-like)
@@ -118,7 +124,7 @@
     (.write w "^")
     (print-method (meta this) w)
     (.write w " "))
-  ;; nee do to var-ref `tag/tag-string` because it is private
+  ;; need do to var-ref `tag/tag-string` because it is private
   (.write w ^String (#'tag/tag-string (class this)))
   (.write w " ")
   (print-method (into {} this) w))
@@ -167,27 +173,26 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn- make-register-checkpoint-fn
-  "Accepts a component config and a callback-fn.
+(defn- make-checkpoint-fn
+  "Accepts a component config, a callback-fn (`save-snapshot-callback`)
+  and returns `register-checkpoint-candidate`. 
 
-  The `save-snapshot-callback` callback fn will be invoked regularly, based on incoming new snapshot candidates.
-
-  Returns a `(fn register-checkpoint-candidate [ktable-id checkpoint-value])` fn that
-  accepts new ktable checkpoint candidate ids & values. This fn must be called for every new ktable value.
-
-  Call the `register-checkpoint-candidate` fn with `nil` to shut down the background process.
+  - `save-snapshot-callback` : Accepts ktable-id and ktable-value. Must persist this value in the blob store.
+  - `register-checkpoint-candidate` : (result). Use this function on every new ktable value. Some of the passed values
+    will be passed to `save-snapshot-callback`, based on timing.
+  - Call the `register-checkpoint-candidate` fn with `nil` to shut down the background process.
 
   The purpose of this fn is to ensure that ktable checkpoints are called regularly, but not too often.
-  Some amount of wall clock time calculations are used for this."
+  This is achieved by saving once per time window duration."
   [{:keys [timewindow-duration]}
    save-snapshot-callback
-   & {:keys [debug-context]}]
+   & {:keys [logging-context]}]
 
   (let [new-values-ch       (csp/chan (csp/sliding-buffer 1))
         make-new-timeout    #(csp/timeout (.toMillis ^Duration timewindow-duration))
 
         background-process
-        (csp/thread (log/with-context+ (or debug-context {})
+        (csp/thread (log/with-context+ (or logging-context {})
                       (loop [current-value nil
                              timeout-ch    (make-new-timeout)]
                         (let [[v ch] (csp/alts!! [new-values-ch timeout-ch])
@@ -223,32 +228,80 @@
         (do (csp/close! new-values-ch)
             (csp/<!! background-process))))))
 
-#_(defn fs:store-ktable-checkpoint
-  [{:as cfg :keys [clock storage-path]}
+(defn store-ktable-checkpoint!
+  "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
+  [{:as cfg :keys [clock storage-path service-health-trip-switch]}
    ktable-id
    checkpoint-value]
-  (let [storage-dir (File. storage-path)
-        now-str      ]
-    
-    ))
+  (log/with-context+ {:ktable-id    ktable-id
+                      :storage-path storage-path}
+    (try
+      (let [storage-dir        (ensure-fs-directory-path! storage-path)
+            checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. storage-dir ktable-id)))
+            checkpoint-instant (-time/get-current-time clock)
+            checkpoint-name    (format "%d-%s.edn"
+                                       (t/to-millis-from-epoch (t/instant))
+                                       (t/format :iso-offset-date-time
+                                                 (t/zoned-date-time checkpoint-instant
+                                                                    (t/zone-id "UTC"))))]
+        (spit (File. checkpoint-dir checkpoint-name)
+              (serialize checkpoint-value)))
+      (catch Throwable t
+        (log/error t "Unable to store ktable checkpoints! Tripping health trip switch")
+        (-health/indicate-unhealthy! service-health-trip-switch
+                                     ::filesystem-ktable-checkpoint)))))
 
-(defn make-fs-checkpoint-storage
+(def checkpoint-filename-re #"(\d+)-.*\.edn")
+
+(comment
+
+  (re-matches checkpoint-filename-re
+              "1742903513700-2025-03-25T11:51:53.700182Z.edn")
+
+  )
+
+(defn retrieve-latest-ktable-checkpoint
+  "Lists all checkpoint values in files, scans for a name that is most recent, based on the millis-since-epoch before the first \\-
+  and returns that value."
+  [{:as _cfg :keys [storage-path]}
+   ktable-id]
+  (let [storage-dir        (ensure-fs-directory-path! storage-path)
+        checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
+        ^java.io.FileFilter checkpoint-file-filter (fn [f]
+                                                     (boolean (and (.isFile f)
+                                                                   (re-matches checkpoint-filename-re (.getName f)))))
+        last-checkpoint        (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
+                                    (map (juxt (comp (partial re-matches checkpoint-filename-re)
+                                                     #(.getName ^File %))
+                                               identity))
+                                    (map #(update-in % [0 1] Long/parseLong))
+                                    (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] f]]
+                                              (if (> file-millis current-millis)
+                                                [file-millis f]
+                                                current-pick))
+                                            [0 nil])
+                                    second)]
+    (when last-checkpoint
+      (deserialize (slurp last-checkpoint)))))
+
+(defn make-checkpoint-storage-component
   "Returns an implementation of `IKTableCheckpointStorage` that stores checkpoints on the local file system."
   [{:as   cfg
     :keys [storage-path]}]
 
-  (ensure-storage-path! storage-path)
-
-  (let [store-checkpoint!    (fn [[ktable-id checkpoint-value]])
-        checkpoint (make-register-checkpoint-fn cfg
-                                                store-checkpoint!)]
-
+  ;; TODO: This must move to where file-system logic is kept
+  ;; We are keeping this (somewhere) because we want the potential throw to happen in the thread that creates the component,
+  ;; so it can fail early rather than later in a worker thread.
+  (ensure-fs-directory-path! storage-path)
+  
+  (let [checkpoint (make-checkpoint-fn cfg
+                                       (partial store-ktable-checkpoint! cfg))]
     (reify
       IKTableCheckpointStorage
-      (register-checkpoint-value [_ ktable-id ktable-value]
+      (register-ktable-value [_ ktable-id ktable-value]
         (checkpoint [ktable-id ktable-value]))
       (retrieve-latest-checkpoint [_ ktable-id]
-        )
+        (retrieve-latest-ktable-checkpoint cfg ktable-id))
 
       -comp/IHaltable
       (halt [_] (checkpoint nil)))))
@@ -263,8 +316,9 @@
 (s/def ::filesystem-ktable-checkpoint-cfg
   (s/keys :req-un [::-time/clock
                    ::storage-path
-                   ::timewindow-duration]))
+                   ::timewindow-duration
+                   ::-health/service-health-trip-switch]))
 
 (-comp/defcomponent {::-comp/ig-kw                  ::filesystem-ktable-checkpoint
                      ::-comp/identity-component-cfg ::filesystem-ktable-checkpoint-cfg}
-  [cfg] (make-fs-checkpoint-storage (update cfg :timewindow-duration normalize-duration)))
+  [cfg] (make-checkpoint-storage-component (update cfg :timewindow-duration normalize-duration)))
