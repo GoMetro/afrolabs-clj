@@ -15,16 +15,13 @@
   `pr-tagged-record-on` fn in this ns."
   (:require
    [afrolabs.components :as -comp]
-   [afrolabs.components.time :as -time]
    [afrolabs.components.health :as -health]
-   [clojure.spec.alpha :as s]
-   [clojure.java.io :as io]
+   [afrolabs.components.time :as -time]
    [clojure.core.async :as csp]
-   [clojure.edn :as edn]
-   [clojure.string :as str]
-   [taoensso.timbre :as log]
+   [clojure.spec.alpha :as s]
    [java-time.api :as t]
    [miner.tagged :as tag]
+   [taoensso.timbre :as log]
    )
   (:import
    [java.io File]
@@ -230,7 +227,7 @@
 
 (defn store-ktable-checkpoint!
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
-  [{:as cfg :keys [clock storage-path service-health-trip-switch]}
+  [{:as _cfg :keys [clock storage-path service-health-trip-switch]}
    ktable-id
    checkpoint-value]
   (log/with-context+ {:ktable-id    ktable-id
