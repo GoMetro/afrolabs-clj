@@ -36,7 +36,7 @@
   - Retrieves (the most up-to-date) snapshot
 
   The decision on whether to actually save/store a checkpoint is internal to the implementation of this protocol.
-  The ktable will call `register-checkpoint-value` after every change to the ktable, and saving every new value
+  The ktable will call `register-ktable-value` after every change to the ktable, and saving every new value
   will defeat the purpose of the solution.
 
   Therefore, the implementation of this protocol will silently drop most registered checkpoint values and only keep some.

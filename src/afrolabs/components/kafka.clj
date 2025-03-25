@@ -2278,11 +2278,11 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                 (when (and ktable-checkpoint-storage
                                            (realized? has-caught-up-once))
                                   ;; we only want to consider saving checkpoints after we've caught up fully
-                                  ;; This `register-checkpoint-value` is called after _every_ update to the ktable value.
+                                  ;; This `register-ktable-value` is called after _every_ update to the ktable value.
                                   ;; We are depending on the implementation to store only a subset of registered ktable values.
-                                  (-ktable-checkpoints/register-checkpoint-value ktable-checkpoint-storage
-                                                                                 ktable-id
-                                                                                 latest-ktable-value))))))
+                                  (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
+                                                                             ktable-id
+                                                                             latest-ktable-value))))))
 
         seek-strategy (cond
                         (and ktable-checkpoint-storage
