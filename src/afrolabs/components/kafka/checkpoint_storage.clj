@@ -122,6 +122,7 @@
     (print-method (meta this) w)
     (.write w " "))
   ;; need do to var-ref `tag/tag-string` because it is private
+  (.write w "#")
   (.write w ^String (#'tag/tag-string (class this)))
   (.write w " ")
   (print-method (into {} this) w))
