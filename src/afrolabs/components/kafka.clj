@@ -6,6 +6,7 @@
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
    [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
+   [afrolabs.components.kafka.checkpoint-storage :as -ktable-checkpoints]
    [afrolabs.components.time :as -time]
    [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
@@ -1759,7 +1760,7 @@
     :or   {ktable-compaction-policy        "compact"}}]
 
   (when-not (nil? (:recreate-topics-with-bad-config cfg))
-    (log/info "Ktable asserter option `recreate-topics-with-bad-config` has been deprecated in favour of `update-topics-with-bad-config`."))
+    (log/info "KTable asserter option `recreate-topics-with-bad-config` has been deprecated in favour of `update-topics-with-bad-config`."))
 
   (let [update-topics-with-bad-config (or (when-not (nil? update-topics-with-bad-config)
                                             update-topics-with-bad-config)
@@ -2123,16 +2124,27 @@
 
   )
 
+(defn ktable-checkpoint-seek-strategy
+  "Implements a kafka strategy specifically for seeking to partition-offsets
+  so that the ktable can resume from a checkpoint."
+  [checkpoint-value]
+  (reify
+    IConsumerPostInitHook
+    ;; TODO finish `ktable-checkpoint-seek-strategy`
+    (post-init-hook [_ consumer])))
+
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
 
 (s/def ::caught-up-once? boolean?)
 (s/def ::retention-ms pos-int?)
+(s/def ::ktable-checkpoint-storage #(satisfies? -ktable-checkpoints/IKTableCheckpointStorage %))
 (s/def ::ktable-cfg (s/and ::clientless-consumer
                            (s/keys :req-un [::ktable-id]
                                    :opt-un [::caught-up-once?
                                             ::retention-ms
-                                            ::-time/clock])
+                                            ::-time/clock
+                                            ::ktable-checkpoint-storage])
                            ;; when retention-ms is specified, clock must be too
                            (fn [{:keys [retention-ms clock]}]
                              (or (and retention-ms clock)
@@ -2218,7 +2230,8 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
     :keys [ktable-id
            caught-up-once?
            retention-ms
-           clock]
+           clock
+           ktable-checkpoint-storage]
     :or   {caught-up-once? false}}]
 
   (let [consumer-group-id (str  ktable-id
@@ -2246,8 +2259,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                                 (remove nil? [fully-current-notification-ch
                                                               (when-not caught-up-once?
                                                                 caught-up-ch)]))
+        ktable-initial-value (or (when ktable-checkpoint-storage
+                                   (-ktable-checkpoints/retrieve-latest-checkpoint ktable-id
+                                                                                   ktable-checkpoint-storage))
+                                 {})
+        ktable-state (atom ktable-initial-value)
 
-        ktable-state (atom {})
         merge-updates-opts (cond-> {}
                              retention-ms (assoc :retention-ms retention-ms))
         consumer-client (reify
@@ -2255,13 +2272,29 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                           (consume-messages
                               [_ msgs]
                             (when (seq msgs)
-                              (swap! ktable-state
-                                     #(merge-updates-with-ktable % msgs merge-updates-opts)))))
+                              (let [latest-ktable-value
+                                    (swap! ktable-state
+                                           #(merge-updates-with-ktable % msgs merge-updates-opts))]
+                                (when (and ktable-checkpoint-storage
+                                           (realized? has-caught-up-once))
+                                  ;; we only want to consider saving checkpoints after we've caught up fully
+                                  ;; This `register-checkpoint-value` is called after _every_ update to the ktable value.
+                                  ;; We are depending on the implementation to store only a subset of registered ktable values.
+                                  (-ktable-checkpoints/register-checkpoint-value ktable-checkpoint-storage
+                                                                                 ktable-id
+                                                                                 latest-ktable-value))))))
 
-        retention-ms-seek-back-strategy (when retention-ms
-                                          (let [seek-to-timestamp (t/- (-time/get-current-time clock)
-                                                                       (t/duration retention-ms))]
-                                            (SeekToTimestampOffset seek-to-timestamp)))
+        seek-strategy (cond
+                        (and ktable-checkpoint-storage
+                             (seq ktable-initial-value))
+                        (ktable-checkpoint-seek-strategy ktable-initial-value)
+
+                        retention-ms
+                        (let [seek-to-timestamp (t/- (-time/get-current-time clock)
+                                                     (t/duration retention-ms))]
+                          (SeekToTimestampOffset seek-to-timestamp))
+
+                        :else nil)
 
         cfg (-> cfg
                 (update-in [:strategies] concat (remove nil?
@@ -2269,7 +2302,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                                          (ConsumerGroup consumer-group-id)
                                                          (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
                                                          caught-up-notifications-strategy
-                                                         retention-ms-seek-back-strategy]))
+                                                         seek-strategy]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
