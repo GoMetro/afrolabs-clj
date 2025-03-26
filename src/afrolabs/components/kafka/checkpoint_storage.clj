@@ -102,9 +102,13 @@
     (pr-str x)))
 
 (defn deserialize
-  "Perform edn->value de-serialization on passed values."
-  [x-str]
-  (tag/read-string x-str))
+  "Perform edn->value de-serialization on passed values.
+  2-arity overload accepts `reader-options` as the first argument. This may have the same
+  value as options in `(clojure.edn/read-string opts s)`."
+  ([x-str]
+   (tag/read-string x-str))
+  ([x-str reader-options]
+   (tag/read-string reader-options x-str)))
 
 (defn pr-tagged-record-on
   "Prints the EDN tagged literal representation of the record `this` on the java.io.Writer `w`.
@@ -199,7 +203,8 @@
                               (cond
                                 ;; if we receive nil, the input ch was closed
                                 ;; it should be safer to just silently ignore the last value, due to the previously saved snapshot
-                                (nil? v)
+                                (and (= ch new-values-ch)
+                                     (nil? v))
                                 nil
                                 
                                 ;; we've received a new value, so we want to keep it for when we decide to make a snapshot
@@ -229,8 +234,8 @@
 (defn store-ktable-checkpoint!
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
   [{:as _cfg :keys [clock storage-path service-health-trip-switch]}
-   ktable-id
-   checkpoint-value]
+   [ktable-id
+    checkpoint-value]]
   (log/with-context+ {:ktable-id    ktable-id
                       :storage-path storage-path}
     (try
@@ -261,7 +266,8 @@
 (defn retrieve-latest-ktable-checkpoint
   "Lists all checkpoint values in files, scans for a name that is most recent, based on the millis-since-epoch before the first \\-
   and returns that value."
-  [{:as _cfg :keys [storage-path]}
+  [{:as _cfg :keys [storage-path
+                    parse-inst-as-java-time]}
    ktable-id]
   (let [storage-dir        (ensure-fs-directory-path! storage-path)
         checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
@@ -280,7 +286,9 @@
                                             [0 nil])
                                     second)]
     (when last-checkpoint
-      (deserialize (slurp last-checkpoint)))))
+      (deserialize (slurp last-checkpoint)
+                   (cond-> {}
+                     parse-inst-as-java-time (merge {:readers {'inst t/instant}}))))))
 
 (defn make-checkpoint-storage-component
   "Returns an implementation of `IKTableCheckpointStorage` that stores checkpoints on the local file system."
@@ -311,12 +319,14 @@
 (s/def ::timewindow-duration
   (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
         :duration-instance #(instance? java.time.Duration %)))
+(s/def ::parse-inst-as-java-time (s/nilable boolean))
 (s/def ::filesystem-ktable-checkpoint-cfg
   (s/keys :req-un [::-time/clock
                    ::storage-path
                    ::timewindow-duration
-                   ::-health/service-health-trip-switch]))
+                   ::-health/service-health-trip-switch]
+          :opt-un [::parse-inst-as-java-time]))
 
 (-comp/defcomponent {::-comp/ig-kw                  ::filesystem-ktable-checkpoint
-                     ::-comp/identity-component-cfg ::filesystem-ktable-checkpoint-cfg}
+                     ::-comp/config-spec            ::filesystem-ktable-checkpoint-cfg}
   [cfg] (make-checkpoint-storage-component (update cfg :timewindow-duration normalize-duration)))
