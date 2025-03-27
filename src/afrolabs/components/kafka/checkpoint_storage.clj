@@ -52,7 +52,7 @@
        :private  true}
   ensure-fs-directory-path!
   (memoize (fn [storage-path]
-             (let [storage-path-f (File. storage-path)]
+             (let [storage-path-f (File. ^String storage-path)]
                (try
                  (if (.exists storage-path-f)
                    (when-not (.isDirectory storage-path-f)
@@ -88,29 +88,35 @@
   (normalize-duration [1 :minutes])
   ;; #object[java.time.Duration 0x6d1dd9ac "PT1M"]
 
-
-
   )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 
 (defn serialize
   "Performs ->edn serialization on passed values.
+
   The single-arity accumulates the serialized value in memory and returns the serialized data as a string value.
-  The two-arity returns nil, and writes the serialized data to `out-stream`."
+  The single-arity version is not a serious use of this fn.
+
+  The intended use, the two-arity, returns nil and writes the serialized data to `out-stream`.
+  This fn does NOT close the `out-stream`."
   ([x]
    (let [bytes-stream (java.io.ByteArrayOutputStream.)
          _ (serialize x bytes-stream)]
      (.toString bytes-stream "UTF-8")))
   ([x output-stream]
-   (let [writer (cond
-                  (instance? java.io.OutputStream output-stream)
-                  (io/writer output-stream)
+   (let [[writer must-close?]
+         (cond
+           (instance? java.io.OutputStream output-stream)
+           [(io/writer output-stream) true]
 
-                  (instance? java.io.Writer output-stream)
-                  output-stream
+           (instance? java.io.Writer output-stream)
+           [output-stream nil]
 
-                  :else
-                  (throw (ex-info "Can't serialize to this destination."
-                                  {:output-stream-type (type output-stream)})))]
+           :else
+           (throw (ex-info "Can't serialize to this destination."
+                           {:output-stream-type (type output-stream)})))]
      (binding [*print-meta*     true
                *print-dup*      nil
                *print-length*   nil
@@ -119,6 +125,8 @@
                *out*            writer]
        (pr x)
        (flush)
+       (when must-close?
+         (.close ^java.io.Writer writer))
        nil))))
 
 (defn deserialize
@@ -236,7 +244,7 @@
   "Accepts a component config, a callback-fn (`save-snapshot-callback`)
   and returns `register-checkpoint-candidate`. 
 
-  - `save-snapshot-callback` : Accepts ktable-id and ktable-value. Must persist this value in the blob store.
+  - `save-snapshot-callback` : Accepts ktable-id and ktable-value in a tuple. Must persist this value in the blob store.
   - `register-checkpoint-candidate` : (result). Use this function on every new ktable value. Some of the passed values
     will be passed to `save-snapshot-callback`, based on timing.
   - Call the `register-checkpoint-candidate` fn with `nil` to shut down the background process.
@@ -252,14 +260,14 @@
 
         background-process
         (csp/thread (log/with-context+ (or logging-context {})
-                      (loop [current-value nil
+                      (loop [current-state {}
                              timeout-ch    (make-new-timeout)]
                         (let [[v ch] (csp/alts!! [new-values-ch timeout-ch])
 
                               [new-value new-timeout-ch :as recur-params]
                               (cond
                                 ;; if we receive nil, the input ch was closed
-                                ;; it should be safer to just silently ignore the last value, due to the previously saved snapshot
+                                ;; it should be safer to just silently ignore the last values, due to the previously saved snapshot
                                 (and (= ch new-values-ch)
                                      (nil? v))
                                 nil
@@ -267,17 +275,19 @@
                                 ;; we've received a new value, so we want to keep it for when we decide to make a snapshot
                                 ;; We keep the current `timeout-ch`
                                 (= ch new-values-ch)
-                                [v timeout-ch]
+                                [(assoc current-state (first v) (second v)) timeout-ch]
 
                                 ;; we've timed out, so it's time to actually save the current value (if it is a value)
                                 (= ch timeout-ch)
                                 (let [next-timeout (make-new-timeout)]
-                                  (when current-value
-                                    (log/debug "Saving new snapshot.")
+                                  (when (seq current-state)
+                                    (log/debug "Saving new snapshots...")
                                     ;; we have something to save and it is time to save it
-                                    (save-snapshot-callback current-value))
-                                  ;; since we've saved the last value, our next current value is `nil` again
-                                  [nil next-timeout]))]
+                                    (doseq [item current-state]
+                                      (log/debug (str "Saving snapshot for " (first item)))
+                                      (save-snapshot-callback item)))
+                                  ;; since we've saved the last values, our next current value is `{}` again
+                                  [{} next-timeout]))]
                           (when (seq recur-params)
                             (recur new-value new-timeout-ch)))))
                     (log/info "Finished with checkpoint-keeping background thread."))]
@@ -297,14 +307,14 @@
                       :storage-path storage-path}
     (try
       (let [storage-dir        (ensure-fs-directory-path! storage-path)
-            checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. storage-dir ktable-id)))
+            checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
             checkpoint-instant (-time/get-current-time clock)
             checkpoint-name    (format "%d-%s.edn"
                                        (t/to-millis-from-epoch (t/instant))
                                        (t/format :iso-offset-date-time
                                                  (t/zoned-date-time checkpoint-instant
                                                                     (t/zone-id "UTC"))))]
-        (spit (File. checkpoint-dir checkpoint-name)
+        (spit (File. ^File checkpoint-dir ^String checkpoint-name)
               (serialize checkpoint-value)))
       (catch Throwable t
         (log/error t "Unable to store ktable checkpoints! Tripping health trip switch")
@@ -328,7 +338,7 @@
    ktable-id]
   (let [storage-dir        (ensure-fs-directory-path! storage-path)
         checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
-        ^java.io.FileFilter checkpoint-file-filter (fn [f]
+        ^java.io.FileFilter checkpoint-file-filter (fn [^File f]
                                                      (boolean (and (.isFile f)
                                                                    (re-matches checkpoint-filename-re (.getName f)))))
         last-checkpoint        (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
