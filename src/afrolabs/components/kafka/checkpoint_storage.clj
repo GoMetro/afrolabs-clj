@@ -18,6 +18,7 @@
    [afrolabs.components.health :as -health]
    [afrolabs.components.time :as -time]
    [clojure.core.async :as csp]
+   [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [java-time.api :as t]
    [miner.tagged :as tag]
@@ -92,23 +93,78 @@
   )
 
 (defn serialize
-  "Performs ->edn serialization on passed values."
-  [x]
-  (binding [*print-meta*     true
-            *print-dup*      nil
-            *print-length*   nil
-            *print-level*    nil
-            *print-readably* true]
-    (pr-str x)))
+  "Performs ->edn serialization on passed values.
+  The single-arity accumulates the serialized value in memory and returns the serialized data as a string value.
+  The two-arity returns nil, and writes the serialized data to `out-stream`."
+  ([x]
+   (let [bytes-stream (java.io.ByteArrayOutputStream.)
+         _ (serialize x bytes-stream)]
+     (.toString bytes-stream "UTF-8")))
+  ([x output-stream]
+   (let [writer (cond
+                  (instance? java.io.OutputStream output-stream)
+                  (io/writer output-stream)
+
+                  (instance? java.io.Writer output-stream)
+                  output-stream
+
+                  :else
+                  (throw (ex-info "Can't serialize to this destination."
+                                  {:output-stream-type (type output-stream)})))]
+     (binding [*print-meta*     true
+               *print-dup*      nil
+               *print-length*   nil
+               *print-level*    nil
+               *print-readably* true
+               *out*            writer]
+       (pr x)
+       (flush)
+       nil))))
 
 (defn deserialize
-  "Perform edn->value de-serialization on passed values.
-  2-arity overload accepts `reader-options` as the first argument. This may have the same
+  "Perform edn->value de-serialization returns the hydrated value.
+  `x-str` can be one of the following types:
+  - `string` the literal string value is deserialized (NOT treated like a filename nor URL)
+  - `InputStream` or `java.io.Reader` converted to a PushbackReader and the stream is read as a character stream and deserialized.
+  2-arity overload accepts `reader-options` as the second argument. This may have the same
   value as options in `(clojure.edn/read-string opts s)`."
-  ([x-str]
-   (tag/read-string x-str))
+  ([x-str] (deserialize x-str {}))
   ([x-str reader-options]
-   (tag/read-string reader-options x-str)))
+   (cond
+     (string? x-str)
+     (tag/read-string reader-options x-str)
+
+     (instance? java.io.PushbackReader x-str)
+     (tag/read reader-options x-str)
+
+     (instance? java.io.InputStream x-str)
+     (deserialize (java.io.PushbackReader. (io/reader x-str)))
+
+     (instance? java.io.Reader x-str)
+     (deserialize (java.io.PushbackReader. x-str)
+                  reader-options)
+
+     :else
+     (throw (ex-info "Deserialize don't know what to do with this type."
+                     {:type (type x-str)})))))
+
+(comment
+
+  ;; playing with gzip when serializing and deserializing (roundtripping)
+  (let [x {:a ^:testing [1 2 :three]}]
+    (with-open [bytes-stream (java.io.ByteArrayOutputStream.)
+                gzip-stream  (java.util.zip.GZIPOutputStream. bytes-stream)]
+      (serialize x gzip-stream)
+      (.finish gzip-stream) ;; important part of GZIPOutputStream API
+      (with-open [bytes-input (io/input-stream (.toByteArray bytes-stream))
+                  gzip-input-stream (java.util.zip.GZIPInputStream. bytes-input)]
+        (deserialize gzip-input-stream))))
+  ;; {:a [1 2 :three]}
+
+
+
+
+  )
 
 (defn pr-tagged-record-on
   "Prints the EDN tagged literal representation of the record `this` on the java.io.Writer `w`.
@@ -125,6 +181,7 @@
     (.write w "^")
     (print-method (meta this) w)
     (.write w " "))
+
   ;; need do to var-ref `tag/tag-string` because it is private
   (.write w "#")
   (.write w ^String (#'tag/tag-string (class this)))
