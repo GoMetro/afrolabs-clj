@@ -92,31 +92,30 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(def ^:dynamic *serialize-with-gzip?* true)
 
 (defn serialize
   "Performs ->edn serialization on passed values.
 
   The single-arity accumulates the serialized value in memory and returns the serialized data as a string value.
-  The single-arity version is not a serious use of this fn.
+  The single-arity version does not apply GZip encoding.
 
-  The intended use, the two-arity, returns nil and writes the serialized data to `out-stream`.
-  This fn does NOT close the `out-stream`."
+  The intended use, the two-arity, returns nil and writes the serialized data in gzip encoding to `output-stream`.
+  This fn does NOT close the `output-stream`.
+
+  See `*serialize-with-gzip?*`."
   ([x]
    (let [bytes-stream (java.io.ByteArrayOutputStream.)
          _ (serialize x bytes-stream)]
      (.toString bytes-stream "UTF-8")))
   ([x output-stream]
-   (let [[writer must-close?]
-         (cond
-           (instance? java.io.OutputStream output-stream)
-           [(io/writer output-stream) true]
-
-           (instance? java.io.Writer output-stream)
-           [output-stream nil]
-
-           :else
-           (throw (ex-info "Can't serialize to this destination."
-                           {:output-stream-type (type output-stream)})))]
+   (when-not (instance? java.io.OutputStream output-stream)
+     (throw (ex-info "Can't serialize to this destination; Only supports instances of java.io.OutputStream."
+                     {:output-stream-type (type output-stream)})))
+   (let [output-stream'    (if-not *serialize-with-gzip?*
+                             output-stream
+                             (java.util.zip.GZIPOutputStream. output-stream))
+         writer (io/writer output-stream')]
      (binding [*print-meta*     true
                *print-dup*      nil
                *print-length*   nil
@@ -125,51 +124,60 @@
                *out*            writer]
        (pr x)
        (flush)
-       (when must-close?
-         (.close ^java.io.Writer writer))
+       (when *serialize-with-gzip?*
+         (.finish ^java.util.zip.GZIPOutputStream output-stream'))
        nil))))
 
 (defn deserialize
-  "Perform edn->value de-serialization returns the hydrated value.
+  "Perform edn->value de-serialization and returns the resultant value.
+
   `x-str` can be one of the following types:
-  - `string` the literal string value is deserialized (NOT treated like a filename nor URL)
-  - `InputStream` or `java.io.Reader` converted to a PushbackReader and the stream is read as a character stream and deserialized.
+  - `string` the literal string value is deserialized (NOT treated like a filename nor URL). (No GZip decoding.)
+  - `InputStream` stream is read as a character stream and deserialized. (See `*serialize-with-gzip?*` which affects this)
   2-arity overload accepts `reader-options` as the second argument. This may have the same
-  value as options in `(clojure.edn/read-string opts s)`."
+  value as options in `(clojure.edn/read-string opts s)`.
+
+  Does not close the input stream."
   ([x-str] (deserialize x-str {}))
-  ([x-str reader-options]
+  ([str-or-input-stream reader-options]
    (cond
-     (string? x-str)
-     (tag/read-string reader-options x-str)
+     (string? str-or-input-stream)
+     (tag/read-string reader-options
+                      str-or-input-stream)
 
-     (instance? java.io.PushbackReader x-str)
-     (tag/read reader-options x-str)
-
-     (instance? java.io.InputStream x-str)
-     (deserialize (java.io.PushbackReader. (io/reader x-str)))
-
-     (instance? java.io.Reader x-str)
-     (deserialize (java.io.PushbackReader. x-str)
-                  reader-options)
+     (instance? java.io.InputStream str-or-input-stream)
+     (let [input-stream (if-not *serialize-with-gzip?*
+                           str-or-input-stream
+                           (java.util.zip.GZIPInputStream. str-or-input-stream))]
+       (tag/read reader-options
+                 (java.io.PushbackReader. (io/reader input-stream))))
 
      :else
      (throw (ex-info "Deserialize don't know what to do with this type."
-                     {:type (type x-str)})))))
+                     {:type (type str-or-input-stream)})))))
 
 (comment
 
   ;; playing with gzip when serializing and deserializing (roundtripping)
-  (let [x {:a ^:testing [1 2 :three]}]
-    (with-open [bytes-stream (java.io.ByteArrayOutputStream.)
-                gzip-stream  (java.util.zip.GZIPOutputStream. bytes-stream)]
-      (serialize x gzip-stream)
-      (.finish gzip-stream) ;; important part of GZIPOutputStream API
-      (with-open [bytes-input (io/input-stream (.toByteArray bytes-stream))
-                  gzip-input-stream (java.util.zip.GZIPInputStream. bytes-input)]
-        (deserialize gzip-input-stream))))
+  (binding [*serialize-with-gzip?* false] ;; binding added after gzip implemented as part of serdes
+    (let [x {:a ^:testing [1 2 :three]}]
+      (with-open [bytes-stream (java.io.ByteArrayOutputStream.)
+                  gzip-stream  (java.util.zip.GZIPOutputStream. bytes-stream)]
+        (serialize x gzip-stream)
+        (.finish gzip-stream) ;; important part of GZIPOutputStream API
+        (with-open [bytes-input (io/input-stream (.toByteArray bytes-stream))
+                    gzip-input-stream (java.util.zip.GZIPInputStream. bytes-input)]
+          (deserialize gzip-input-stream)))))
   ;; {:a [1 2 :three]}
 
 
+  ;; previous, but with built-in gzipping
+  (let [x {:a ^:testing [1 2 :three]}]
+    (with-open [bytes-stream (java.io.ByteArrayOutputStream.)]
+      (serialize x bytes-stream)
+      (with-open [bytes-input (io/input-stream (.toByteArray bytes-stream))]
+        (deserialize bytes-input))))
+  ;; {:a [1 2 :three]}
 
 
   )
