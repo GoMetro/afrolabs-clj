@@ -20,6 +20,7 @@
    [clojure.core.async :as csp]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
+   [clojure.string :as str]
    [java-time.api :as t]
    [miner.tagged :as tag]
    [taoensso.timbre :as log]
@@ -92,7 +93,12 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def ^:dynamic *serialize-with-gzip?* true)
+(def ^{:dynamic true
+       :doc     (str "System-level binding for whether checkpoints are serialized into bytestreams with GZip encoding (or not).\n"
+                     "Be careful with this. This binding cannot be changed during the system lifetime. The component for checkpoints\n"
+                     "initializes the worker thread with this binding's value at the time the component is started. To change \n"
+                     "the GZip behaviour, the component/system must be restarted with the new binding value.")}
+  *serialize-with-gzip?* true)
 
 (defn serialize
   "Performs ->edn serialization on passed values.
@@ -133,9 +139,9 @@
 
   `x-str` can be one of the following types:
   - `string` the literal string value is deserialized (NOT treated like a filename nor URL). (No GZip decoding.)
-  - `InputStream` stream is read as a character stream and deserialized. (See `*serialize-with-gzip?*` which affects this)
-  2-arity overload accepts `reader-options` as the second argument. This may have the same
-  value as options in `(clojure.edn/read-string opts s)`.
+  - `InputStream` stream is read as a character stream and deserialized. The binding value of `*serialize-with-gzip?*` affects this fn.
+  2-arity overload accepts `reader-options` as the second argument.
+  This options may have the same value as options in `(clojure.edn/read-string opts s)`.
 
   Does not close the input stream."
   ([x-str] (deserialize x-str {}))
@@ -317,24 +323,29 @@
       (let [storage-dir        (ensure-fs-directory-path! storage-path)
             checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
             checkpoint-instant (-time/get-current-time clock)
-            checkpoint-name    (format "%d-%s.edn"
+            checkpoint-name    (format (if *serialize-with-gzip?*
+                                         "%d-%s.edn.gz"
+                                         "%d-%s.edn")
                                        (t/to-millis-from-epoch (t/instant))
                                        (t/format :iso-offset-date-time
                                                  (t/zoned-date-time checkpoint-instant
                                                                     (t/zone-id "UTC"))))]
-        (spit (File. ^File checkpoint-dir ^String checkpoint-name)
-              (serialize checkpoint-value)))
+        (with-open [file-stream (java.io.FileOutputStream. (File. ^File checkpoint-dir ^String checkpoint-name))]
+          (serialize checkpoint-value
+                     file-stream)))
       (catch Throwable t
         (log/error t "Unable to store ktable checkpoints! Tripping health trip switch")
         (-health/indicate-unhealthy! service-health-trip-switch
                                      ::filesystem-ktable-checkpoint)))))
 
-(def checkpoint-filename-re #"(\d+)-.*\.edn")
+(def checkpoint-filename-re #"(\d+)-.*\.edn(\.gz)?")
 
 (comment
 
   (re-matches checkpoint-filename-re
               "1742903513700-2025-03-25T11:51:53.700182Z.edn")
+  (re-matches checkpoint-filename-re
+              "1742903513700-2025-03-25T11:51:53.700182Z.edn.gz")
 
   )
 
@@ -349,21 +360,25 @@
         ^java.io.FileFilter checkpoint-file-filter (fn [^File f]
                                                      (boolean (and (.isFile f)
                                                                    (re-matches checkpoint-filename-re (.getName f)))))
-        last-checkpoint        (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
-                                    (map (juxt (comp (partial re-matches checkpoint-filename-re)
-                                                     #(.getName ^File %))
-                                               identity))
-                                    (map #(update-in % [0 1] Long/parseLong))
-                                    (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] f]]
-                                              (if (> file-millis current-millis)
-                                                [file-millis f]
-                                                current-pick))
-                                            [0 nil])
-                                    second)]
+        ^File last-checkpoint (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
+                                   (map (juxt (comp (partial re-matches checkpoint-filename-re)
+                                                    #(.getName ^File %))
+                                              identity))
+                                   (map #(update-in % [0 1] Long/parseLong))
+                                   (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] f]]
+                                             (if (> file-millis current-millis)
+                                               [file-millis f]
+                                               current-pick))
+                                           [0 nil])
+                                   second)]
     (when last-checkpoint
-      (deserialize (slurp last-checkpoint)
-                   (cond-> {}
-                     parse-inst-as-java-time (merge {:readers {'inst t/instant}}))))))
+      (with-open [fs (java.io.FileInputStream. last-checkpoint)]
+        (let [gzip? (str/ends-with? (.getName last-checkpoint)
+                                    ".gz")]
+          (binding [*serialize-with-gzip?* gzip?]
+            (deserialize fs
+                         (cond-> {}
+                           parse-inst-as-java-time (merge {:readers {'inst t/instant}})))))))))
 
 (defn make-checkpoint-storage-component
   "Returns an implementation of `IKTableCheckpointStorage` that stores checkpoints on the local file system."
@@ -376,7 +391,7 @@
   (ensure-fs-directory-path! storage-path)
   
   (let [checkpoint (make-checkpoint-fn cfg
-                                       (partial store-ktable-checkpoint! cfg))]
+                                       #(store-ktable-checkpoint! cfg %))]
     (reify
       IKTableCheckpointStorage
       (register-ktable-value [_ ktable-id ktable-value]
