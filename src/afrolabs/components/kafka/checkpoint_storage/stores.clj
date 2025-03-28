@@ -48,6 +48,8 @@ The client is responsible for closing the stream.")
   (delete-checkpoint-id [_ ktable-id checkpoint-id]
     "Instructs the blob-store to delete a specific checkpoint."))
 
+(s/def ::checkpoint-store #(satisfies? ICheckpointStore %))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; file system
 ;; useful for local dev
@@ -218,6 +220,8 @@ The client is responsible for closing the stream.")
   [cfg] (make-filesystem-checkpoint-store cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; TODO: If the number of checkpoint storage providers grow, a better mechanism for extensibility is required
+;; that does not require modification of this component to achieve.
 
 (defmethod ig/init-key ::checkpoint-storage-switcher
   [_ {:as cfg t :type}]

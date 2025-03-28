@@ -295,23 +295,24 @@
 
 (defn store-ktable-checkpoint!
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
-  [{:as _cfg :keys [clock storage-path service-health-trip-switch]}
+  [{:as _cfg :keys [clock
+                    checkpoint-store
+                    service-health-trip-switch]}
    [ktable-id
     checkpoint-value]]
-  (log/with-context+ {:ktable-id    ktable-id
-                      :storage-path storage-path}
+  (log/with-context+ {:ktable-id    ktable-id}
     (try
-      (let [storage-dir        (-cp-stores/ensure-fs-directory-path! storage-path)
-            checkpoint-dir     (-cp-stores/ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
-            checkpoint-instant (-time/get-current-time clock)
+      (let [checkpoint-instant (-time/get-current-time clock)
             checkpoint-name    (format (if *serialize-with-gzip?*
                                          "%d-%s.edn.gz"
                                          "%d-%s.edn")
-                                       (t/to-millis-from-epoch (t/instant))
+                                       (t/to-millis-from-epoch checkpoint-instant)
                                        (t/format :iso-offset-date-time
                                                  (t/zoned-date-time checkpoint-instant
                                                                     (t/zone-id "UTC"))))]
-        (with-open [file-stream (java.io.FileOutputStream. (File. ^File checkpoint-dir ^String checkpoint-name))]
+        (with-open [file-stream (-cp-stores/open-storage-stream checkpoint-store
+                                                                ktable-id
+                                                                checkpoint-name)]
           (serialize checkpoint-value
                      file-stream)))
       (catch Throwable t
@@ -321,29 +322,37 @@
 
 (defn retrieve-latest-ktable-checkpoint
   "Lists all checkpoint values in files, scans for a name that is most recent, based on the millis-since-epoch before the first \\-
-  and returns that value."
-  [{:as _cfg :keys [storage-path
+  and returns that value.
+
+  May return `nil` if no (working) checkpoints could be found or loaded."
+  [{:as _cfg :keys [checkpoint-store
                     parse-inst-as-java-time]}
    ktable-id]
-  (let [storage-dir        (-cp-stores/ensure-fs-directory-path! storage-path)
-        checkpoint-dir     (-cp-stores/ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
-        ^java.io.FileFilter checkpoint-file-filter (fn [^File f]
-                                                     (boolean (and (.isFile f)
-                                                                   (re-matches -cp-stores/checkpoint-id-re (.getName f)))))
-        ^File last-checkpoint (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
-                                   (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re)
-                                                    #(.getName ^File %))
-                                              identity))
-                                   (map #(update-in % [0 1] Long/parseLong))
-                                   (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] f]]
-                                             (if (> file-millis current-millis)
-                                               [file-millis f]
-                                               current-pick))
-                                           [0 nil])
-                                   second)]
-    (when last-checkpoint
-      (with-open [fs (java.io.FileInputStream. last-checkpoint)]
-        (let [gzip? (str/ends-with? (.getName last-checkpoint)
+  (let [last-checkpoint-id (->> (-cp-stores/list-checkpoint-ids checkpoint-store
+                                                                ktable-id)
+                                (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re))
+                                           identity))
+                                ;; [0 1] reaches the first re match group, which is millis-since-epoch
+                                (map #(update-in % [0 1] Long/parseLong))
+                                ;; the reduce is changing the shape of the result
+                                ;; [millis-since-epoch-of-snapshot snapshot-id]
+                                ;; get the chekpoint-id with the max millis-timestamp
+                                (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] cp-id]]
+                                          (if (> file-millis current-millis)
+                                            [file-millis cp-id]
+                                            current-pick))
+                                        [0 nil])
+                                ;; keep the timestamp-id
+                                second)]
+    (when last-checkpoint-id
+      (with-open [fs (-cp-stores/open-retrieval-stream checkpoint-store
+                                                       ktable-id
+                                                       last-checkpoint-id)]
+        ;; tries to accommodate that we may save a snapshot with gzip-or-not
+        ;; and would still want to be able to load it, so we detect it from the checkpoint-id (filename)
+        ;; we do it like this, because deserialize deals with the /stream/ not the name of the checkpoint
+        ;; and has no other context (besides dynamic binding) to know to use gzip or not.
+        (let [gzip? (str/ends-with? last-checkpoint-id
                                     ".gz")]
           (binding [*serialize-with-gzip?* gzip?]
             (deserialize fs
@@ -352,16 +361,8 @@
 
 (defn make-checkpoint-storage-component
   "Returns an implementation of `IKTableCheckpointStorage` that stores checkpoints on the local file system."
-  [{:as   cfg
-    :keys [storage-path]}]
-
-  ;; TODO: This must move to where file-system logic is kept
-  ;; We are keeping this (somewhere) because we want the potential throw to happen in the thread that creates the component,
-  ;; so it can fail early rather than later in a worker thread.
-  (-cp-stores/ensure-fs-directory-path! storage-path)
-  
-  (let [checkpoint (make-checkpoint-fn cfg
-                                       #(store-ktable-checkpoint! cfg %))]
+  [{:as   cfg}]
+  (let [checkpoint (make-checkpoint-fn cfg #(store-ktable-checkpoint! cfg %))]
     (reify
       IKTableCheckpointStorage
       (register-ktable-value [_ ktable-id ktable-value]
@@ -374,17 +375,15 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::storage-path (s/and string?
-                             (comp pos? count)))
 (s/def ::timewindow-duration
   (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
         :duration-instance #(instance? java.time.Duration %)))
 (s/def ::parse-inst-as-java-time (s/nilable boolean))
 (s/def ::filesystem-ktable-checkpoint-cfg
   (s/keys :req-un [::-time/clock
-                   ::storage-path
                    ::timewindow-duration
-                   ::-health/service-health-trip-switch]
+                   ::-health/service-health-trip-switch
+                   ::-cp-stores/checkpoint-store]
           :opt-un [::parse-inst-as-java-time]))
 
 (-comp/defcomponent {::-comp/ig-kw                  ::filesystem-ktable-checkpoint
