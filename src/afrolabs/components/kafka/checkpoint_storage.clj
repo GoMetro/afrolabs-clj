@@ -17,6 +17,7 @@
    [afrolabs.components :as -comp]
    [afrolabs.components.health :as -health]
    [afrolabs.components.time :as -time]
+   [afrolabs.components.kafka.checkpoint-storage.stores :as -cp-stores]
    [clojure.core.async :as csp]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
@@ -47,28 +48,6 @@
   (retrieve-latest-checkpoint [_ ktable-id] "Retrieves the most up-to-date ktable checkpoint value"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(def ^{:arglists '([storage-path])
-       :doc      "Checks that the path exists and is a directory, or creates it, or throws. Caches results per storage-path."
-       :private  true}
-  ensure-fs-directory-path!
-  (memoize (fn [storage-path]
-             (let [storage-path-f (File. ^String storage-path)]
-               (try
-                 (if (.exists storage-path-f)
-                   (when-not (.isDirectory storage-path-f)
-                     (throw (ex-info "The storage path for filesystem-checkpoint-storage must point to a directory."
-                                     {:path storage-path})))
-                   (when-not (.mkdirs storage-path-f)
-                     (throw (ex-info "Unable to create the file system ktable storage path."
-                                     {:path storage-path}))))
-                 (catch Throwable t
-                   (let [error-msg "Unable to initialize the filesystem checkpoint storage path."]
-                     (log/error t error-msg)
-                     (throw (ex-info error-msg
-                                     {:path storage-path}
-                                     t)))))
-               storage-path-f))))
 
 (defn normalize-duration
   "Accepts something that represents or is a duration, and turns it into a duration object."
@@ -320,8 +299,8 @@
   (log/with-context+ {:ktable-id    ktable-id
                       :storage-path storage-path}
     (try
-      (let [storage-dir        (ensure-fs-directory-path! storage-path)
-            checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
+      (let [storage-dir        (-cp-stores/ensure-fs-directory-path! storage-path)
+            checkpoint-dir     (-cp-stores/ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
             checkpoint-instant (-time/get-current-time clock)
             checkpoint-name    (format (if *serialize-with-gzip?*
                                          "%d-%s.edn.gz"
@@ -338,30 +317,19 @@
         (-health/indicate-unhealthy! service-health-trip-switch
                                      ::filesystem-ktable-checkpoint)))))
 
-(def checkpoint-filename-re #"(\d+)-.*\.edn(\.gz)?")
-
-(comment
-
-  (re-matches checkpoint-filename-re
-              "1742903513700-2025-03-25T11:51:53.700182Z.edn")
-  (re-matches checkpoint-filename-re
-              "1742903513700-2025-03-25T11:51:53.700182Z.edn.gz")
-
-  )
-
 (defn retrieve-latest-ktable-checkpoint
   "Lists all checkpoint values in files, scans for a name that is most recent, based on the millis-since-epoch before the first \\-
   and returns that value."
   [{:as _cfg :keys [storage-path
                     parse-inst-as-java-time]}
    ktable-id]
-  (let [storage-dir        (ensure-fs-directory-path! storage-path)
-        checkpoint-dir     (ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
+  (let [storage-dir        (-cp-stores/ensure-fs-directory-path! storage-path)
+        checkpoint-dir     (-cp-stores/ensure-fs-directory-path! (.getAbsolutePath (File. ^File storage-dir ^String ktable-id)))
         ^java.io.FileFilter checkpoint-file-filter (fn [^File f]
                                                      (boolean (and (.isFile f)
-                                                                   (re-matches checkpoint-filename-re (.getName f)))))
+                                                                   (re-matches -cp-stores/checkpoint-id-re (.getName f)))))
         ^File last-checkpoint (->> (.listFiles ^File checkpoint-dir checkpoint-file-filter)
-                                   (map (juxt (comp (partial re-matches checkpoint-filename-re)
+                                   (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re)
                                                     #(.getName ^File %))
                                               identity))
                                    (map #(update-in % [0 1] Long/parseLong))
@@ -388,7 +356,7 @@
   ;; TODO: This must move to where file-system logic is kept
   ;; We are keeping this (somewhere) because we want the potential throw to happen in the thread that creates the component,
   ;; so it can fail early rather than later in a worker thread.
-  (ensure-fs-directory-path! storage-path)
+  (-cp-stores/ensure-fs-directory-path! storage-path)
   
   (let [checkpoint (make-checkpoint-fn cfg
                                        #(store-ktable-checkpoint! cfg %))]
