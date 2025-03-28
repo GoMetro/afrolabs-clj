@@ -167,6 +167,8 @@
 
   )
 
+;; NOTE: This copied from tagged library and modified to add support for meta-data
+;; https://github.com/miner/tagged/pull/4
 (defn pr-tagged-record-on
   "Prints the EDN tagged literal representation of the record `this` on the java.io.Writer `w`.
   Useful for implementing a print-method on a record class.  For example:
