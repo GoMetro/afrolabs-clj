@@ -2128,10 +2128,28 @@
   "Implements a kafka strategy specifically for seeking to partition-offsets
   so that the ktable can resume from a checkpoint."
   [checkpoint-value]
-  (reify
-    IConsumerPostInitHook
-    ;; TODO finish `ktable-checkpoint-seek-strategy`
-    (post-init-hook [_ consumer])))
+  (let [topic-partition-offsets (-> checkpoint-value
+                                    (meta)
+                                    :ktable/topic-partition-offsets)]
+    (reify
+      IConsumerPostInitHook
+      (post-init-hook [_ consumer]
+        ;; poll once, to achieve a topic-partition assignment
+        ;; This _is_ a ktable, so the assumption is that this is for _all_ partitions...
+        (.poll ^Consumer consumer 1000)
+        (doseq [^TopicPartition tp (.assignment ^Consumer consumer)
+                :let [t                     (.topic tp)
+                      p                     (.partition tp)
+                      offset-to-resume-from (get-in topic-partition-offsets [t p])]
+                :when offset-to-resume-from]
+          (log/with-context+ {:topic     t
+                              :partition p
+                              :offset    offset-to-resume-from}
+            (log/info "KTable checkpoint loading is resuming ktable consumption from offset."))
+          (.seek ^Consumer consumer
+                 tp
+                 ;; we seek to at least one higher offset than what we are aware of, so we can start resuming from the new data
+                 (inc offset-to-resume-from)))))))
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))

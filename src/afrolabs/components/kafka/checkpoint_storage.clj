@@ -379,13 +379,13 @@
   (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
         :duration-instance #(instance? java.time.Duration %)))
 (s/def ::parse-inst-as-java-time (s/nilable boolean))
-(s/def ::filesystem-ktable-checkpoint-cfg
+(s/def ::ktable-checkpoint-store-cfg
   (s/keys :req-un [::-time/clock
                    ::timewindow-duration
                    ::-health/service-health-trip-switch
                    ::-cp-stores/checkpoint-store]
           :opt-un [::parse-inst-as-java-time]))
 
-(-comp/defcomponent {::-comp/ig-kw                  ::filesystem-ktable-checkpoint
-                     ::-comp/config-spec            ::filesystem-ktable-checkpoint-cfg}
+(-comp/defcomponent {::-comp/ig-kw                  ::ktable-checkpoint-store
+                     ::-comp/config-spec            ::ktable-checkpoint-store-cfg}
   [cfg] (make-checkpoint-storage-component (update cfg :timewindow-duration normalize-duration)))
