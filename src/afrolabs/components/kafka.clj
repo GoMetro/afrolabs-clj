@@ -2278,8 +2278,8 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                                               (when-not caught-up-once?
                                                                 caught-up-ch)]))
         ktable-initial-value (or (when ktable-checkpoint-storage
-                                   (-ktable-checkpoints/retrieve-latest-checkpoint ktable-id
-                                                                                   ktable-checkpoint-storage))
+                                   (-ktable-checkpoints/retrieve-latest-checkpoint ktable-checkpoint-storage
+                                                                                   ktable-id))
                                  {})
         ktable-state (atom ktable-initial-value)
 
