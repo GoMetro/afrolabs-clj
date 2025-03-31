@@ -27,7 +27,8 @@
    [taoensso.timbre :as log]
    )
   (:import
-   [java.io File]
+   [org.apache.kafka.clients.admin AdminClient DescribeClusterOptions]
+   [java.io File InputStream OutputStream]
    [java.time Duration]))
 
 (def duration-units #{:seconds :minutes :hours})
@@ -276,7 +277,6 @@
                                 (= ch timeout-ch)
                                 (let [next-timeout (make-new-timeout)]
                                   (when (seq current-state)
-                                    (log/debug "Saving new snapshots...")
                                     ;; we have something to save and it is time to save it
                                     (doseq [item current-state]
                                       (log/debug (str "Saving snapshot for " (first item)))
@@ -310,7 +310,8 @@
                                        (t/format :iso-offset-date-time
                                                  (t/zoned-date-time checkpoint-instant
                                                                     (t/zone-id "UTC"))))]
-        (with-open [file-stream (-cp-stores/open-storage-stream checkpoint-store
+        (with-open [^OutputStream
+                    file-stream (-cp-stores/open-storage-stream checkpoint-store
                                                                 ktable-id
                                                                 checkpoint-name)]
           (serialize checkpoint-value
@@ -328,47 +329,57 @@
   [{:as _cfg :keys [checkpoint-store
                     parse-inst-as-java-time]}
    ktable-id]
-  (let [last-checkpoint-id (->> (-cp-stores/list-checkpoint-ids checkpoint-store
-                                                                ktable-id)
-                                (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re))
-                                           identity))
-                                ;; [0 1] reaches the first re match group, which is millis-since-epoch
-                                (map #(update-in % [0 1] Long/parseLong))
-                                ;; the reduce is changing the shape of the result
-                                ;; [millis-since-epoch-of-snapshot snapshot-id]
-                                ;; get the chekpoint-id with the max millis-timestamp
-                                (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] cp-id]]
-                                          (if (> file-millis current-millis)
-                                            [file-millis cp-id]
-                                            current-pick))
-                                        [0 nil])
-                                ;; keep the timestamp-id
-                                second)]
-    (when last-checkpoint-id
-      (with-open [fs (-cp-stores/open-retrieval-stream checkpoint-store
-                                                       ktable-id
-                                                       last-checkpoint-id)]
-        ;; tries to accommodate that we may save a snapshot with gzip-or-not
-        ;; and would still want to be able to load it, so we detect it from the checkpoint-id (filename)
-        ;; we do it like this, because deserialize deals with the /stream/ not the name of the checkpoint
-        ;; and has no other context (besides dynamic binding) to know to use gzip or not.
-        (let [gzip? (str/ends-with? last-checkpoint-id
-                                    ".gz")]
-          (binding [*serialize-with-gzip?* gzip?]
-            (deserialize fs
-                         (cond-> {}
-                           parse-inst-as-java-time (merge {:readers {'inst t/instant}})))))))))
+  (log/with-context+ {:ktable-id ktable-id}
+    (let [last-checkpoint-id (->> (-cp-stores/list-checkpoint-ids checkpoint-store
+                                                                  ktable-id)
+                                  (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re))
+                                             identity))
+                                  ;; [0 1] reaches the first re match group, which is millis-since-epoch
+                                  (map #(update-in % [0 1] Long/parseLong))
+                                  ;; the reduce is changing the shape of the result
+                                  ;; [millis-since-epoch-of-snapshot snapshot-id]
+                                  ;; get the chekpoint-id with the max millis-timestamp
+                                  (reduce (fn [[current-millis _current-file :as current-pick] [[_ file-millis] cp-id]]
+                                            (if (> file-millis current-millis)
+                                              [file-millis cp-id]
+                                              current-pick))
+                                          [0 nil])
+                                  ;; keep the timestamp-id
+                                  second)]
+      (when last-checkpoint-id
+        (log/with-context+ {:checkpoint-id last-checkpoint-id}
+          (log/info "Found a last snapshot for ktable checkpoint loading."))
+        (with-open [^InputStream fs
+                    (-cp-stores/open-retrieval-stream checkpoint-store
+                                                      ktable-id
+                                                      last-checkpoint-id)]
+          ;; tries to accommodate that we may save a snapshot with gzip-or-not
+          ;; and would still want to be able to load it, so we detect it from the checkpoint-id (filename)
+          ;; we do it like this, because deserialize deals with the /stream/ not the name of the checkpoint
+          ;; and has no other context (besides dynamic binding) to know to use gzip or not.
+          (let [gzip? (str/ends-with? last-checkpoint-id
+                                      ".gz")]
+            (binding [*serialize-with-gzip?* gzip?]
+              (deserialize fs
+                           (cond-> {}
+                             parse-inst-as-java-time (merge {:readers {'inst t/instant}}))))))))))
 
 (defn make-checkpoint-storage-component
   "Returns an implementation of `IKTableCheckpointStorage` that stores checkpoints on the local file system."
-  [{:as   cfg}]
-  (let [checkpoint (make-checkpoint-fn cfg #(store-ktable-checkpoint! cfg %))]
+  [{:as cfg :keys [admin-client]}]
+  (let [cluster-id (-> (.describeCluster ^AdminClient @admin-client (DescribeClusterOptions.))
+                       (.clusterId)
+                       (.get))
+        transform-ktable-id #(str cluster-id "_" %)
+        checkpoint (make-checkpoint-fn cfg #(store-ktable-checkpoint! cfg %))]
     (reify
       IKTableCheckpointStorage
       (register-ktable-value [_ ktable-id ktable-value]
-        (checkpoint [ktable-id ktable-value]))
+        (checkpoint [(transform-ktable-id ktable-id)
+                     ktable-value]))
       (retrieve-latest-checkpoint [_ ktable-id]
-        (retrieve-latest-ktable-checkpoint cfg ktable-id))
+        (retrieve-latest-ktable-checkpoint cfg
+                                           (transform-ktable-id ktable-id)))
 
       -comp/IHaltable
       (halt [_] (checkpoint nil)))))
@@ -379,11 +390,13 @@
   (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
         :duration-instance #(instance? java.time.Duration %)))
 (s/def ::parse-inst-as-java-time (s/nilable boolean))
+(s/def ::admin-client any?) ;; TODO: specify admin-client better
 (s/def ::ktable-checkpoint-store-cfg
   (s/keys :req-un [::-time/clock
                    ::timewindow-duration
                    ::-health/service-health-trip-switch
-                   ::-cp-stores/checkpoint-store]
+                   ::-cp-stores/checkpoint-store
+                   ::admin-client]
           :opt-un [::parse-inst-as-java-time]))
 
 (-comp/defcomponent {::-comp/ig-kw                  ::ktable-checkpoint-store

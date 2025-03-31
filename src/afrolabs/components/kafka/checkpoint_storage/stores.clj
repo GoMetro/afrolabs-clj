@@ -8,7 +8,8 @@
    )
   (:import
    [java.io
-    File FileOutputStream FileInputStream FilenameFilter]))
+    File FileOutputStream FileInputStream FilenameFilter]
+   ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -90,8 +91,9 @@ The client is responsible for closing the stream.")
                       :storage-path  fs:store-root
                       :checkpoint-id checkpoint-id}
     (try
-      (let [checkpoint-dir (ensure-fs-directory-path! (File. ^String fs:store-root
-                                                             ^String ktable-id))]
+      (let [checkpoint-dir (ensure-fs-directory-path!
+                            (.getAbsolutePath (File. ^String fs:store-root
+                                                     ^String ktable-id)))]
 
         (FileOutputStream. (File. ^File checkpoint-dir
                                   ^String checkpoint-id)))
