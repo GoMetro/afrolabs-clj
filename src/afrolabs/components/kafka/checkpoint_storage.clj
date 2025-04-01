@@ -568,6 +568,11 @@
 
 (-comp/defcomponent {::-comp/ig-kw                  ::ktable-checkpoint-store
                      ::-comp/config-spec            ::ktable-checkpoint-store-cfg}
-  [cfg] (make-checkpoint-storage-component (-> cfg
+  [cfg]
+  (log/with-context+ {:checkpointing-period-duration    (:checkpointing-period-duration cfg)
+                      :checkpoint-min-lifetime-duration (:checkpoint-min-lifetime-duration cfg)
+                      :min-nr-of-checkpoints            (:min-nr-of-checkpoints cfg)}
+    (log/info "Starting ktable checkpoint storage engine."))
+  (make-checkpoint-storage-component (-> cfg
                                                (update :checkpointing-period-duration normalize-duration)
                                                (update :checkpoint-min-lifetime-duration normalize-duration))))
