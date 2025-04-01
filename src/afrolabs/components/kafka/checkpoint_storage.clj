@@ -284,7 +284,8 @@
                                (log/debug (str "Saving checkpoint for " (first item)))
                                (save-checkpoint-callback item)))]))]
         (when (seq recur-params)
-          (recur new-value new-timeout-ch new-work))))))
+          (recur new-value new-timeout-ch new-work)))))
+  (log/debug "Quiting the ktable checkpoint saving loop..."))
 
 (defn gc-ktable-ids!
   "Does the actual work of querying for all checkpoints for each ktable-id
@@ -296,9 +297,9 @@
            checkpoint-store
            clock]}
    ktable-ids]
-  (let [cuteoff-moment (t/to-millis-from-epoch
-                        (t/- (-time/get-current-time clock)
-                             checkpoint-min-lifetime-duration))]
+  (let [cutoff-moment (t/to-millis-from-epoch
+                       (t/- (-time/get-current-time clock)
+                            checkpoint-min-lifetime-duration))]
     (doseq [ktable-id ktable-ids
             :let [old-checkpoint-ids
                   (-cp-stores/list-checkpoint-ids checkpoint-store
@@ -316,15 +317,15 @@
                   ;; and must be kept.
                   checkpoints-that-are-recent
                   (set (->> old-checkpoints-with-epoch
-                            (filter (fn [[_checkpoint-id checkpoint-epoch-millis]]
-                                      (> checkpoint-epoch-millis cuteoff-moment)))
-                            (map first)))
+                            (filter (fn [[checkpoint-epoch-millis _checkpoint-id]]
+                                      (> checkpoint-epoch-millis cutoff-moment)))
+                            (map second)))
 
                   most-recent-n-checkpoints
                   (set (->> old-checkpoints-with-epoch
-                            (sort-by second #(compare %2 %1)) ;; reverse sort by checkpoint-millis
+                            (sort-by first #(compare %2 %1)) ;; reverse sort by checkpoint-millis
                             (take min-nr-of-checkpoints)
-                            (map first)))
+                            (map second)))
 
                   checkpoints-to-keep
                   (set/union checkpoints-that-are-recent
@@ -431,7 +432,7 @@
                                            new-values-for-saving)
         background-saving-process (csp/thread (schedule-background-saving-process! cfg
                                                                                    save-snapshot-callback
-                                                                                   new-values-ch)
+                                                                                   new-values-for-saving)
                                               (log/info "Finished with checkpoint-keeping background thread."))
         gc-ch                     (csp/chan)
         _                         (csp/tap new-values-mult
@@ -558,6 +559,6 @@
 
 (-comp/defcomponent {::-comp/ig-kw                  ::ktable-checkpoint-store
                      ::-comp/config-spec            ::ktable-checkpoint-store-cfg}
-  [cfg] (make-checkpoint-storage-component (update cfg
-                                                   :checkpointing-period-duration normalize-duration
-                                                   :checkpoint-min-lifetime-duration normalize-duration)))
+  [cfg] (make-checkpoint-storage-component (-> cfg
+                                               (update :checkpointing-period-duration normalize-duration)
+                                               (update :checkpoint-min-lifetime-duration normalize-duration))))
