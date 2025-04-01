@@ -263,7 +263,9 @@
               ;; we've received a new value, so we want to keep it for when we decide to make a checkpoint
               ;; We keep the current `timeout-ch`
               (= ch new-values-ch)
-              [(assoc current-state (first v) (second v)) current-timeout-ch]
+              [(assoc current-state (first v) (second v))
+               current-timeout-ch
+               current-work]
 
               ;; the current worker to save snapshots is finished, we can schedule a new checkpoint
               (= ch current-work)
@@ -280,9 +282,14 @@
                  nil]
                 [{}
                  nil
-                 (csp/thread (doseq [item current-state]
-                               (log/debug (str "Saving checkpoint for " (first item)))
-                               (save-checkpoint-callback item)))]))]
+                 (csp/thread (log/with-context+ {:save-snopshot-id (random-uuid)}
+                               (try
+                                 (doseq [item current-state]
+                                   (log/with-context+ {:ktable-id (first item)}
+                                     (log/debug "Saving ktable snapshot."))
+                                   (save-checkpoint-callback item))
+                                 (catch Throwable t
+                                   (log/warn t "Error on checkpoint saving thread.")))))]))]
         (when (seq recur-params)
           (recur new-value new-timeout-ch new-work)))))
   (log/debug "Quiting the ktable checkpoint saving loop..."))
@@ -401,7 +408,9 @@
              nil
 
              ;; this is the background worker and will return a value in the result channel when complete
-             (csp/thread (gc-ktable-ids! cfg current-ktable-ids))])]
+             (csp/thread (try (gc-ktable-ids! cfg current-ktable-ids)
+                              (catch Throwable t
+                                (log/warn t "Error on background ktable GC process thread."))))])]
       (when recur-params
         (recur new-ktable-ids new-timeout new-work)))))
 
