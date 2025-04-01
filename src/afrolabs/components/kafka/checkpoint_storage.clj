@@ -21,6 +21,7 @@
    [clojure.core.async :as csp]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
+   [clojure.set :as set]
    [clojure.string :as str]
    [java-time.api :as t]
    [miner.tagged :as tag]
@@ -31,7 +32,7 @@
    [java.io File InputStream OutputStream]
    [java.time Duration]))
 
-(def duration-units #{:seconds :minutes :hours})
+(def duration-units #{:seconds :minutes :hours :days})
 
 (defprotocol IKTableCheckpointStorage
   "A protocol for managing the storage of snapshots/checkpoints of ktable values.
@@ -236,9 +237,182 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn- schedule-background-saving-process!
+  "Contains a loop that accumulates all values that must be turned into checkpoints, and saves them
+  \"regularl\"."
+  [{:keys [checkpointing-period-duration]}
+   save-checkpoint-callback
+   new-values-ch]
+  (let [make-new-timeout #(csp/timeout (.toMillis ^Duration checkpointing-period-duration))]
+    (loop [current-state         {}
+           current-timeout-ch    (make-new-timeout)
+           current-work          nil]
+      (let [[v ch] (csp/alts!! (vec (remove nil?
+                                            [new-values-ch
+                                             current-timeout-ch
+                                             current-work])))
+
+            [new-value new-timeout-ch new-work :as recur-params]
+            (cond
+              ;; if we receive nil, the input ch was closed
+              ;; it should be safer to just silently ignore the last values, due to the previously saved checkpoint
+              (and (= ch new-values-ch)
+                   (nil? v))
+              nil
+
+              ;; we've received a new value, so we want to keep it for when we decide to make a checkpoint
+              ;; We keep the current `timeout-ch`
+              (= ch new-values-ch)
+              [(assoc current-state (first v) (second v)) current-timeout-ch]
+
+              ;; the current worker to save snapshots is finished, we can schedule a new checkpoint
+              (= ch current-work)
+              [current-state
+               (make-new-timeout)
+               nil]
+
+              ;; we've timed out, so it's time to actually save the current value (if it is a value)
+              ;; do this on a background thread so that new ktable from `new-values-ch` don't block.
+              (= ch current-timeout-ch)
+              (if-not (seq current-state)
+                [current-state
+                 (make-new-timeout)
+                 nil]
+                [{}
+                 nil
+                 (csp/thread (doseq [item current-state]
+                               (log/debug (str "Saving checkpoint for " (first item)))
+                               (save-checkpoint-callback item)))]))]
+        (when (seq recur-params)
+          (recur new-value new-timeout-ch new-work))))))
+
+(defn gc-ktable-ids!
+  "Does the actual work of querying for all checkpoints for each ktable-id
+  and deleting any checkpoints for every ktable-id that falls outside of the retention policy parameters.
+  `min-nr-of-checkpoints` & `checkpoint-min-lifetime-duration`."
+  [{:as   _cfg
+    :keys [checkpoint-min-lifetime-duration
+           min-nr-of-checkpoints
+           checkpoint-store
+           clock]}
+   ktable-ids]
+  (let [cuteoff-moment (t/to-millis-from-epoch
+                        (t/- (-time/get-current-time clock)
+                             checkpoint-min-lifetime-duration))]
+    (doseq [ktable-id ktable-ids
+            :let [old-checkpoint-ids
+                  (-cp-stores/list-checkpoint-ids checkpoint-store
+                                                  ktable-id)
+
+                  old-checkpoints-with-epoch
+                  (->> old-checkpoint-ids
+                       (map (juxt (comp (partial re-matches -cp-stores/checkpoint-id-re))
+                                  identity))
+                       ;; [0 1] reaches the first re match group, which is millis-since-epoch
+                       (mapv #(vector (-> % (get-in [0 1]) Long/parseLong)
+                                      (second %))))
+
+                  ;; these ones were taken within the most recent `checkpoint-min-lifetime-duration`
+                  ;; and must be kept.
+                  checkpoints-that-are-recent
+                  (set (->> old-checkpoints-with-epoch
+                            (filter (fn [[_checkpoint-id checkpoint-epoch-millis]]
+                                      (> checkpoint-epoch-millis cuteoff-moment)))
+                            (map first)))
+
+                  most-recent-n-checkpoints
+                  (set (->> old-checkpoints-with-epoch
+                            (sort-by second #(compare %2 %1)) ;; reverse sort by checkpoint-millis
+                            (take min-nr-of-checkpoints)
+                            (map first)))
+
+                  checkpoints-to-keep
+                  (set/union checkpoints-that-are-recent
+                             most-recent-n-checkpoints)
+
+                  checkpoints-to-delete
+                  (set/difference (set old-checkpoint-ids)
+                                  checkpoints-to-keep)]
+            :when (seq checkpoints-to-keep)]
+      (log/with-context+ {:ktable-id             ktable-id
+                          :checkpoints-to-delete checkpoints-to-delete}
+        (log/info "Performing GC on checkpoints for ktable.")
+        (doseq [cp-id checkpoints-to-delete]
+          (-cp-stores/delete-checkpoint-id checkpoint-store
+                                           ktable-id
+                                           cp-id))))))
+
+(defn- schedule-background-gc-process!
+  "Runs a workload that notices when new value occur for ktables and will perform garbage-collection
+  for checkpoints of ktable-ids at regular intervals, much longer than how often checkpoints are persisted.
+
+  The accumulator keeps ktable-ids, of ktables that had changes.
+  Once every 10 * `checkpointing-period-duration`, the GC will run and ensure that:
+  - At least `min-nr-of-checkpoints` remain after GC, regardless of their individual age
+  - All checkpoints younger than `checkpoint-min-lifetime-duration` will remain"
+  [{:as   cfg
+    :keys [checkpointing-period-duration]}
+   new-values-ch]
+
+  (loop [current-ktable-ids  #{}
+         ;; first gc happens just after the first checkpoints were saved
+         current-timeout     (csp/timeout (-> (.toMillis ^Duration checkpointing-period-duration)
+                                              (* 1.1)
+                                              (long)))
+         ;; we have no previous work when we start
+         current-work        nil]
+    (let [[v ch] (csp/alts!! (vec (remove nil?
+                                          [new-values-ch
+                                           current-timeout ;; may be nil
+                                           current-work])))
+          [new-ktable-ids new-timeout new-work :as recur-params]
+          (cond
+            ;; when we receive nil from new-values-ch, it means we've been asked to stop
+            (and (= ch new-values-ch)
+                 (nil? v))
+            nil ;; don't recur
+
+            ;; Everything about this loop is structude so that receiving new ktable-ids from `new-value-ch`
+            ;; will not block. Here we are receiving a new `ktable-id` and accumulating it into `current-ktable-ids`
+            (= ch new-values-ch)
+            (let [[ktable-id _value] v]
+              ;; add new ktable-id for the next cycle of work, keep the current timeout and previous work
+              [(conj current-ktable-ids
+                     ktable-id)
+               current-timeout
+               current-work])
+
+            ;; The background work is complete, so we can schedule the next batch of work
+            ;; for after some time has elapsed, keeping the already collected `current-ktable-ids`
+            (= ch current-work)
+            [current-ktable-ids
+             ;; we will do gc once for every 10 times we took snapshots
+             (csp/timeout (* 10 (.toMillis ^Duration checkpointing-period-duration)))
+             nil]
+
+            ;; it's time to do work, enqueue it in a background worker
+            (= ch current-timeout)
+            [;; We are sending the collected ktable-id to the background worked for GC
+             ;; so we start with empty collection of `ktable-ids`
+             #{}
+
+             ;; we will init the new timeout after this batch of work is complete
+             nil
+
+             ;; this is the background worker and will return a value in the result channel when complete
+             (csp/thread (gc-ktable-ids! cfg current-ktable-ids))])]
+      (when recur-params
+        (recur new-ktable-ids new-timeout new-work)))))
+
 (defn- make-checkpoint-fn
-  "Accepts a component config, a callback-fn (`save-snapshot-callback`)
-  and returns `register-checkpoint-candidate`. 
+  "Accepts a component config, and a callback-fn (`save-snapshot-callback`).
+  Returns a fn, `register-checkpoint-candidate`, that when called with a tuple `[ktable-id ktable-value]`
+  will \"register\" the ktable has having received an update.
+
+  During shutdown, this `register-checkpoint-candidate` fn must be called with `nil` parameter.
+
+  Internally this fn manages worker threads that periodically persist checkpoints to blob-storage (calls `save-snapshot-callback`)
+  and less frequently, performs garbage collection on (very) old checkpoints.
 
   - `save-snapshot-callback` : Accepts ktable-id and ktable-value in a tuple. Must persist this value in the blob store.
   - `register-checkpoint-candidate` : (result). Use this function on every new ktable value. Some of the passed values
@@ -247,51 +421,30 @@
 
   The purpose of this fn is to ensure that ktable checkpoints are called regularly, but not too often.
   This is achieved by saving once per time window duration."
-  [{:keys [timewindow-duration]}
-   save-snapshot-callback
-   & {:keys [logging-context]}]
+  [{:as cfg}
+   save-snapshot-callback]
 
-  (let [new-values-ch       (csp/chan (csp/sliding-buffer 1))
-        make-new-timeout    #(csp/timeout (.toMillis ^Duration timewindow-duration))
-
-        background-process
-        (csp/thread (log/with-context+ (or logging-context {})
-                      (loop [current-state {}
-                             timeout-ch    (make-new-timeout)]
-                        (let [[v ch] (csp/alts!! [new-values-ch timeout-ch])
-
-                              [new-value new-timeout-ch :as recur-params]
-                              (cond
-                                ;; if we receive nil, the input ch was closed
-                                ;; it should be safer to just silently ignore the last values, due to the previously saved snapshot
-                                (and (= ch new-values-ch)
-                                     (nil? v))
-                                nil
-                                
-                                ;; we've received a new value, so we want to keep it for when we decide to make a snapshot
-                                ;; We keep the current `timeout-ch`
-                                (= ch new-values-ch)
-                                [(assoc current-state (first v) (second v)) timeout-ch]
-
-                                ;; we've timed out, so it's time to actually save the current value (if it is a value)
-                                (= ch timeout-ch)
-                                (let [next-timeout (make-new-timeout)]
-                                  (when (seq current-state)
-                                    ;; we have something to save and it is time to save it
-                                    (doseq [item current-state]
-                                      (log/debug (str "Saving snapshot for " (first item)))
-                                      (save-snapshot-callback item)))
-                                  ;; since we've saved the last values, our next current value is `{}` again
-                                  [{} next-timeout]))]
-                          (when (seq recur-params)
-                            (recur new-value new-timeout-ch)))))
-                    (log/info "Finished with checkpoint-keeping background thread."))]
+  (let [new-values-ch             (csp/chan)
+        new-values-mult           (csp/mult new-values-ch)
+        new-values-for-saving     (csp/chan)
+        _                         (csp/tap new-values-mult
+                                           new-values-for-saving)
+        background-saving-process (csp/thread (schedule-background-saving-process! cfg
+                                                                                   save-snapshot-callback
+                                                                                   new-values-ch)
+                                              (log/info "Finished with checkpoint-keeping background thread."))
+        gc-ch                     (csp/chan)
+        _                         (csp/tap new-values-mult
+                                           gc-ch)
+        background-gc-process     (csp/thread (schedule-background-gc-process! cfg
+                                                                               gc-ch))]
 
     (fn register-checkpoint-candidate [x]
       (if x
         (csp/>!! new-values-ch x)
         (do (csp/close! new-values-ch)
-            (csp/<!! background-process))))))
+            (csp/<!! background-saving-process)
+            (csp/<!! background-gc-process))))))
 
 (defn store-ktable-checkpoint!
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
@@ -386,19 +539,25 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(s/def ::timewindow-duration
-  (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
-        :duration-instance #(instance? java.time.Duration %)))
+(s/def ::duration (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
+                        :duration-instance #(instance? java.time.Duration %)))
+(s/def ::checkpointing-period-duration ::duration)
 (s/def ::parse-inst-as-java-time (s/nilable boolean))
 (s/def ::admin-client any?) ;; TODO: specify admin-client better
+(s/def ::checkpoint-min-lifetime-duration ::duration)
+(s/def ::min-nr-of-checkpoints pos-int?)
 (s/def ::ktable-checkpoint-store-cfg
   (s/keys :req-un [::-time/clock
-                   ::timewindow-duration
+                   ::checkpointing-period-duration
                    ::-health/service-health-trip-switch
                    ::-cp-stores/checkpoint-store
-                   ::admin-client]
+                   ::admin-client
+                   ::checkpoint-min-lifetime-duration
+                   ::min-nr-of-checkpoints]
           :opt-un [::parse-inst-as-java-time]))
 
 (-comp/defcomponent {::-comp/ig-kw                  ::ktable-checkpoint-store
                      ::-comp/config-spec            ::ktable-checkpoint-store-cfg}
-  [cfg] (make-checkpoint-storage-component (update cfg :timewindow-duration normalize-duration)))
+  [cfg] (make-checkpoint-storage-component (update cfg
+                                                   :checkpointing-period-duration normalize-duration
+                                                   :checkpoint-min-lifetime-duration normalize-duration)))
