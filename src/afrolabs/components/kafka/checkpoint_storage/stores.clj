@@ -3,12 +3,15 @@
    [afrolabs.components :as -comp]
    [afrolabs.components.health :as -health]
    [clojure.spec.alpha :as s]
+   [clojure.java.io :as io]
+   [cognitect.aws.client.api :as aws]
    [integrant.core :as ig]
    [taoensso.timbre :as log]
    )
   (:import
    [java.io
-    File FileOutputStream FileInputStream FilenameFilter]
+    File FileOutputStream FileInputStream FilenameFilter SequenceInputStream
+    PipedInputStream PipedOutputStream InputStream]
    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -220,6 +223,204 @@ The client is responsible for closing the stream.")
 (-comp/defcomponent {::-comp/ig-kw       ::filesystem
                      ::-comp/config-spec ::filesystem-cfg}
   [cfg] (make-filesystem-checkpoint-store cfg))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; The cognitect aws library has some (understandable) issues with (very) large S3 files.
+;; - GetObject returns a realized byte[], which obviously requires as much memory as the response is big.
+;;   For very large objects you might run into the issue where the JVM cannot access as much RAM as that.
+;; - GetObject has an internal limitation which prevents loading data larger than Integer/MAX_VALUE.
+;;   This is vaguely related to how java uses int's to access arrays.
+;;
+;; More info in this thread: https://github.com/cognitect-labs/aws-api/issues/209
+;;
+;; The code below is from that bug-report and relies on chunking downloads into a sequence of
+;; byte[] and then "streaming" those with the help of java.io.SequenceInputStream & clojure.lang.SeqEnumeration
+;;
+;; We picked the chunk-size-bytes to be 1Gb because this is "large"-ish, and < Integer/MAX_VALUE (~2 GB)
+
+(defn- parse-content-range
+  "Extract the object size from the ContentRange response attribute and convert to Long type
+  e.g. \"bytes 0-5242879/2243897556\"
+
+  Returns 2243897556"
+  [content-range]
+  (when-let [object-size (re-find #"[0-9]+$" content-range)]
+    (Long/parseLong object-size)))
+
+(def ^{:private true
+       :dynamic true
+       :doc     "The size of the byte[]/chunks of data that is uploaded or downloaded to and from S3."}
+  *chunk-size-bytes*
+  (* 100 1024 1024)) ;; 100 MB - a little arbitrarily chosen from code samples in AWS docs
+
+(defn- get-object-chunks
+  [s3-client {:keys [bucket, key]}]
+  (iteration (fn [range-byte-pos]
+               (let [to-byte-pos (+ range-byte-pos *chunk-size-bytes*)
+                     range (str "bytes=" range-byte-pos "-" (dec to-byte-pos))
+                     op-map {:op :GetObject :request {:Bucket bucket :Key key :Range range}}
+                     {:keys [ContentRange] :as response} (aws/invoke s3-client op-map)]
+                 (println :range range :response response)
+
+                 ;; todo: check the response for errors
+
+                 (assoc response :range-byte-pos to-byte-pos
+                                 :object-size (parse-content-range ContentRange))))
+             :initk 0
+             :kf (fn [{:keys [range-byte-pos, object-size]}]
+                   (when (< range-byte-pos object-size)
+                     range-byte-pos))
+             :vf :Body))
+
+(defn- seq-enumeration
+  "Returns a java.util.Enumeration on a seq"
+  {:static true}
+  [coll]
+  (clojure.lang.SeqEnumeration. coll))
+
+(defn- s3-object->InputStream
+  "Returns an InputStream. It is the caller's responsibility to close this stream when done reading from it."
+  [s3-client s3-obj-address]
+  (SequenceInputStream. (seq-enumeration (sequence (get-object-chunks s3-client s3-obj-address)))))
+
+(defn- input-stream->chunks
+  "Reads bytes from an `InputStream` and chunks it up into calls to (callback ^byte[] chunk ^long nr-of-bytes).
+
+  Accepts a (java.io.InputStream) `input-stream` & `callback`.
+
+  `callback` is `(fn [^bytes bs nr-of-bytes])`.
+  - `bs` is a byte array
+  - The first `nr-of-bytes` bytes of `bs` is the data in the chunk. This might be less than `bs.length`.
+  - One final call will be made with `(callback nil -1)` to indicate the end of the stream.
+
+  The byte array (1st parameter of callback) is the same instance for the lifetime of `input-stream->chunks`.
+  This violates value semantics! The receiver of this data MUST read & copy the data out of this array
+  before returning the callback.
+
+  A callback mechanism is used in order to control memory allocation. (1 x byte[*chunk-size-bytes*])"
+  [^InputStream input-stream
+   callback]
+  (let [bs (byte-array *chunk-size-bytes*)]
+    (loop [remaining-bytes *chunk-size-bytes*]
+      (let [read-this-time (.read input-stream
+                                  bs
+                                  (- *chunk-size-bytes* remaining-bytes)
+                                  remaining-bytes)
+            loop-step-result
+            (cond
+              ;; the stream is done, call back with what we have
+              (= -1 read-this-time)
+              (let [in-this-chunk (- *chunk-size-bytes* remaining-bytes)]
+                (when (pos? in-this-chunk)
+                    (callback bs in-this-chunk))
+                  nil ;; we are done uploading chunks
+                  )
+
+              ;; we read as much as we had space, we have a full chunk
+              (= remaining-bytes read-this-time)
+              (do (callback bs *chunk-size-bytes*)
+                  *chunk-size-bytes*)
+
+              ;; we read less than remaining-bytes, read some more, the chunk has more space left
+              (< read-this-time remaining-bytes)
+              (- remaining-bytes read-this-time))]
+
+        (when loop-step-result
+          (recur loop-step-result))))
+    (callback nil -1)))
+
+(comment
+
+  (binding [*chunk-size-bytes* 2]
+    (let [bs  (byte-array (range 25))
+          result-a (atom [])]
+      (with-open [bis (java.io.ByteArrayInputStream. bs)]
+        (input-stream->chunks bis
+                              #(when %1 ;; on the last call, byte-array is `nil` and number-of-bytes is `-1`
+                                 (swap! result-a
+                                        into
+                                        ;; important that a copy is made of the incoming byte-array contents
+                                        (take %2 %1)))))
+      @result-a))
+  ;; [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 21 22 23 24]
+
+
+  )
+
+
+
+
+(defn- open-s3-upload-stream
+  "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
+
+  It is the responsibility of the caller to close the result stream."
+  [s3-client {:as destination-address
+              :keys [bucket key]}]
+  (let [result       (PipedOutputStream.)
+        input-stream (PipedInputStream. result
+                                        *chunk-size-bytes*)
+        ]
+    ;; we start a thread that will read data in chunks from the OutputStream and upload it to S3
+
+
+
+
+
+    result))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- s3:open-checkpoint-output-stream
+  [cfg])
+
+(defn- s3:list-checkpoint-ids
+  [cfg])
+
+(defn- s3:open-checkpoint-id-stream
+  [cfg]
+  )
+
+(defn- s3:delete-checkpoint
+  [cfg])
+
+(defn make-s3-checkpoint-store
+  [{:as cfg}]
+  (reify
+    ICheckpointStore
+    (open-storage-stream [_ ktable-id checkpoint-id]
+      (s3:open-checkpoint-output-stream cfg
+                                        ktable-id
+                                        checkpoint-id))
+
+    (list-checkpoint-ids [_ ktable-id]
+      (s3:list-checkpoint-ids cfg
+                              ktable-id))
+
+    (open-retrieval-stream [_ ktable-id checkpoint-id]
+      (s3:open-checkpoint-id-stream cfg
+                                    ktable-id
+                                    checkpoint-id))
+
+    (delete-checkpoint-id [_ ktable-id checkpoint-id]
+      (s3:delete-checkpoint cfg
+                            ktable-id
+                            checkpoint-id))))
+
+;;;;;;;;;;;;;;;;;;;;
+
+
+(s/def ::s3:bucketname (s/and string?
+                              (comp pos? count)))
+(s/def ::s3:path-prefix (s/and string?
+                               (comp pos? count)))
+(s/def ::s3-cfg
+  (s/keys :req-un [::s3:bucketname
+                   ::s3:path-prefix
+                   ::-health/service-health-trip-switch]))
+
+(-comp/defcomponent {::-comp/ig-kw       ::s3
+                     ::-comp/config-spec ::s3-cfg}
+  [cfg] (make-s3-checkpoint-store cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TODO: If the number of checkpoint storage providers grow, a better mechanism for extensibility is required
