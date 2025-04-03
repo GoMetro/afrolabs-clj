@@ -2,6 +2,8 @@
   (:require
    [afrolabs.components :as -comp]
    [afrolabs.components.health :as -health]
+   [afrolabs.components.aws :as -aws]
+   [clojure.core.async :as csp]
    [clojure.spec.alpha :as s]
    [clojure.java.io :as io]
    [cognitect.aws.client.api :as aws]
@@ -11,7 +13,11 @@
   (:import
    [java.io
     File FileOutputStream FileInputStream FilenameFilter SequenceInputStream
-    PipedInputStream PipedOutputStream InputStream]
+    PipedInputStream PipedOutputStream InputStream ByteArrayInputStream ByteArrayOutputStream]
+   [java.security
+    MessageDigest]
+   [java.util
+    Base64]
    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -283,23 +289,27 @@ The client is responsible for closing the stream.")
   [s3-client s3-obj-address]
   (SequenceInputStream. (seq-enumeration (sequence (get-object-chunks s3-client s3-obj-address)))))
 
+;;;;;;;;;;
+
 (defn- input-stream->chunks
-  "Reads bytes from an `InputStream` and chunks it up into calls to (callback ^byte[] chunk ^long nr-of-bytes).
+  "Reads bytes from an `InputStream` and chunks it up into calls to (callback-with-chunk ^byte[] chunk ^long nr-of-bytes).
 
-  Accepts a (java.io.InputStream) `input-stream` & `callback`.
+  Accepts a (java.io.InputStream) `input-stream` & `callback-with-chunk`.
 
-  `callback` is `(fn [^bytes bs nr-of-bytes])`.
+  The `input-stream` will not be closed in `input-stream->chunks`.
+
+  `callback-with-chunk` is `(fn [^bytes bs nr-of-bytes])`.
   - `bs` is a byte array
   - The first `nr-of-bytes` bytes of `bs` is the data in the chunk. This might be less than `bs.length`.
-  - One final call will be made with `(callback nil -1)` to indicate the end of the stream.
+  - One final call will be made with `(callback-with-chunk nil -1)` to indicate the end of the stream.
 
-  The byte array (1st parameter of callback) is the same instance for the lifetime of `input-stream->chunks`.
+  The byte array (1st parameter of callback-with-chunk) is the same instance for the lifetime of `input-stream->chunks`.
   This violates value semantics! The receiver of this data MUST read & copy the data out of this array
-  before returning the callback.
+  before returning the callback-with-chunk.
 
-  A callback mechanism is used in order to control memory allocation. (1 x byte[*chunk-size-bytes*])"
+  A callback-with-chunk mechanism is used in order to control memory allocation. (1 x byte[*chunk-size-bytes*])"
   [^InputStream input-stream
-   callback]
+   callback-with-chunk]
   (let [bs (byte-array *chunk-size-bytes*)]
     (loop [remaining-bytes *chunk-size-bytes*]
       (let [read-this-time (.read input-stream
@@ -312,13 +322,13 @@ The client is responsible for closing the stream.")
               (= -1 read-this-time)
               (let [in-this-chunk (- *chunk-size-bytes* remaining-bytes)]
                 (when (pos? in-this-chunk)
-                    (callback bs in-this-chunk))
+                    (callback-with-chunk bs in-this-chunk))
                   nil ;; we are done uploading chunks
                   )
 
               ;; we read as much as we had space, we have a full chunk
               (= remaining-bytes read-this-time)
-              (do (callback bs *chunk-size-bytes*)
+              (do (callback-with-chunk bs *chunk-size-bytes*)
                   *chunk-size-bytes*)
 
               ;; we read less than remaining-bytes, read some more, the chunk has more space left
@@ -327,7 +337,7 @@ The client is responsible for closing the stream.")
 
         (when loop-step-result
           (recur loop-step-result))))
-    (callback nil -1)))
+    (callback-with-chunk nil -1)))
 
 (comment
 
@@ -344,27 +354,181 @@ The client is responsible for closing the stream.")
       @result-a))
   ;; [0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 21 22 23 24]
 
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (require '[afrolabs.components.aws.sso :as -aws-sso-profile-provider])
+
+  (def s3-client (aws/client {:api :s3
+                              :region "af-south-1"
+                              :credentials-provider (-aws-sso-profile-provider/provider (or (System/getenv "AWS_PROFILE")
+                                                                                            (System/getProperty "aws.profile")
+                                                                                            "default"))}))
+
+  (aws/ops s3-client)
+  (aws/invoke s3-client
+              {:op :ListObjects
+               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"}})
+
 
   )
 
+;;;;;;;;;;;;;;;;;;;;
+
+(defn- input-stream->multi-part-s3-upload
+  "Accepts a (java.io.) InputStream, an s3-client and an s3 object coordinate/destination.
+
+  Breaks up the InputStream into chunks of size `*chunk-size-bytes*`
+  and uploads each chunk using S3 Multipart upload.
+
+  Verifies the upload using SHA-1 checksums.
+
+  This fn will not close the InputStream, but will consume it fully."
+  [^InputStream input-stream
+   s3-client
+   {:as   _destination
+    :keys [bucket key]}]
+  (let [full-checksum-byte-os (ByteArrayOutputStream.)
+        upload-state     (atom [])
+
+        {:as   _create-multipart-upload-result
+         :keys [UploadId]}
+        (log/spy :debug "CreateMultipartUpload Result"
+                 (-aws/throw-when-anomaly
+                  (aws/invoke s3-client
+                              {:op      :CreateMultipartUpload
+                               :request {:Bucket            bucket
+                                         :Key               key
+                                         :ChecksumAlgorithm "SHA1"}})))]
+
+    (input-stream->chunks
+     input-stream
+     (fn [^bytes chunk-bytes nr-of-bytes-in-chunk]
+       (if (and chunk-bytes (pos? nr-of-bytes-in-chunk))
+         ;; still uploading chunks
+         (let [;; create a checksum for this part
+               part-sha1-checksum-bytes
+               (let [md (MessageDigest/getInstance "SHA-1")]
+                 (.update md chunk-bytes 0 nr-of-bytes-in-chunk)
+                 (.digest md))
+
+               ;; Update the checksum/digest for the full upload.
+               ;; We are sending the bytes of the part checksums into the full digest.
+               ;; from https://docs.aws.amazon.com/AmazonS3/latest/userguide/tutorial-s3-mpu-additional-checksums.html
+               _ (.write full-checksum-byte-os
+                         part-sha1-checksum-bytes)
+
+               part-sha1-checksum
+               (String.
+                (.encode (Base64/getEncoder)
+                         ^bytes part-sha1-checksum-bytes))
+
+               {:as   part-upload-result
+                :keys []}
+               (log/spy :debug "UploadPart Result"
+                        (-aws/throw-when-anomaly
+                         (aws/invoke s3-client
+                                     {:op      :UploadPart
+                                      :request (log/spy :debug "UploadPart Request"
+                                                        {:Bucket       bucket
+                                                         :Key          key
+                                                         :UploadId     UploadId
+                                                         :PartNumber   (inc (count @upload-state))
+                                                         :ChecksumSHA1 part-sha1-checksum
+                                                         :Body         (ByteArrayInputStream. chunk-bytes
+                                                                                              0
+                                                                                              nr-of-bytes-in-chunk)})})))]
+
+           ;; store the upload result so we know how many parts we've uploaded
+           (swap! upload-state conj part-upload-result))
+
+         ;; this is the finalizer - else part of `if`
+         (let [upload-state' (log/spy :debug "final upload state"
+                                      @upload-state)
+
+               ^bytes full-checksum-sha-bytes
+               (let [md (MessageDigest/getInstance "SHA-1")]
+                 (.update md (.toByteArray full-checksum-byte-os))
+                 (.digest md))
+
+               full-checksum
+               (str (String.
+                     (.encode (Base64/getEncoder)
+                              full-checksum-sha-bytes))
+                    "-" (count upload-state'))
+
+               _ (log/spy :debug "full checksum" full-checksum)]
+           (log/spy :debug "CompleteMultipartUpload"
+                    (-aws/throw-when-anomaly
+                     (aws/invoke s3-client
+                                 {:op      :CompleteMultipartUpload
+                                  :request (log/spy :debug "CompleteMultipartUpload Request"
+                                                    {:Bucket       bucket
+                                                     :Key          key
+                                                     :UploadId     UploadId
+                                                     :ChecksumSHA1 full-checksum
+                                                     :MultipartUpload
+                                                     {:Parts (vec (for [i    (range (count upload-state'))
+                                                                        :let [state-item (get upload-state' i)]]
+                                                                    (-> (select-keys state-item [:ETag :ChecksumSHA1])
+                                                                        (assoc :PartNumber (inc i)))))}})})))))))))
+
+(comment
+
+  ;; list in-progress multipart uploads
+  (def bucket "ktable-checkpoint-store20250401120818030200000001")
+  (aws/invoke s3-client
+              {:op :ListMultipartUploads
+               :request {:Bucket bucket}})
+
+  ;; careful with this, will stop/terminate ALL multipart uploads that have not complete
+  (doseq [{:keys [UploadId
+                  Key]}
+          (:Uploads (aws/invoke s3-client
+                                {:op :ListMultipartUploads
+                                 :request {:Bucket bucket}}))]
+    (aws/invoke s3-client
+                {:op      :AbortMultipartUpload
+                 :request {:Bucket   bucket
+                           :UploadId UploadId
+                           :Key      Key}})
+    )
+
+  (with-open [fis (FileInputStream.
+                   (File.
+                    "/home/pieter/Source/github.com/GoMetro/bridge-telemetry/clj/telemetry-checkpoint-storage/lkc-12gm26_device-ids-per-product/1743508443810-2025-04-01T11:54:03.810040286Z.edn"))]
+    (input-stream->multi-part-s3-upload fis
+                                        s3-client
+                                        {:bucket "ktable-checkpoint-store20250401120818030200000001"
+                                         :key    "test.edn"}))
 
 
+
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;
 
 (defn- open-s3-upload-stream
   "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
 
   It is the responsibility of the caller to close the result stream."
-  [s3-client {:as destination-address
-              :keys [bucket key]}]
+  [{:keys [service-health-trip-switch]}
+   s3-client
+   {:as destination-address
+    :keys [bucket key]}]
   (let [result       (PipedOutputStream.)
         input-stream (PipedInputStream. result
-                                        *chunk-size-bytes*)
-        ]
+                                        *chunk-size-bytes*)]
     ;; we start a thread that will read data in chunks from the OutputStream and upload it to S3
-
-
-
-
+    (csp/thread (try (input-stream->multi-part-s3-upload input-stream
+                                                        s3-client
+                                                        destination-address)
+                     (catch Throwable t
+                       (log/error t "Unable to upload input-stream to s3.")
+                       (-health/indicate-unhealthy! service-health-trip-switch
+                                                    ::s3)
+                       (.close input-stream)
+                       (.close result))))
 
     result))
 
