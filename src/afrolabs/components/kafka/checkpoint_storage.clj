@@ -281,7 +281,7 @@
                  nil]
                 [{}
                  nil
-                 (csp/thread (log/with-context+ {:save-snopshot-id (random-uuid)}
+                 (csp/thread (log/with-context+ {:save-snapshot-id (random-uuid)}
                                (try
                                  (doseq [item current-state]
                                    (log/with-context+ {:ktable-id (first item)}
@@ -371,7 +371,8 @@
     (let [[v ch] (csp/alts!! (vec (remove nil?
                                           [new-values-ch
                                            current-timeout ;; may be nil
-                                           current-work])))
+                                           current-work    ;; may be nil
+                                           ])))
           [new-ktable-ids new-timeout new-work :as recur-params]
           (cond
             ;; when we receive nil from new-values-ch, it means we've been asked to stop
@@ -407,11 +408,14 @@
              nil
 
              ;; this is the background worker and will return a value in the result channel when complete
-             (csp/thread (try (gc-ktable-ids! cfg current-ktable-ids)
+             (csp/thread (try (log/debug "KTable checkpoint GC starting...")
+                              (gc-ktable-ids! cfg current-ktable-ids)
+                              (log/debug "KTable checkpoint GC done.")
                               (catch Throwable t
                                 (log/warn t "Error on background ktable GC process thread."))))])]
       (when recur-params
-        (recur new-ktable-ids new-timeout new-work)))))
+        (recur new-ktable-ids new-timeout new-work))))
+  (log/debug "Quitting ktable checkpoints thread."))
 
 (defn- make-checkpoint-fn
   "Accepts a component config, and a callback-fn (`save-snapshot-callback`).

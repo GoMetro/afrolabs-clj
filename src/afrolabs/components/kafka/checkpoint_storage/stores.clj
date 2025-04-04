@@ -5,6 +5,7 @@
    [afrolabs.components.aws.client-config :as -aws-client-config]
    [clojure.core.async :as csp]
    [clojure.spec.alpha :as s]
+   [clojure.string :as str]
    [cognitect.aws.client.api :as aws]
    [integrant.core :as ig]
    [taoensso.timbre :as log]
@@ -547,25 +548,35 @@ The client is responsible for closing the stream.")
    ktable-id]
 
   (let [key-prefix (str s3:path-prefix "/" ktable-id "/")]
-    (mapcat identity
-            (iteration (fn [k]
-                         (aws/invoke s3-client
-                                     {:op :ListObjectsV2
-                                      :request (cond-> {:Bucket s3:bucketname
-                                                        :Prefix key-prefix}
-                                                 k (assoc :ContinuationToken k))}))
-                       :somef identity
-                       :vf    :Contents
-                       :kf    :NextContinuationToken
-                       :initk nil))))
+    (->> (iteration (fn [k]
+                      (log/spy :debug "s3:list checkpoint ids result"
+                               (aws/invoke s3-client
+                                           (log/spy :debug "s3:list checkpoint ids request"
+                                                    {:op :ListObjectsV2
+                                                     :request (cond-> {:Bucket s3:bucketname
+                                                                       :Prefix key-prefix}
+                                                                k (assoc :ContinuationToken k))}))))
+                    :somef identity
+                    :vf    :Contents
+                    :kf    :NextContinuationToken
+                    :initk nil)
+         (mapcat identity)
+         (map :Key)
+         (keep (fn [s3-object-key]
+                 (let [key-without-prefix (last (str/split s3-object-key #"/"))]
+                   (when (re-matches checkpoint-id-re key-without-prefix)
+                     key-without-prefix)))))))
 
 (comment
+
+  (str/split "dev/pieter/lkc-ozxkny_geofence-factual-state/1743760240460-2025-04-04T09:50:40.460144083Z.edn.gz"
+             #"/")
 
   (aws/ops s3-client)
   (aws/invoke s3-client
               {:op :ListObjectsV2
                :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"
-                         :Prefix "test"}})
+                         :Prefix ""}})
 
   (s3:list-checkpoint-ids {:s3-client      s3-client
                            :s3:bucketname  "ktable-checkpoint-store20250401120818030200000001"
@@ -588,8 +599,6 @@ The client is responsible for closing the stream.")
 
 
   )
-
-
 
 (defn- s3:open-checkpoint-id-stream
   [{:as   cfg
