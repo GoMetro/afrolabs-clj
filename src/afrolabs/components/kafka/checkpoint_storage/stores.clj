@@ -541,7 +541,8 @@ The client is responsible for closing the stream.")
 
 (defn- s3:list-checkpoint-ids
   [{:as   _cfg
-    :keys [s3:bucketname
+    :keys [s3-client
+           s3:bucketname
            s3:path-prefix]}
    ktable-id]
 
