@@ -15,7 +15,6 @@
   `pr-tagged-record-on` fn in this ns."
   (:require
    [afrolabs.components :as -comp]
-   [afrolabs.components.health :as -health]
    [afrolabs.components.time :as -time]
    [afrolabs.components.kafka.checkpoint-storage.stores :as -cp-stores]
    [clojure.core.async :as csp]
@@ -459,8 +458,7 @@
 (defn store-ktable-checkpoint!
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
   [{:as _cfg :keys [clock
-                    checkpoint-store
-                    service-health-trip-switch]}
+                    checkpoint-store]}
    [ktable-id
     checkpoint-value]]
   (log/with-context+ {:ktable-id    ktable-id}
@@ -480,9 +478,7 @@
           (serialize checkpoint-value
                      file-stream)))
       (catch Throwable t
-        (log/error t "Unable to store ktable checkpoints! Tripping health trip switch")
-        (-health/indicate-unhealthy! service-health-trip-switch
-                                     ::filesystem-ktable-checkpoint)))))
+        (log/error t "Unable to store ktable checkpoints! Tripping health trip switch")))))
 
 (defn retrieve-latest-ktable-checkpoint
   "Lists all checkpoint values in files, scans for a name that is most recent, based on the millis-since-epoch before the first \\-
@@ -559,7 +555,6 @@
 (s/def ::ktable-checkpoint-store-cfg
   (s/keys :req-un [::-time/clock
                    ::checkpointing-period-duration
-                   ::-health/service-health-trip-switch
                    ::-cp-stores/checkpoint-store
                    ::admin-client
                    ::checkpoint-min-lifetime-duration

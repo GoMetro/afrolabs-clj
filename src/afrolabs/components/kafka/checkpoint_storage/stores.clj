@@ -1,19 +1,20 @@
 (ns afrolabs.components.kafka.checkpoint-storage.stores
   (:require
    [afrolabs.components :as -comp]
-   [afrolabs.components.health :as -health]
    [afrolabs.components.aws :as -aws]
+   [afrolabs.components.aws.client-config :as -aws-client-config]
    [clojure.core.async :as csp]
    [clojure.spec.alpha :as s]
-   [clojure.java.io :as io]
    [cognitect.aws.client.api :as aws]
    [integrant.core :as ig]
    [taoensso.timbre :as log]
    )
   (:import
    [java.io
-    File FileOutputStream FileInputStream FilenameFilter SequenceInputStream
-    PipedInputStream PipedOutputStream InputStream ByteArrayInputStream ByteArrayOutputStream]
+    File FileOutputStream FileInputStream
+    FilenameFilter
+    SequenceInputStream PipedInputStream PipedOutputStream InputStream OutputStream
+    ByteArrayInputStream ByteArrayOutputStream]
    [java.security
     MessageDigest]
    [java.util
@@ -89,8 +90,7 @@ The client is responsible for closing the stream.")
 
 (defn- fs:open-checkpoint-output-stream
   "Actually persists the passed `checkpoint-value` to a \"path\" in the storage medium based on `ktable-id`."
-  [{:keys [fs:store-root
-           service-health-trip-switch]}
+  [{:keys [fs:store-root]}
    ktable-id
    checkpoint-id]
 
@@ -108,8 +108,6 @@ The client is responsible for closing the stream.")
                                   ^String checkpoint-id)))
       (catch Throwable t
         (log/error t "Unable to open a FileOutputStream for storing a ktable checkpoint.")
-        (-health/indicate-unhealthy! service-health-trip-switch
-                                     ::filesystem-ktable-checkpoint)
         (throw t)))))
 
 (def ^{:tag     FilenameFilter
@@ -119,8 +117,7 @@ The client is responsible for closing the stream.")
     (boolean (re-matches checkpoint-id-re fname))))
 
 (defn- fs:list-checkpoint-ids
-  [{:keys [fs:store-root
-           service-health-trip-switch]}
+  [{:keys [fs:store-root]}
    ktable-id]
   (log/with-context+ {:ktable-id    ktable-id
                       :storage-path fs:store-root}
@@ -132,13 +129,10 @@ The client is responsible for closing the stream.")
                checkpoint-filename-filter))
       (catch Throwable t
         (log/error t "Unable to retrieve a file listing for the checkpoint store.")
-        (-health/indicate-unhealthy! service-health-trip-switch
-                                     ::filesystem)
         (throw t)))))
 
 (defn- fs:open-checkpoint-id-stream
-  [{:keys [fs:store-root
-           service-health-trip-switch]}
+  [{:keys [fs:store-root]}
    ktable-id
    checkpoint-id]
 
@@ -156,14 +150,11 @@ The client is responsible for closing the stream.")
         (FileInputStream. checkpoint-file))
       (catch Throwable t
         (log/error t "Unable to open a FileinputStream on checkpoint file.")
-        (-health/indicate-unhealthy! service-health-trip-switch
-                                     ::filesystem)
         (throw t)))))
 
 
 (defn- fs:delete-checkpoint
-  [{:keys [fs:store-root
-           service-health-trip-switch]}
+  [{:keys [fs:store-root]}
    ktable-id
    checkpoint-id]
 
@@ -180,8 +171,6 @@ The client is responsible for closing the stream.")
                         ^String checkpoint-id)))
       (catch Throwable t
         (log/error t "Unable to delete checkpoint file.")
-        (-health/indicate-unhealthy! service-health-trip-switch
-                                     ::filesystem)
         (throw t)))))
 
 ;;;;;;;;;;;;;;;;;;;;
@@ -223,8 +212,7 @@ The client is responsible for closing the stream.")
                            (.isDirectory d))))))))
 
 (s/def ::filesystem-cfg
-  (s/keys :req-un [::fs:store-root
-                   ::-health/service-health-trip-switch]))
+  (s/keys :req-un [::fs:store-root]))
 
 (-comp/defcomponent {::-comp/ig-kw       ::filesystem
                      ::-comp/config-spec ::filesystem-cfg}
@@ -286,13 +274,24 @@ The client is responsible for closing the stream.")
 
 (defn- s3-object->InputStream
   "Returns an InputStream. It is the caller's responsibility to close this stream when done reading from it."
-  [s3-client s3-obj-address]
+  [{:keys [s3-client]} s3-obj-address]
   (SequenceInputStream. (seq-enumeration (sequence (get-object-chunks s3-client s3-obj-address)))))
+
+(comment
+
+  (with-open [s3-is (s3-object->InputStream {:s3-client  s3-client}
+                                            {:bucket "ktable-checkpoint-store20250401120818030200000001"
+                                             :key "test.edn"})
+              fos (FileOutputStream. (File. "/tmp/test.edn"))]
+    (io/copy s3-is fos))
+
+
+  )
 
 ;;;;;;;;;;
 
 (defn- input-stream->chunks
-  "Reads bytes from an `InputStream` and chunks it up into calls to (callback-with-chunk ^byte[] chunk ^long nr-of-bytes).
+  "Reads bytes from an `InputStream` and chunks it up into calls to (callback-with-chunk ^byte[] chunk nr-of-bytes).
 
   Accepts a (java.io.InputStream) `input-stream` & `callback-with-chunk`.
 
@@ -501,9 +500,6 @@ The client is responsible for closing the stream.")
                                         {:bucket "ktable-checkpoint-store20250401120818030200000001"
                                          :key    "test.edn"}))
 
-
-
-
   )
 
 ;;;;;;;;;;;;;;;;;;;;
@@ -512,10 +508,8 @@ The client is responsible for closing the stream.")
   "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
 
   It is the responsibility of the caller to close the result stream."
-  [{:keys [service-health-trip-switch]}
-   s3-client
-   {:as destination-address
-    :keys [bucket key]}]
+  [{:keys [s3-client]}
+   destination-address]
   (let [result       (PipedOutputStream.)
         input-stream (PipedInputStream. result
                                         *chunk-size-bytes*)]
@@ -525,8 +519,6 @@ The client is responsible for closing the stream.")
                                                         destination-address)
                      (catch Throwable t
                        (log/error t "Unable to upload input-stream to s3.")
-                       (-health/indicate-unhealthy! service-health-trip-switch
-                                                    ::s3)
                        (.close input-stream)
                        (.close result))))
 
@@ -535,40 +527,120 @@ The client is responsible for closing the stream.")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- s3:open-checkpoint-output-stream
-  [cfg])
+  [{:as   cfg
+    :keys [s3:bucketname
+           s3:path-prefix]}
+   ktable-id
+   checkpoint-id]
+  (let [key (str s3:path-prefix "/" ktable-id "/" checkpoint-id)]
+    (log/with-context+ {:ktable-id ktable-id
+                        :checkpoint-id checkpoint-id}
+      (open-s3-upload-stream cfg
+                             {:bucket s3:bucketname
+                              :key    key}))))
 
 (defn- s3:list-checkpoint-ids
-  [cfg])
+  [{:as   _cfg
+    :keys [s3:bucketname
+           s3:path-prefix]}
+   ktable-id]
 
-(defn- s3:open-checkpoint-id-stream
-  [cfg]
+  (let [key-prefix (str s3:path-prefix "/" ktable-id "/")]
+    (mapcat identity
+            (iteration (fn [k]
+                         (aws/invoke s3-client
+                                     {:op :ListObjectsV2
+                                      :request (cond-> {:Bucket s3:bucketname
+                                                        :Prefix key-prefix}
+                                                 k (assoc :ContinuationToken k))}))
+                       :somef identity
+                       :vf    :Contents
+                       :kf    :NextContinuationToken
+                       :initk nil))))
+
+(comment
+
+  (aws/ops s3-client)
+  (aws/invoke s3-client
+              {:op :ListObjectsV2
+               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"
+                         :Prefix "test"}})
+
+  (s3:list-checkpoint-ids {:s3-client      s3-client
+                           :s3:bucketname  "ktable-checkpoint-store20250401120818030200000001"
+                           :s3:path-prefix "test"}
+                          "boom-ktable-id")
+  (count *1)
+
+  (doseq [i (range 50 )]
+    (with-open [^OutputStream os
+                (s3:open-checkpoint-output-stream {:s3-client      s3-client
+                                                   :s3:bucketname  "ktable-checkpoint-store20250401120818030200000001"
+                                                   :s3:path-prefix "test"}
+                                                  "boom-ktable-id"
+                                                  (str "warra-" i))]
+      (binding [*out* (io/writer os)]
+        (pr {:i i
+             :s (apply str (repeat i (str i)))})
+        (flush))))
+
+
+
   )
 
+
+
+(defn- s3:open-checkpoint-id-stream
+  [{:as   cfg
+    :keys [s3:bucketname
+           s3:path-prefix]}
+   ktable-id
+   checkpoint-id]
+  (let [key (str s3:path-prefix "/" ktable-id "/" checkpoint-id)]
+    (s3-object->InputStream cfg
+                            {:bucket s3:bucketname
+                             :key    key})))
+
 (defn- s3:delete-checkpoint
-  [cfg])
+  [{:as   _cfg
+    :keys [s3:bucketname
+           s3:path-prefix
+           s3-client]}
+   ktable-id
+   checkpoint-id]
+  (let [key (str s3:path-prefix "/" ktable-id "/" checkpoint-id)]
+    (-aws/throw-when-anomaly
+     (aws/invoke s3-client
+                 {:op      :DeleteObject
+                  :request {:Bucket s3:bucketname
+                            :Key    key}}))))
 
 (defn make-s3-checkpoint-store
-  [{:as cfg}]
-  (reify
-    ICheckpointStore
-    (open-storage-stream [_ ktable-id checkpoint-id]
-      (s3:open-checkpoint-output-stream cfg
-                                        ktable-id
-                                        checkpoint-id))
+  [{:as   cfg
+    :keys [aws-client-config]}]
+  (let [cfg' (assoc cfg
+                    :s3-client
+                    (aws/client (assoc aws-client-config :api :s3)))]
+    (reify
+      ICheckpointStore
+      (open-storage-stream [_ ktable-id checkpoint-id]
+        (s3:open-checkpoint-output-stream cfg'
+                                          ktable-id
+                                          checkpoint-id))
 
-    (list-checkpoint-ids [_ ktable-id]
-      (s3:list-checkpoint-ids cfg
-                              ktable-id))
+      (list-checkpoint-ids [_ ktable-id]
+        (s3:list-checkpoint-ids cfg'
+                                ktable-id))
 
-    (open-retrieval-stream [_ ktable-id checkpoint-id]
-      (s3:open-checkpoint-id-stream cfg
-                                    ktable-id
-                                    checkpoint-id))
+      (open-retrieval-stream [_ ktable-id checkpoint-id]
+        (s3:open-checkpoint-id-stream cfg'
+                                      ktable-id
+                                      checkpoint-id))
 
-    (delete-checkpoint-id [_ ktable-id checkpoint-id]
-      (s3:delete-checkpoint cfg
-                            ktable-id
-                            checkpoint-id))))
+      (delete-checkpoint-id [_ ktable-id checkpoint-id]
+        (s3:delete-checkpoint cfg'
+                              ktable-id
+                              checkpoint-id)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -580,7 +652,7 @@ The client is responsible for closing the stream.")
 (s/def ::s3-cfg
   (s/keys :req-un [::s3:bucketname
                    ::s3:path-prefix
-                   ::-health/service-health-trip-switch]))
+                   ::-aws-client-config/aws-client-config]))
 
 (-comp/defcomponent {::-comp/ig-kw       ::s3
                      ::-comp/config-spec ::s3-cfg}
@@ -593,7 +665,8 @@ The client is responsible for closing the stream.")
 (defmethod ig/init-key ::checkpoint-storage-switcher
   [_ {:as cfg t :type}]
   (case t
-    ::filesystem (ig/init-key ::filesystem cfg)))
+    :filesystem (ig/init-key ::filesystem cfg)
+    :s3         (ig/init-key ::s3 cfg)))
 
 (defmethod ig/halt-key! ::checkpoint-storage-switcher
   [_ state]
