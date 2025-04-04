@@ -2294,9 +2294,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                 (let [latest-ktable-value
                                       (swap! ktable-state
                                              #(merge-updates-with-ktable % msgs merge-updates-opts))]
-                                  (when (and ktable-checkpoint-storage
-                                             (realized? has-caught-up-once))
-                                    ;; we only want to consider saving checkpoints after we've caught up fully
+                                  (when ktable-checkpoint-storage
                                     ;; This `register-ktable-value` is called after _every_ update to the ktable value.
                                     ;; We are depending on the implementation to store only a subset of registered ktable values.
                                     (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
