@@ -206,7 +206,6 @@
                                                        ;; now we inspect the consumed-records and pause partitions
                                                        ;; where we see offsets higher than what is in topic-partition-end-offsets
                                                        (let [max-offsets-per-topic-partition (k/msgs->topic-partition-maxoffsets consumed-records)
-                                                             _ (log/debug [:max-offsets-per-topic-partition max-offsets-per-topic-partition])
                                                              overrun-topic-partitions (->> max-offsets-per-topic-partition
                                                                                            (mapcat (fn [[topic partition->maxoffsets]]
                                                                                                      (map #(vector topic (first %) (second %))
