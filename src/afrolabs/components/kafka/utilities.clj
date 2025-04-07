@@ -188,7 +188,6 @@
                                                                                                        (get tp)
                                                                                                        (.offset))
                                                                                                highest-offset)]))
-                                                               _ (log/spy :debug relevant-offsets)
 
                                                                offsets-with-data (when (seq relevant-offsets)
                                                                                    (->> relevant-offsets
