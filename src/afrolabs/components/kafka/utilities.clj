@@ -175,48 +175,46 @@
                                                        ;; so we know which partitions to monitor and pause once past the to-timestamp
                                                        (when-not @topic-partition-end-offsets
                                                          (let [partition-assignment (.assignment ^Consumer consumer)
+                                                               partition-highest-offsets (.endOffsets ^Consumer consumer
+                                                                                                      partition-assignment)
+                                                               offsets-for-times (into {}
+                                                                                       (.offsetsForTimes ^Consumer consumer
+                                                                                                         (into {}
+                                                                                                               (map #(vector % to-timestamp-ms))
+                                                                                                               partition-assignment)))
+                                                               relevant-offsets (->> (for [[^TopicPartition tp highest-offset] partition-highest-offsets
+                                                                                           :when (pos? highest-offset)]
+                                                                                       [tp (or (some-> offsets-for-times
+                                                                                                       (get tp)
+                                                                                                       (.offset))
+                                                                                               highest-offset)]))
+                                                               _ (log/spy :debug relevant-offsets)
 
-                                                               end-offsets (into {}
-                                                                                 (map (fn [[^TopicPartition tp offset]]
-                                                                                        [tp (OffsetAndTimestamp. offset to-timestamp-ms)]))
-                                                                                 (.endOffsets ^Consumer consumer
-                                                                                              partition-assignment))
-                                                               offsets-for-times (.offsetsForTimes ^Consumer consumer
-                                                                                                   (into {}
-                                                                                                         (map #(vector % to-timestamp-ms))
-                                                                                                         partition-assignment))
-
-                                                               effective-offsets (into {}
-                                                                                       (for [[tp otst] offsets-for-times]
-                                                                                         [tp (or otst
-                                                                                                 (get end-offsets tp))]))
-
-                                                               {partitions-with-data    true
-                                                                partitions-without-data false} (group-by (fn [[_k v]] (boolean v))
-                                                                                                         effective-offsets)
-                                                               offsets-with-data (or (when (seq partitions-with-data)
-                                                                                       (->> partitions-with-data
-                                                                                            (map (fn [[^TopicPartition tp ^OffsetAndTimestamp otst]]
-                                                                                                   {(.topic tp) {(.partition tp) (.offset otst)}}))
-                                                                                            (apply merge-with merge)))
-                                                                                     {})]
-                                                           (reset! remaining-topic-partitions
-                                                                   (set/difference (set partition-assignment)
-                                                                                   (set partitions-without-data)))
-                                                           (reset! topic-partition-end-offsets
-                                                                   offsets-with-data)))
+                                                               offsets-with-data (when (seq relevant-offsets)
+                                                                                   (->> relevant-offsets
+                                                                                        (map (fn [[^TopicPartition tp offset]]
+                                                                                               {(.topic tp) {(.partition tp) offset}}))
+                                                                                        (apply merge-with merge)))]
+                                                           (log/spy :debug "remaining"
+                                                                    (reset! remaining-topic-partitions
+                                                                            (set (keys offsets-with-data))))
+                                                           (log/spy :debug "topic-partitinos-end-offests"
+                                                                    (reset! topic-partition-end-offsets
+                                                                            relevant-offsets))))
 
 
                                                        ;; now we inspect the consumed-records and pause partitions
                                                        ;; where we see offsets higher than what is in topic-partition-end-offsets
                                                        (let [max-offsets-per-topic-partition (k/msgs->topic-partition-maxoffsets consumed-records)
+                                                             _ (log/debug [:max-offsets-per-topic-partition max-offsets-per-topic-partition])
                                                              overrun-topic-partitions (->> max-offsets-per-topic-partition
                                                                                            (mapcat (fn [[topic partition->maxoffsets]]
                                                                                                      (map #(vector topic (first %) (second %))
                                                                                                           partition->maxoffsets)))
                                                                                            (filter (fn [[topic partition max-encountered-offset]]
-                                                                                                     (< (get-in @topic-partition-end-offsets
-                                                                                                                [topic partition])
+                                                                                                     (< (or (get-in @topic-partition-end-offsets
+                                                                                                                    [topic partition])
+                                                                                                            Long/MAX_VALUE)
                                                                                                         max-encountered-offset)))
                                                                                            (mapv (fn [[topic partition _]]
                                                                                                    (TopicPartition. topic partition))))]
