@@ -231,7 +231,7 @@ The client is responsible for closing the stream.")
 ;; The code below is from that bug-report and relies on chunking downloads into a sequence of
 ;; byte[] and then "streaming" those with the help of java.io.SequenceInputStream & clojure.lang.SeqEnumeration
 ;;
-;; We picked the chunk-size-bytes to be 1Gb because this is "large"-ish, and < Integer/MAX_VALUE (~2 GB)
+;; We picked the chunk-size-bytes to be a certain size in order to be "large"-ish, and < Integer/MAX_VALUE (~2 GB)
 
 (defn- parse-content-range
   "Extract the object size from the ContentRange response attribute and convert to Long type
@@ -254,10 +254,10 @@ The client is responsible for closing the stream.")
                (let [to-byte-pos (+ range-byte-pos *chunk-size-bytes*)
                      range (str "bytes=" range-byte-pos "-" (dec to-byte-pos))
                      op-map {:op :GetObject :request {:Bucket bucket :Key key :Range range}}
-                     {:keys [ContentRange] :as response} (aws/invoke s3-client op-map)]
-                 (println :range range :response response)
 
-                 ;; todo: check the response for errors
+                     {:keys [ContentRange] :as response}
+                     (-aws/throw-when-anomaly (aws/invoke s3-client op-map))]
+                 ;; errors result in exceptions
 
                  (assoc response :range-byte-pos to-byte-pos
                                  :object-size (parse-content-range ContentRange))))
