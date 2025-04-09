@@ -75,6 +75,10 @@
                                                                     (System/getProperty "aws.profile")
                                                                     "default")))]))))))
 
+(s/def ::aws-client-config
+  (s/and map?
+         #(:credentials-provider %)))
+
 (-comp/defcomponent {::-comp/ig-kw       ::aws-client-config
                      ::-comp/config-spec ::aws-client-config-cfg}
   [cfg] (#'make-aws-client cfg))
