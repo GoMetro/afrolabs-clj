@@ -6,6 +6,11 @@
 (def project-config
   "Project configuration to support build tasks."
   {:class-directory "target/classes"
+   :lib             com.github.gometro/afrolabs-clj
+   :url             "https://github.com/Afrolabs/afrolabs-clj"
+   :description     "A library of components useful for making micro-services."
+   :licenses        [{:name "MIT License"
+                      :url  "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}]
    :project-basis   (build-api/create-basis {:project "deps.edn"})})
 
 (defn config
