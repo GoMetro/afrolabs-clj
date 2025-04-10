@@ -1,22 +1,24 @@
 (ns build
   (:require
-   [clojure.tools.build.api :as build-api]
-   [clojure.pprint :as pprint]))
+   [clojure.tools.build.api :as build-api]))
+
+(def lib   'com.github.gometro/afrolabs-clj)
+(def version (format "1.0.%s" (build-api/git-count-revs nil)))
+(def class-dir "target/classes")
+(def jar-file (format "target/%s-%s.jar"
+                      (name lib)
+                      version))
+(def basis (delay (build-api/create-basis {:project "deps.edn"})))
+
 
 (def project-config
   "Project configuration to support build tasks."
   {:class-directory "target/classes"
-   :lib             com.github.gometro/afrolabs-clj
    :url             "https://github.com/Afrolabs/afrolabs-clj"
    :description     "A library of components useful for making micro-services."
    :licenses        [{:name "MIT License"
                       :url  "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}]
    :project-basis   (build-api/create-basis {:project "deps.edn"})})
-
-(defn config
-  "Display build configuration"
-  [config]
-  (pprint/pprint (or config project-config)))
 
 (defn clean
   "Remove a directory
@@ -29,15 +31,24 @@
     (build-api/delete {:path (or (:path directory)
                                  "target")})))
 
+(defn pom
+  [{:as   _opts
+    :keys [dest]}]
+
+  (build-api/write-pom (cond-> {:lib       lib
+                                :version   version
+                                :basis     @basis
+                                :src-dirs  ["src"]}
+                         dest (assoc :target dest)
+                         (not dest) (assoc :class-dir class-dir))))
+
 (defn compile-aot
   "Pre-compile namespace that generate .class files."
   [& _]
-  (let [{:keys [project-basis
-                class-directory]} project-config]
-    (build-api/compile-clj {:basis      project-basis
-                            :class-dir  class-directory
-                            :ns-compile '[afrolabs.components.kafka.json-serdes
-                                          afrolabs.components.kafka.edn-serdes
-                                          afrolabs.components.kafka.bytes-serdes
-                                          afrolabs.components.kafka.transit-serdes
-                                          #_afrolabs.components.confluent.schema-registry-compatible-serdes]})))
+  (build-api/compile-clj {:basis      @basis
+                          :class-dir   class-dir
+                          :ns-compile '[afrolabs.components.kafka.json-serdes
+                                        afrolabs.components.kafka.edn-serdes
+                                        afrolabs.components.kafka.bytes-serdes
+                                        afrolabs.components.kafka.transit-serdes
+                                        #_afrolabs.components.confluent.schema-registry-compatible-serdes]}))
