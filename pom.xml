@@ -4,7 +4,7 @@
   <packaging>jar</packaging>
   <groupId>com.github.gometro</groupId>
   <artifactId>afrolabs-clj</artifactId>
-  <version>1.0.438</version>
+  <version>1.0.439</version>
   <name>afrolabs-clj</name>
   <dependencies>
     <dependency>
@@ -373,4 +373,10 @@
       <url>https://packages.confluent.io/maven/</url>
     </repository>
   </repositories>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE</url>
+    </license>
+  </licenses>
 </project>

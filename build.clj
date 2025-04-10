@@ -13,12 +13,15 @@
 
 (def project-config
   "Project configuration to support build tasks."
-  {:class-directory "target/classes"
-   :url             "https://github.com/Afrolabs/afrolabs-clj"
+  {:url             "https://github.com/Afrolabs/afrolabs-clj"
    :description     "A library of components useful for making micro-services."
-   :licenses        [{:name "MIT License"
-                      :url  "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"}]
-   :project-basis   (build-api/create-basis {:project "deps.edn"})})
+   :basis           (build-api/create-basis {:project "deps.edn"})
+   :lib             lib
+   :version         version
+   :src-dirs        ["src"]
+   :pom-data [[:licenses [:license
+                          [:name "MIT License"]
+                          [:url  "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"]]]]})
 
 (defn clean
   "Remove a directory
@@ -34,11 +37,10 @@
 (defn pom
   [{:as   _opts
     :keys [dest]}]
-
-  (build-api/write-pom (cond-> {:lib       lib
-                                :version   version
-                                :basis     @basis
-                                :src-dirs  ["src"]}
+  ;; delete the pom file, so it's not used as the basis for the pom file...
+  (java.nio.file.Files/deleteIfExists (java.nio.file.Path/of "pom.xml" (into-array String [])))
+  (build-api/write-pom (cond-> (assoc project-config
+                                      :src-pom nil)
                          dest (assoc :target dest)
                          (not dest) (assoc :class-dir class-dir))))
 
