@@ -21,7 +21,7 @@
    :src-dirs        ["src"]
    :pom-data [[:licenses [:license
                           [:name "MIT License"]
-                          [:url  "https://github.com/Afrolabs/afrolabs-clj/blob/main/LICENSE"]]]]})
+                          [:url  "http://opensource.org/licenses/MIT"]]]]})
 
 (defn clean
   "Remove a directory
