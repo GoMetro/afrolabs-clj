@@ -2,7 +2,7 @@
   (:require
    [clojure.tools.build.api :as build-api]))
 
-(def lib   'com.github.gometro/afrolabs-clj)
+(def lib   'com.github.afrolabs/afrolabs-clj)
 (def version (format "1.0.%s" (build-api/git-count-revs nil)))
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar"
