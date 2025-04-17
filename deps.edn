@@ -77,7 +77,9 @@
   lambdaisland/uri                                       {:mvn/version "1.19.155"},
   org.clj-commons/hickory                                {:mvn/version "0.7.7"},
   instaparse/instaparse                                  {:mvn/version "1.5.0"},
-  com.cognitect/transit-clj                              {:mvn/version "1.0.333"}}
+  com.cognitect/transit-clj                              {:mvn/version "1.0.333"}
+
+  com.velisco/tagged                                     {:mvn/version "0.5.0"}}
 
  :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
