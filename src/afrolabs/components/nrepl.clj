@@ -22,12 +22,10 @@
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn make-nrepl-instance
-  [{:as   cfg
+  [{:as   _cfg
     :keys [enabled?
            port
            bind-address]}]
-  (tap> cfg)
-
   (let [port         (or port 42069)
         bind-address (or bind-address "localhost")
         stop-nrepl   (csp/chan)
