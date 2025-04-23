@@ -1970,6 +1970,18 @@
 
   )
 
+(defn- nil-or-empty?
+  [v]
+  (or (nil? v)
+      (and (sequential? v)
+           (empty? v))))
+
+(comment
+  (nil-or-empty? :keyword)
+  (nil-or-empty? nil)
+  (nil-or-empty? [])
+  )
+
 (defn merge-updates-with-ktable
   "Acts like a reduce function.
   Accepts a starting-state (`old-ktable`) and a collection of kafka-records (`new-msgs`),
@@ -2012,12 +2024,12 @@
                                    (cond
                                      ;; nothing is nil, save the value
                                      (not (or (nil? k)
-                                              (nil? v)
+                                              (nil-or-empty? v)
                                               (nil? t)))
                                      (assoc-in old [t k] v)
 
                                      ;; value (only) is nil, remove the value (tombstone)
-                                     (and (nil? v)
+                                     (and (nil-or-empty? v)
                                           (not (or (nil? t)
                                                    (nil? k))))
                                      (update old t (fnil #(dissoc % k) {}))
