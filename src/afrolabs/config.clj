@@ -138,6 +138,11 @@
   [_ _ value]
   (config-string->bool value))
 
+(defmethod aero/reader 'not
+  [_ _ value]
+  (println (str "'not: " value))
+  (log/spy :debug (not (boolean value))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmethod aero/reader 'config/case
