@@ -140,8 +140,7 @@
 
 (defmethod aero/reader 'not
   [_ _ value]
-  (println (str "'not: " value))
-  (log/spy :debug (not (boolean value))))
+  (not (boolean value)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
