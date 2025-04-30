@@ -1505,7 +1505,7 @@
 
 (-comp/defcomponent {::-comp/ig-kw              ::kafka-consumer
                      ::-comp/config-spec        ::consumer-config
-                     ::-comp/supports?:disabled true}
+                     ::-comp/supports:disabled? true}
   [cfg] (make-consumer cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

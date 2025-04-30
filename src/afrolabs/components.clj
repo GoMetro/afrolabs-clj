@@ -23,7 +23,7 @@
 
 (defmacro defcomponent
   "Defines a new component."
-  [{::keys [config-spec ig-kw supports?:disabled]}
+  [{::keys [config-spec ig-kw supports:disabled?]}
    body-destruct
    & body]
   (let [[cfg-sym] body-destruct
@@ -34,8 +34,8 @@
        (defn ~init-fn-name
          [cfg-key# cfg#]
 
-         (if (or (not ~supports?:disabled)
-                 (not (:disabled cfg#)))
+         (if (or (not ~supports:disabled?)
+                 (not (:disabled? cfg#)))
            (do
 
              ;; validation of config against config specification
