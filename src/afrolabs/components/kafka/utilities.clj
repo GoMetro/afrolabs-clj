@@ -666,13 +666,13 @@
                                    (-confluent/ConfluentCloud :api-key confluent-api-key
                                                               :api-secret confluent-api-secret))])
         admin-client-strategies common-strategies
-        src-topic-consumer-strategies (concat [(-bytes-serdes/ByteArraySerializer :consumer :both)
+        src-topic-consumer-strategies (concat [(-kafka/ByteArraySerializer :consumer :both)
                                                (-kafka/OffsetReset "earliest")
                                                (-kafka/ConsumerGroup consumer-group-id)
                                                (-kafka/SubscribeWithTopicsCollection [src-topic])
                                                (-kafka/AutoCommitOffsets)]
                                               common-strategies)
-        dest-topic-producer-strategies (concat [(-bytes-serdes/ByteArraySerializer :producer :both)
+        dest-topic-producer-strategies (concat [(-kafka/ByteArraySerializer :producer :both)
                                                 (-kafka/HighThroughput)]
                                                common-strategies)
 
