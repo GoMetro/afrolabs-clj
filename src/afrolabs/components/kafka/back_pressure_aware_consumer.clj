@@ -96,6 +96,7 @@
       -comp/IHaltable
       (halt [_]
         (csp/close! incoming-msgs)
+        (csp/close! result-msgs) ;; this carries the danger of losing some results
         (csp/<!! msgs-handling-thread))
 
       -kafka/IConsumerPostInitHook
