@@ -49,7 +49,9 @@
 
              ;; the body passed to the defcomponent, is actually the implementation of the ig/init-key, but kept in this separate init-fn
              ;; inline it here
-             (let [~cfg-sym cfg#]
+             (let [~cfg-sym (assoc cfg#
+                                   :afrolabs.components/ig-kw        ~ig-kw
+                                   :afrolabs.components/component-kw cfg-key#)]
                ~@body))
            (do (log/info (str "Component '" cfg-key# "' is disabled.")))))
 
