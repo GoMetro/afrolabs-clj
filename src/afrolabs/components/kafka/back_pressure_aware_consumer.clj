@@ -40,8 +40,17 @@
         blocked-msgs        (atom [])
         msgs-in-outbox      (atom [])
 
-        ensure-paused    (fn [] (.pause  ^Consumer @consumer* @assigned-partitions))
-        ensure-unpaused  (fn [] (.resume ^Consumer @consumer* @assigned-partitions))
+        pause-unpause-state (atom nil)
+        ensure-paused    (fn []
+                           (when-not (= :paused @pause-unpause-state)
+                             (log/warn "Back-pressure aware consumer strategy is pausing the consumer. This means the outbound integration is slow.")
+                             (.pause  ^Consumer @consumer* @assigned-partitions)
+                             (reset! pause-unpause-state :paused)))
+        ensure-unpaused  (fn []
+                           (when-not (= :unpaused @pause-unpause-state)
+                             (.resume ^Consumer @consumer* @assigned-partitions)
+                             (log/warn "Back-pressure aware consumer strategy is consuming.")
+                             (reset! pause-unpause-state :unpaused)))
 
         incoming-msgs        (csp/chan)
         result-msgs          (csp/chan 1)
