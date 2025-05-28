@@ -592,6 +592,36 @@
         (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.edn_serdes.Deserializer"
                                                   (:parse-inst-as-java-time -edn-serdes/config-keys) parse-inst-as-java-time)))))
 
+(defstrategy ByteArraySerializer
+  [& {consumer-option :consumer
+      producer-option :producer
+      :or {consumer-option :none
+           producer-option :none}}]
+
+  ;; validation of arguments, fail early
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (and (allowed-values consumer-option)
+                   (allowed-values producer-option))
+      (throw (ex-info "Specify proper values for :consumer and/or :producer for ByteArraySerializer."
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (reify
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG    "afrolabs.components.kafka.bytes_serdes.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG  "afrolabs.components.kafka.bytes_serdes.Deserializer")))
+
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option) (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG       "afrolabs.components.kafka.bytes_serdes.Serializer")
+        (#{:both :value} producer-option) (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG     "afrolabs.components.kafka.bytes_serdes.Serializer")))))
+
 (defstrategy TransitSerializer
   [& {producer-option :producer
       consumer-option :consumer
