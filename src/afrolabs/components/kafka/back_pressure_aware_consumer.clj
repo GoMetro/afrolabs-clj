@@ -18,11 +18,16 @@
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]
    [taoensso.timbre :as log]
+   [afrolabs.prometheus :as -prom]
+   [iapetos.core :as prom]
    )
   (:import
    [org.apache.kafka.clients.consumer
     Consumer]))
 
+(-prom/register-metric (prom/gauge ::consumer-paused
+                                   {:description "Is the backpressure-aware consumer strategy currently pausing the consumer?"
+                                    :labels [:component]}))
 
 (defn make-strategy
   "Creates an instance of a class which implements a bunch of protocols.
@@ -34,7 +39,9 @@
   - also in the `:strategies`, reference this instance
   - also in `:strategy/SubscribeWithTopicNameProvider` use this instance in `:consumer-rebalance-listeners`"
 
-  [{:as cfg :keys [actual-consumer-client]}]
+  [{:as                       _cfg
+    :keys                     [actual-consumer-client]
+    :afrolabs.components/keys [component-kw]}]
   (let [consumer*           (atom nil)
         assigned-partitions (atom {})
         blocked-msgs        (atom [])
@@ -45,11 +52,15 @@
                            (when-not (= :paused @pause-unpause-state)
                              (log/warn "Back-pressure aware consumer strategy is pausing the consumer. This means the outbound integration is slow.")
                              (.pause  ^Consumer @consumer* @assigned-partitions)
+                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                           1)
                              (reset! pause-unpause-state :paused)))
         ensure-unpaused  (fn []
                            (when-not (= :unpaused @pause-unpause-state)
-                             (.resume ^Consumer @consumer* @assigned-partitions)
                              (log/warn "Back-pressure aware consumer strategy is consuming.")
+                             (.resume ^Consumer @consumer* @assigned-partitions)
+                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                           0)
                              (reset! pause-unpause-state :unpaused)))
 
         incoming-msgs        (csp/chan)
