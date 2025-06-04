@@ -1464,8 +1464,9 @@
 (defn- background-wait-on-stop-signal
   "Extracted only because the debugger chokes on core.async."
   [consumer must-stop
-   {:as   consumer-config
-    :keys [service-health-trip-switch]}
+   {:as          consumer-config
+    :keys        [service-health-trip-switch]
+    component-kw :afrolabs.components/component-kw}
    consumer-properties has-stopped]
   (let [consumer-group-id (get consumer-properties ConsumerConfig/GROUP_ID_CONFIG "<UNAVAILABLE>")]
     (csp/go
@@ -1479,7 +1480,7 @@
           (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
                  (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
                          consumer-group-id))
-          (-health/indicate-unhealthy! service-health-trip-switch ::kafka-consumer))
+          (-health/indicate-unhealthy! service-health-trip-switch component-kw))
 
         ;; Anyway deliver the value into the promise.
         ;; At the time this code is written, the return value is not used.

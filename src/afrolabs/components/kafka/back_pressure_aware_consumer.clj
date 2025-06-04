@@ -43,7 +43,7 @@
     :keys                     [actual-consumer-client]
     :afrolabs.components/keys [component-kw]}]
   (let [consumer*           (atom nil)
-        assigned-partitions (atom {})
+        assigned-partitions (atom nil)
         blocked-msgs        (atom [])
         msgs-in-outbox      (atom [])
 
@@ -51,17 +51,19 @@
         ensure-paused    (fn []
                            (when-not (= :paused @pause-unpause-state)
                              (log/warn "Back-pressure aware consumer strategy is pausing the consumer. This means the outbound integration is slow.")
-                             (.pause  ^Consumer @consumer* @assigned-partitions)
-                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
-                                           1)
-                             (reset! pause-unpause-state :paused)))
+                             (when-let [assigned-partitions* @assigned-partitions]
+                               (.pause  ^Consumer @consumer* assigned-partitions*)
+                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                             1)
+                               (reset! pause-unpause-state :paused))))
         ensure-unpaused  (fn []
                            (when-not (= :unpaused @pause-unpause-state)
                              (log/info "Back-pressure aware consumer strategy is consuming.")
-                             (.resume ^Consumer @consumer* @assigned-partitions)
-                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
-                                           0)
-                             (reset! pause-unpause-state :unpaused)))
+                             (when-let [assigned-partitions* @assigned-partitions]
+                               (.resume ^Consumer @consumer* assigned-partitions*)
+                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                             0)
+                               (reset! pause-unpause-state :unpaused))))
 
         incoming-msgs        (csp/chan)
         result-msgs          (csp/chan 1)
