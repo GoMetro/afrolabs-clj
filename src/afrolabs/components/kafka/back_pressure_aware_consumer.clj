@@ -52,18 +52,18 @@
                            (when-not (= :paused @pause-unpause-state)
                              (log/warn "Back-pressure aware consumer strategy is pausing the consumer. This means the outbound integration is slow.")
                              (when-let [assigned-partitions* @assigned-partitions]
-                               (.pause  ^Consumer @consumer* assigned-partitions*))
-                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
-                                           1)
-                             (reset! pause-unpause-state :paused)))
+                               (.pause  ^Consumer @consumer* assigned-partitions*)
+                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                             1)
+                               (reset! pause-unpause-state :paused))))
         ensure-unpaused  (fn []
                            (when-not (= :unpaused @pause-unpause-state)
                              (log/info "Back-pressure aware consumer strategy is consuming.")
                              (when-let [assigned-partitions* @assigned-partitions]
-                               (.resume ^Consumer @consumer* assigned-partitions*))
-                             (prom/observe (get-gauge-consumer-paused {:component component-kw})
-                                           0)
-                             (reset! pause-unpause-state :unpaused)))
+                               (.resume ^Consumer @consumer* assigned-partitions*)
+                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                                             0)
+                               (reset! pause-unpause-state :unpaused))))
 
         incoming-msgs        (csp/chan)
         result-msgs          (csp/chan 1)
