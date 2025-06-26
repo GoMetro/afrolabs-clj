@@ -8,7 +8,8 @@
             [afrolabs.version :as -version]
             [ring.util.http-response :as http-response]
             [ring.middleware.pratchett]
-            [clojure.pprint])
+            [clojure.pprint]
+            [taoensso.timbre :as log])
   (:import [afrolabs.components IHaltable]
            [afrolabs.components.health IServiceHealthTripSwitch]))
 
@@ -103,43 +104,53 @@
     :as   cfg}]
 
   (s/assert ::http-component-cfg cfg)
+  (tap> cfg)
 
-  (let [handler (apply some-fn
-                       (map #(partial handle-http-request
-                                      %)
-                            handlers))
-        middleware-chain (or (when (seq middleware-providers)
-                               (->> middleware-providers
-                                    (mapcat get-middleware)
-                                    (reverse)
-                                    (apply comp)))
-                             identity)
-        handler' (-> handler
-                     (middleware-chain)
-                     (basic-request-logging {:port port :ip ip})
-                     (add-request-id)
-                     (ring.middleware.pratchett/wrap-pratchett))
-        s (httpkit/run-server handler'
-                              (cond-> {:error-logger         (fn [txt ex]
-                                                               (if-not ex
-                                                                 (log/error txt)
-                                                                 (log/error ex txt)))
-                                       :warn-logger          (fn [txt ex]
-                                                               (if-not ex
-                                                                 (log/warn txt)
-                                                                 (log/warn ex txt)))
-                                        ;; replaced with (basic-request-logging)
-                                       ;; :event-logger         (fn [event-name]
-                                       ;;                         (log/debug (str "low-level http-kit event logger: "
-                                       ;;                                         event-name)))
-                                       :legacy-return-value? false
-                                       :port                 port
-                                       :ip                   ip}
-                                worker-thread-name-prefix (assoc :worker-name-prefix   worker-thread-name-prefix)))]
+  (log/with-context+ {::http-port port
+                      ::http-ip   ip}
+    (log/info "Attempting to start HTTP component")
+    (let [handler (apply some-fn
+                         (map #(partial handle-http-request
+                                        %)
+                              handlers))
+          middleware-chain (or (when (seq middleware-providers)
+                                 (->> middleware-providers
+                                      (mapcat get-middleware)
+                                      (reverse)
+                                      (apply comp)))
+                               identity)
+          handler' (-> handler
+                       (middleware-chain)
+                       (basic-request-logging {:port port :ip ip})
+                       (add-request-id)
+                       (ring.middleware.pratchett/wrap-pratchett))
+          s
+          (try (httpkit/run-server handler'
+                                   (cond-> {:error-logger         (fn [txt ex]
+                                                                    (if-not ex
+                                                                      (log/error txt)
+                                                                      (log/error ex txt)))
+                                            :warn-logger          (fn [txt ex]
+                                                                    (if-not ex
+                                                                      (log/warn txt)
+                                                                      (log/warn ex txt)))
+                                            ;; replaced with (basic-request-logging)
+                                            ;; :event-logger         (fn [event-name]
+                                            ;;                         (log/debug (str "low-level http-kit event logger: "
+                                            ;;                                         event-name)))
+                                            :legacy-return-value? false
+                                            :port                 port
+                                            :ip                   ip}
+                                     worker-thread-name-prefix (assoc :worker-name-prefix   worker-thread-name-prefix)))
+               (catch Throwable t
+                 (log/error t "Unable to create HTTP server.")
+                 (throw (ex-info "Unable to create HTTP server"
+                                 {:system-id (:afrolabs.components/ig-kw cfg)}
+                                 t))))]
 
-    (reify
-      IHaltable
-      (halt [_] (httpkit/server-stop! s)))))
+      (reify
+        IHaltable
+        (halt [_] (httpkit/server-stop! s))))))
 
 (-comp/defcomponent {::-comp/config-spec ::http-component-cfg
                      ::-comp/ig-kw       ::service}
