@@ -2304,8 +2304,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
            ktable-checkpoint-storage]
     :or   {caught-up-once? false}}]
 
-  (let [consumer-group-id (str  ktable-id
-                                "-"
+  (let [consumer-group-id (str  "ktable-" ktable-id "-"
                                 (UUID/randomUUID))
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
