@@ -21,7 +21,7 @@
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
-   )
+   [clj-memory-meter.core :as mm])
   (:import [org.apache.kafka.clients.producer
             ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
 
@@ -2191,10 +2191,10 @@
 (s/def ::retention-ms pos-int?)
 (s/def ::ktable-checkpoint-storage #(satisfies? -ktable-checkpoints/IKTableCheckpointStorage %))
 (s/def ::ktable-cfg (s/and ::clientless-consumer
-                           (s/keys :req-un [::ktable-id]
+                           (s/keys :req-un [::ktable-id
+                                            ::-time/clock]
                                    :opt-un [::caught-up-once?
                                             ::retention-ms
-                                            ::-time/clock
                                             ::ktable-checkpoint-storage])
                            ;; when retention-ms is specified, clock must be too
                            (fn [{:keys [retention-ms clock]}]
@@ -2288,6 +2288,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                      {:description "How long does it take to consume a batch of messages."
                                       :labels [:ktable-id]}))
 
+(-prom/register-metric (prom/gauge ::ktable-partition-size-bytes
+                                   {:description "How many bytes does it take to represent the values contained in a ktable partition."
+                                    :labels [:topic
+                                             :partition
+                                             :consumer-group-id]}))
+
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
@@ -2331,6 +2337,47 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
         merge-updates-opts (cond-> {}
                              retention-ms (assoc :retention-ms retention-ms))
+
+
+        ;; on the advice of the memomry-beter library authors, we are doing it
+        ;; but not very frequently. So we are measuring "representation-size" of every topic-partition
+        ;; shard of data in the ktable, once every minute.
+        ktable-size-measurement-last-instant (atom (-time/get-current-time clock))
+        maybe-log-ktable-size! (fn [{:as ktable-value}]
+                                 (let [now (-time/get-current-time clock)
+                                       when* @ktable-size-measurement-last-instant]
+                                   (when (t/after? now when*)
+                                     (log/debug "logging ktable size!")
+                                     (let [{} (meta ktable-value)
+
+                                           topic-partition-pairs (for [topic      (keys ktable-value)
+                                                                       partition  (->> (get ktable-value topic)
+                                                                                       (vals)
+                                                                                       (map (comp :partition meta))
+                                                                                       (into #{}))]
+                                                                   [topic partition])]
+                                       (doseq [[topic partition] topic-partition-pairs]
+                                         (log/with-context+ {:topic             topic
+                                                             :partition         partition
+                                                             :consumer-group-id consumer-group-id}
+                                           (log/trace "MeasurING ktable partition-size...")
+                                           (let [measurement (mm/measure (into {}
+                                                                               (filter (fn [[_key {:as              _latest-record
+                                                                                                   value-partition :partition}]]
+                                                                                         (= partition value-partition)))
+                                                                               (get ktable-value topic))
+                                                                         :bytes true)]
+                                             (log/with-context+ {:measurement measurement}
+                                               (log/trace "MeasurED topic-partition representation-size."))
+                                             (prom/set (get-gauge-ktable-partition-size-bytes {:consumer-group-id consumer-group-id
+                                                                                               :topic             topic
+                                                                                               :partition         partition})
+                                                       measurement))))
+                                       ;; when to measure next, a minute after measurement has ended
+                                       (reset! ktable-size-measurement-last-instant
+                                               (t/+ now (t/duration 1 :minutes)))))))
+
+        ;; This is the consumer-loop of the ktable object
         consumer-client (reify
                           IConsumerClient
                           (consume-messages
@@ -2343,6 +2390,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                     (let [latest-ktable-value
                                           (swap! ktable-state
                                                  #(merge-updates-with-ktable % msgs merge-updates-opts))]
+                                      (maybe-log-ktable-size! latest-ktable-value)
                                       (when ktable-checkpoint-storage
                                         ;; This `register-ktable-value` is called after _every_ update to the ktable value.
                                         ;; We are depending on the implementation to store only a subset of registered ktable values.
