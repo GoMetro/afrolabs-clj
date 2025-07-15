@@ -2284,7 +2284,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
           (log/trace "END: ktable-atom-wait-for-catchup")
           x)))))
 
-(-prom/register-metric (prom/summary ::ktable-consume-time))
+(-prom/register-metric (prom/summary ::ktable-consume-time-secs
+                                     {:description "How long does it take to consume a batch of messages."
+                                      :labels [:ktable-id]}))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
@@ -2333,7 +2335,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                           IConsumerClient
                           (consume-messages
                               [_ msgs]
-                            (prom/with-duration (get-summary-ktable-consume-time)
+                            (prom/with-duration (get-summary-ktable-consume-time-secs {:ktable-id ktable-id})
                               (log/with-context+ {:ktable-id               ktable-id
                                                   :topic-partition-offsets (msgs->topic-partition-maxoffsets msgs)}
                                 (when (seq msgs)
