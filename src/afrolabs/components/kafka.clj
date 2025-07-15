@@ -2212,6 +2212,8 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
 (s/def ::ktable #(satisfies? IKTable %))
 
+(-prom/register-metric (prom/summary ::caught-up-already-calc))
+
 (defn ktable-atom-wait-for-catchup
   "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
   [ktable-atom topic-partition-offset timeout-duration timeout-value]
@@ -2225,21 +2227,22 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         (fn [ktable-value] (:ktable/topic-partition-offsets (meta ktable-value)))
 
         caught-up-already? (fn [ktable-value]
-                             (let [ktable-topic-partition-offsets
-                                   (ktable->topic-partition-offsets ktable-value)]
+                             (prom/with-duration (get-summary-caught-up-already-calc)
+                               (let [ktable-topic-partition-offsets
+                                     (ktable->topic-partition-offsets ktable-value)]
 
-                               (->> topic-partition-offset
-                                    (mapcat (fn [[topic partition-offset]]
-                                              (map (fn [[partition offset]] [topic partition offset])
-                                                   partition-offset)))
-                                    (keep (fn [[topic partition offset]]
-                                            (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
-                                                                                 [topic partition])]
-                                              (when (and ktable-progress-offset
-                                                         (< ktable-progress-offset offset))
-                                                :not-caught-up-yet))))
-                                    (count)
-                                    (zero?))))]
+                                 (->> topic-partition-offset
+                                      (mapcat (fn [[topic partition-offset]]
+                                                (map (fn [[partition offset]] [topic partition offset])
+                                                     partition-offset)))
+                                      (keep (fn [[topic partition offset]]
+                                              (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
+                                                                                   [topic partition])]
+                                                (when (and ktable-progress-offset
+                                                           (< ktable-progress-offset offset))
+                                                  :not-caught-up-yet))))
+                                      (count)
+                                      (zero?)))))]
     (cond
       (caught-up-already? initial-ktable-value)
       (ktable->topic-partition-offsets initial-ktable-value)
@@ -2280,6 +2283,8 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         (let [x (csp/<!! caught-up?-chan)]
           (log/trace "END: ktable-atom-wait-for-catchup")
           x)))))
+
+(-prom/register-metric (prom/summary ::ktable-consume-time))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
@@ -2328,17 +2333,20 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                           IConsumerClient
                           (consume-messages
                               [_ msgs]
-                            (log/with-context+ {:ktable-id ktable-id}
-                              (when (seq msgs)
-                                (let [latest-ktable-value
-                                      (swap! ktable-state
-                                             #(merge-updates-with-ktable % msgs merge-updates-opts))]
-                                  (when ktable-checkpoint-storage
-                                    ;; This `register-ktable-value` is called after _every_ update to the ktable value.
-                                    ;; We are depending on the implementation to store only a subset of registered ktable values.
-                                    (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
-                                                                               ktable-id
-                                                                               latest-ktable-value)))))))
+                            (prom/with-duration (get-summary-ktable-consume-time)
+                              (log/with-context+ {:ktable-id               ktable-id
+                                                  :topic-partition-offsets (msgs->topic-partition-maxoffsets msgs)}
+                                (when (seq msgs)
+                                  (log/with-context+ {:nr-msgs (count msgs)}
+                                    (let [latest-ktable-value
+                                          (swap! ktable-state
+                                                 #(merge-updates-with-ktable % msgs merge-updates-opts))]
+                                      (when ktable-checkpoint-storage
+                                        ;; This `register-ktable-value` is called after _every_ update to the ktable value.
+                                        ;; We are depending on the implementation to store only a subset of registered ktable values.
+                                        (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
+                                                                                   ktable-id
+                                                                                   latest-ktable-value)))))))))
 
         seek-strategy (cond
                         (and ktable-checkpoint-storage
