@@ -129,7 +129,8 @@
 
 (defn- deserialize-consumer-record-header*
   [[header-name header-value]]
-  [header-name (deserialize-consumer-record-header header-name header-value)])
+  [header-name (when header-value
+                 (deserialize-consumer-record-header header-name header-value))])
 
 (comment
 
