@@ -2215,6 +2215,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 (defn ktable-atom-wait-for-catchup
   "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
   [ktable-atom topic-partition-offset timeout-duration timeout-value]
+  (log/trace "START: ktable-atom-wait-for-catchup")
   (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
         timeout-chan (csp/timeout timeout-ms)
 
@@ -2249,7 +2250,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
             new-ktable-ch (csp/chan (csp/sliding-buffer 1))]
 
         ;; notice changes when they happen
-        (add-watch ktable-atom watch-id (fn [_ _ _ _] (csp/>!! new-ktable-ch true)))
+        (add-watch ktable-atom watch-id (fn [_ _ _ _]
+                                          (log/trace "Ktable atom change.")
+                                          (csp/>!! new-ktable-ch true)))
 
         ;; do the job of waiting on a background thread
         (csp/go
@@ -2271,9 +2274,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
         ;; kick of the process
         (csp/go (csp/>! new-ktable-ch true))
+        (log/trace "INTER: ktable-atom-wait-for-catchup")
 
         ;; wait for the result or the timeout-value to arrive
-        (csp/<!! caught-up?-chan)))))
+        (let [x (csp/<!! caught-up?-chan)]
+          (log/trace "END: ktable-atom-wait-for-catchup")
+          x)))))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
@@ -2363,7 +2369,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
       IKTable
       (ktable-wait-for-catchup [_ topic-partition-offset timeout-duration timeout-value]
-        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value))
+        (log/with-context+ {:timeout-duration       timeout-duration
+                            :topic-partition-offset topic-partition-offset}
+          (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value)))
       (ktable-wait-until-fully-current [_ timeout-duration timeout-value]
         (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
               timeout-chan (csp/timeout timeout-ms)
