@@ -5,7 +5,9 @@
             [clojure.spec.alpha :as s]))
 
 (defprotocol IClock
-  (get-current-time [this] "Retuns the current instant"))
+  (get-current-instant [this] "Returns the current instant.")
+  (get-current-time [this] "Retuns the current instant")
+  (get-local-date [this] "Returns a local date."))
 
 (s/def ::system-time-cfg (s/keys :req-un []
                                  :opt-un []))
@@ -14,7 +16,9 @@
 (def system-time-instance
   (reify
     IClock
-    (get-current-time [_] (t/instant))))
+    (get-current-instant [_] (t/instant))
+    (get-current-time [_]    (t/instant))
+    (get-local-date [_]      (t/local-date))))
 
 (-comp/defcomponent {::-comp/ig-kw       ::system-time
                      ::-comp/config-spec ::system-time-cfg}
