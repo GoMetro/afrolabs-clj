@@ -21,7 +21,7 @@
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
-   )
+   [clj-memory-meter.core :as mm])
   (:import [org.apache.kafka.clients.producer
             ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
 
@@ -80,7 +80,8 @@
   (produce! [_ records]
     "Produces a collection of record maps. This is a side-effect!"))
 
-(s/def ::kafka-producer #(satisfies? IProducer %))
+(s/def ::kafka-producer #(satisfies? IProducer %)) ;; meh, I don't like this one
+(s/def ::producer #(satisfies? IProducer %))
 
 (defprotocol IConsumer
   "The client interface for the kafka consumer component"
@@ -129,7 +130,8 @@
 
 (defn- deserialize-consumer-record-header*
   [[header-name header-value]]
-  [header-name (deserialize-consumer-record-header header-name header-value)])
+  [header-name (when header-value
+                 (deserialize-consumer-record-header header-name header-value))])
 
 (comment
 
@@ -2190,10 +2192,10 @@
 (s/def ::retention-ms pos-int?)
 (s/def ::ktable-checkpoint-storage #(satisfies? -ktable-checkpoints/IKTableCheckpointStorage %))
 (s/def ::ktable-cfg (s/and ::clientless-consumer
-                           (s/keys :req-un [::ktable-id]
+                           (s/keys :req-un [::ktable-id
+                                            ::-time/clock]
                                    :opt-un [::caught-up-once?
                                             ::retention-ms
-                                            ::-time/clock
                                             ::ktable-checkpoint-storage])
                            ;; when retention-ms is specified, clock must be too
                            (fn [{:keys [retention-ms clock]}]
@@ -2211,9 +2213,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
 (s/def ::ktable #(satisfies? IKTable %))
 
+(-prom/register-metric (prom/summary ::caught-up-already-calc))
+
 (defn ktable-atom-wait-for-catchup
   "Will use csp to actually wait up to timeout-duration for the ktable value to reflect changes up to this level."
   [ktable-atom topic-partition-offset timeout-duration timeout-value]
+  (log/trace "START: ktable-atom-wait-for-catchup")
   (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
         timeout-chan (csp/timeout timeout-ms)
 
@@ -2223,21 +2228,22 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
         (fn [ktable-value] (:ktable/topic-partition-offsets (meta ktable-value)))
 
         caught-up-already? (fn [ktable-value]
-                             (let [ktable-topic-partition-offsets
-                                   (ktable->topic-partition-offsets ktable-value)]
+                             (prom/with-duration (get-summary-caught-up-already-calc)
+                               (let [ktable-topic-partition-offsets
+                                     (ktable->topic-partition-offsets ktable-value)]
 
-                               (->> topic-partition-offset
-                                    (mapcat (fn [[topic partition-offset]]
-                                              (map (fn [[partition offset]] [topic partition offset])
-                                                   partition-offset)))
-                                    (keep (fn [[topic partition offset]]
-                                            (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
-                                                                                 [topic partition])]
-                                              (when (and ktable-progress-offset
-                                                         (< ktable-progress-offset offset))
-                                                :not-caught-up-yet))))
-                                    (count)
-                                    (zero?))))]
+                                 (->> topic-partition-offset
+                                      (mapcat (fn [[topic partition-offset]]
+                                                (map (fn [[partition offset]] [topic partition offset])
+                                                     partition-offset)))
+                                      (keep (fn [[topic partition offset]]
+                                              (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
+                                                                                   [topic partition])]
+                                                (when (and ktable-progress-offset
+                                                           (< ktable-progress-offset offset))
+                                                  :not-caught-up-yet))))
+                                      (count)
+                                      (zero?)))))]
     (cond
       (caught-up-already? initial-ktable-value)
       (ktable->topic-partition-offsets initial-ktable-value)
@@ -2248,7 +2254,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
             new-ktable-ch (csp/chan (csp/sliding-buffer 1))]
 
         ;; notice changes when they happen
-        (add-watch ktable-atom watch-id (fn [_ _ _ _] (csp/>!! new-ktable-ch true)))
+        (add-watch ktable-atom watch-id (fn [_ _ _ _]
+                                          (log/trace "Ktable atom change.")
+                                          (csp/>!! new-ktable-ch true)))
 
         ;; do the job of waiting on a background thread
         (csp/go
@@ -2270,9 +2278,22 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
         ;; kick of the process
         (csp/go (csp/>! new-ktable-ch true))
+        (log/trace "INTER: ktable-atom-wait-for-catchup")
 
         ;; wait for the result or the timeout-value to arrive
-        (csp/<!! caught-up?-chan)))))
+        (let [x (csp/<!! caught-up?-chan)]
+          (log/trace "END: ktable-atom-wait-for-catchup")
+          x)))))
+
+(-prom/register-metric (prom/summary ::ktable-consume-time-secs
+                                     {:description "How long does it take to consume a batch of messages."
+                                      :labels [:ktable-id]}))
+
+(-prom/register-metric (prom/gauge ::ktable-partition-size-bytes
+                                   {:description "How many bytes does it take to represent the values contained in a ktable partition."
+                                    :labels [:topic
+                                             :partition
+                                             :consumer-group-id]}))
 
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
@@ -2284,8 +2305,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
            ktable-checkpoint-storage]
     :or   {caught-up-once? false}}]
 
-  (let [consumer-group-id (str  ktable-id
-                                "-"
+  (let [consumer-group-id (str  "ktable-" ktable-id "-"
                                 (UUID/randomUUID))
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
@@ -2317,21 +2337,66 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
         merge-updates-opts (cond-> {}
                              retention-ms (assoc :retention-ms retention-ms))
+
+
+        ;; on the advice of the memomry-beter library authors, we are doing it
+        ;; but not very frequently. So we are measuring "representation-size" of every topic-partition
+        ;; shard of data in the ktable, once every minute.
+        ktable-size-measurement-last-instant (atom (-time/get-current-time clock))
+        maybe-log-ktable-size! (fn [{:as ktable-value}]
+                                 (let [now (-time/get-current-time clock)
+                                       when* @ktable-size-measurement-last-instant]
+                                   (when (t/after? now when*)
+                                     (log/debug "logging ktable size!")
+                                     (let [{} (meta ktable-value)
+
+                                           topic-partition-pairs (for [topic      (keys ktable-value)
+                                                                       partition  (->> (get ktable-value topic)
+                                                                                       (vals)
+                                                                                       (map (comp :partition meta))
+                                                                                       (into #{}))]
+                                                                   [topic partition])]
+                                       (doseq [[topic partition] topic-partition-pairs]
+                                         (log/with-context+ {:topic             topic
+                                                             :partition         partition
+                                                             :consumer-group-id consumer-group-id}
+                                           (log/trace "MeasurING ktable partition-size...")
+                                           (let [measurement (mm/measure (into {}
+                                                                               (filter (fn [[_key {:as              _latest-record
+                                                                                                   value-partition :partition}]]
+                                                                                         (= partition value-partition)))
+                                                                               (get ktable-value topic))
+                                                                         :bytes true)]
+                                             (log/with-context+ {:measurement measurement}
+                                               (log/trace "MeasurED topic-partition representation-size."))
+                                             (prom/set (get-gauge-ktable-partition-size-bytes {:consumer-group-id consumer-group-id
+                                                                                               :topic             topic
+                                                                                               :partition         partition})
+                                                       measurement))))
+                                       ;; when to measure next, a minute after measurement has ended
+                                       (reset! ktable-size-measurement-last-instant
+                                               (t/+ now (t/duration 1 :minutes)))))))
+
+        ;; This is the consumer-loop of the ktable object
         consumer-client (reify
                           IConsumerClient
                           (consume-messages
                               [_ msgs]
-                            (log/with-context+ {:ktable-id ktable-id}
-                              (when (seq msgs)
-                                (let [latest-ktable-value
-                                      (swap! ktable-state
-                                             #(merge-updates-with-ktable % msgs merge-updates-opts))]
-                                  (when ktable-checkpoint-storage
-                                    ;; This `register-ktable-value` is called after _every_ update to the ktable value.
-                                    ;; We are depending on the implementation to store only a subset of registered ktable values.
-                                    (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
-                                                                               ktable-id
-                                                                               latest-ktable-value)))))))
+                            (prom/with-duration (get-summary-ktable-consume-time-secs {:ktable-id ktable-id})
+                              (log/with-context+ {:ktable-id               ktable-id
+                                                  :topic-partition-offsets (msgs->topic-partition-maxoffsets msgs)}
+                                (when (seq msgs)
+                                  (log/with-context+ {:nr-msgs (count msgs)}
+                                    (let [latest-ktable-value
+                                          (swap! ktable-state
+                                                 #(merge-updates-with-ktable % msgs merge-updates-opts))]
+                                      (maybe-log-ktable-size! latest-ktable-value)
+                                      (when ktable-checkpoint-storage
+                                        ;; This `register-ktable-value` is called after _every_ update to the ktable value.
+                                        ;; We are depending on the implementation to store only a subset of registered ktable values.
+                                        (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
+                                                                                   ktable-id
+                                                                                   latest-ktable-value)))))))))
 
         seek-strategy (cond
                         (and ktable-checkpoint-storage
@@ -2362,7 +2427,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
       IKTable
       (ktable-wait-for-catchup [_ topic-partition-offset timeout-duration timeout-value]
-        (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value))
+        (log/with-context+ {:timeout-duration       timeout-duration
+                            :topic-partition-offset topic-partition-offset}
+          (ktable-atom-wait-for-catchup ktable-state topic-partition-offset timeout-duration timeout-value)))
       (ktable-wait-until-fully-current [_ timeout-duration timeout-value]
         (let [timeout-ms (.toMillis ^java.time.Duration timeout-duration)
               timeout-chan (csp/timeout timeout-ms)
