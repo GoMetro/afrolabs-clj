@@ -80,7 +80,8 @@
   (produce! [_ records]
     "Produces a collection of record maps. This is a side-effect!"))
 
-(s/def ::kafka-producer #(satisfies? IProducer %))
+(s/def ::kafka-producer #(satisfies? IProducer %)) ;; meh, I don't like this one
+(s/def ::producer #(satisfies? IProducer %))
 
 (defprotocol IConsumer
   "The client interface for the kafka consumer component"
