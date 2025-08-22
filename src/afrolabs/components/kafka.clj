@@ -2203,13 +2203,21 @@
                                  (not retention-ms)))))
 
 (defprotocol IKTable
-  (ktable-wait-for-catchup
-    [_this topic-partition-offset timeout-duration timeout-value]
+  (ktable-wait-for-catchup         [_this topic-partition-offset timeout-duration timeout-value]
     "Waits until a ktable has consumed messages from its source topics, at least up to the topic-partition-offset data parameter.
 Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
-  (ktable-wait-until-fully-current
-    [_this timeout-duration timeout-value]
-    "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result."))
+  (ktable-wait-until-fully-current [_this timeout-duration timeout-value]
+    "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result.")
+  (ktable-subscribe [_this {:keys [xducer
+                                   sliding-buffer-size]}]
+    "Subscribes to (processed) events stream for the kafka messages that make up the state of the ktable.
+
+If `xducer` is nil, it will become identity, which means all messages will arrive in firehose fashion.
+if `xducer` is a transducer, this will determine the result as subscribed to.
+
+Returns a subscription handle with which you can unsubscribe later.")
+  (ktable-unsubscribe [_ subscription-handle]
+    "Undo a prior subscription using the result of `(ktable-subscribe ...)`."))
 
 (s/def ::ktable #(satisfies? IKTable %))
 
@@ -2377,6 +2385,12 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                        (reset! ktable-size-measurement-last-instant
                                                (t/+ now (t/duration 1 :minutes)))))))
 
+
+        ;; NOTE: requires a "large" buffer that must absolutely never block
+        ;; we will publish collection-of-msg into this channel so we save on unwrapping individual messages
+        ktable-update-msgs-ch (csp/chan (csp/sliding-buffer 10))
+        ktable-update-msgs-mult (csp/mult ktable-update-msgs-ch)
+
         ;; This is the consumer-loop of the ktable object
         consumer-client (reify
                           IConsumerClient
@@ -2386,6 +2400,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                               (log/with-context+ {:ktable-id               ktable-id
                                                   :topic-partition-offsets (msgs->topic-partition-maxoffsets msgs)}
                                 (when (seq msgs)
+                                  (csp/>!! ktable-update-msgs-ch msgs)
                                   (log/with-context+ {:nr-msgs (count msgs)}
                                     (let [latest-ktable-value
                                           (swap! ktable-state
@@ -2396,7 +2411,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
                                         ;; We are depending on the implementation to store only a subset of registered ktable values.
                                         (-ktable-checkpoints/register-ktable-value ktable-checkpoint-storage
                                                                                    ktable-id
-                                                                                   latest-ktable-value)))))))))
+                                                                                   latest-ktable-value)))))))
+                            ;; we're reading -into- memory, not producing
+                            nil))
 
         seek-strategy (cond
                         (and ktable-checkpoint-storage
@@ -2423,7 +2440,9 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
 
     (reify
       IHaltable
-      (halt [_] (-comp/halt consumer))
+      (halt [_]
+        (csp/close! ktable-update-msgs-ch)
+        (-comp/halt consumer))
 
       IKTable
       (ktable-wait-for-catchup [_ topic-partition-offset timeout-duration timeout-value]
@@ -2462,6 +2481,39 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
             (throw (ex-info "KTable timed out waiting to become fully current."
                             {:timeout timeout-duration})))
           result))
+      (ktable-subscribe [_ {:as opts :keys [xducer receiving-ch]}]
+        (when-not receiving-ch
+          (log/error "Provide `receiving-ch` in the call to `ktable-subscribe`.")
+          (throw (ex-info "Provide `receiving-ch` in the call to `ktable-subscribe`."
+                          {})))
+
+        (let [receiving-ch* (csp/chan (csp/sliding-buffer 10))
+              sliding-receiver    (csp/chan (csp/sliding-buffer 10))
+
+              _worker-1
+              (csp/go-loop []
+                (let [msgs (csp/<! receiving-ch*)]
+                  (if (nil? msgs)
+                    (do (csp/close! sliding-receiver)
+                        (log/debug "Stopping subscription worker."))
+                    (let [x (try (or (when xducer (into [] xducer msgs))
+                                     (into [] msgs))
+                                 (catch Throwable t
+                                   (log/with-context+ {:ktable-id ktable-id
+                                                       :opts      opts}
+                                     (log/error t "Subscription worker to ktable has failed."))
+                                   []))]
+                      (when (seq x) (csp/>! sliding-receiver x))
+                      (recur)))))
+
+              _worker-2
+              (csp/pipe sliding-receiver receiving-ch)]
+          (csp/tap ktable-update-msgs-mult receiving-ch*)
+          {:receiving-ch receiving-ch
+           :handle       receiving-ch*}))
+      (ktable-unsubscribe [_ {:as _subscription-handle :keys [handle]}]
+        (csp/untap ktable-update-msgs-mult handle)
+        (csp/close! handle))
 
       IDeref
       (deref [_]
