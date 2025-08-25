@@ -2209,7 +2209,7 @@ Supports a timeout operation. `timeout-duration` must be a java.time.Duration.")
   (ktable-wait-until-fully-current [_this timeout-duration timeout-value]
     "Waits until the current offset is also the latest offset. This might time out if there are still active producers to the ktable, and the consumer struggle to fully catch up as a result.")
   (ktable-subscribe [_this {:keys [xducer
-                                   sliding-buffer-size]}]
+                                   receiving-ch]}]
     "Subscribes to (processed) events stream for the kafka messages that make up the state of the ktable.
 
 If `xducer` is nil, it will become identity, which means all messages will arrive in firehose fashion.
