@@ -14,9 +14,9 @@
   ;; Based on: https://docs.confluent.io/cloud/current/client-apps/config-client.html#java-client"
   [& {:keys [api-key api-secret]}]
 
-  (log/info (str "Connection to kafka configured with ConfluentCloud strategy..."
-                 (when-not (and api-key api-secret)
-                   " (don't have api-key & api-secret.)")))
+  (log/debug (str "Connection to kafka configured with ConfluentCloud strategy..."
+                  (when-not (and api-key api-secret)
+                    " (don't have api-key & api-secret.)")))
 
   (letfn [(merge-common
             [cfg]
