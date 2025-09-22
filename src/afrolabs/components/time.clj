@@ -1,6 +1,5 @@
 (ns afrolabs.components.time
   (:require [java-time :as t]
-            [integrant.core :is ig]
             [afrolabs.components :as -comp]
             [clojure.spec.alpha :as s]))
 
