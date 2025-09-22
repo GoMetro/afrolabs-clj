@@ -2369,11 +2369,15 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                              :partition         partition
                                                              :consumer-group-id consumer-group-id}
                                            (log/trace "MeasurING ktable partition-size...")
-                                           (let [measurement (mm/measure (into {}
-                                                                               (filter (fn [[_key {:as              _latest-record
-                                                                                                   value-partition :partition}]]
-                                                                                         (= partition value-partition)))
-                                                                               (get ktable-value topic))
+                                           (let [table-value (get ktable-value topic)
+                                                 what-is-measured (into {}
+                                                                        (filter (fn [[_key record-value]]
+                                                                                  (= partition
+                                                                                     (-> record-value
+                                                                                         meta
+                                                                                         :partition))))
+                                                                        (get ktable-value topic))
+                                                 measurement (mm/measure what-is-measured
                                                                          :bytes true)]
                                              (log/with-context+ {:measurement measurement}
                                                (log/trace "MeasurED topic-partition representation-size."))
