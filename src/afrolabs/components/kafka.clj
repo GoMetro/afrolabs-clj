@@ -2369,8 +2369,7 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                              :partition         partition
                                                              :consumer-group-id consumer-group-id}
                                            (log/trace "MeasurING ktable partition-size...")
-                                           (let [table-value (get ktable-value topic)
-                                                 what-is-measured (into {}
+                                           (let [what-is-measured (into {}
                                                                         (filter (fn [[_key record-value]]
                                                                                   (= partition
                                                                                      (-> record-value
