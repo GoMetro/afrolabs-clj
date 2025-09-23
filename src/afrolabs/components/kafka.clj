@@ -2303,6 +2303,99 @@ Returns a subscription handle with which you can unsubscribe later.")
                                              :partition
                                              :consumer-group-id]}))
 
+(-prom/register-metric (prom/summary ::ktable-partition-measuring-cost-secs
+                                     {:description "How long does it take to measure the size of a ktable?"
+                                      :labels [:topic
+                                               :partition
+                                               :consumer-group-id]}))
+
+(defn- start-background-ktable-measuring-worker
+  "Starts a process that can measure the size of even enormous ktable values in the background, without interfering
+  with the primary consumer.
+
+  Returns a function with two arities.
+  [ktable] - performs measurement
+  []       - stops the background worker"
+
+  [{:keys [consumer-group-id]}]
+  (let [make-new-timeout #(csp/timeout 60000)
+        new-value-ch (csp/chan (csp/sliding-buffer 1))
+        worker (csp/go (loop [do-next-measurement (make-new-timeout)
+                              what-to-measure     nil]
+                         (let [[v ch] (csp/alts! [new-value-ch
+                                                  do-next-measurement])
+                               [next-measurement-timeout next-value :as next-params]
+                               (cond
+                                 ;; check if it is time to quit
+                                 (and (nil? v)
+                                      (= ch new-value-ch))
+                                 nil
+
+                                 ;; just a new value? keep it for when we want to measure
+                                 (= ch new-value-ch)
+                                 [do-next-measurement
+                                  v]
+
+                                 ;; do we even have something to measure?
+                                 (and (= ch do-next-measurement)
+                                      (not what-to-measure))
+                                 [(make-new-timeout)
+                                  what-to-measure]
+
+                                 ;; is it time to measure?
+                                 (and (= ch do-next-measurement)
+                                      what-to-measure)
+                                 (do (log/debug "logging ktable size!")
+
+                                     ;; this code is actually noticably expensive for very large ktables
+                                     (let [ktable-value what-to-measure
+                                           topic-partition-pairs (for [topic      (keys ktable-value)
+                                                                       partition  (->> (get ktable-value topic)
+                                                                                       (vals)
+                                                                                       (map (comp :partition meta))
+                                                                                       (into #{}))]
+                                                                   [topic partition])]
+                                       (doseq [[topic partition] topic-partition-pairs]
+                                         (log/with-context+ {:topic             topic
+                                                             :partition         partition
+                                                             :consumer-group-id consumer-group-id}
+                                           (log/trace "MeasurING ktable partition-size...")
+                                           (prom/with-duration (get-summary-ktable-partition-measuring-cost-secs
+                                                                {:topic             topic
+                                                                 :partition         partition
+                                                                 :consumer-group-id consumer-group-id})
+                                             (let [what-is-measured (into {}
+                                                                          (filter (fn [[_key record-value]]
+                                                                                    (= partition
+                                                                                       (-> record-value
+                                                                                           meta
+                                                                                           :partition))))
+                                                                          (get ktable-value topic))
+                                                   measurement (mm/measure what-is-measured
+                                                                           :bytes true)]
+                                               (log/with-context+ {:measurement measurement}
+                                                 (log/trace "MeasurED topic-partition representation-size."))
+                                               (prom/set (get-gauge-ktable-partition-size-bytes {:consumer-group-id consumer-group-id
+                                                                                                 :topic             topic
+                                                                                                 :partition         partition})
+                                                         measurement)))))
+
+                                       [(make-new-timeout) nil]))
+
+                                 :else
+                                 (do (log/warn "Logic error when measuring the size of ktables!")
+                                     [(make-new-timeout) nil]))]
+                           (when next-params
+                             (recur next-measurement-timeout next-value))))
+                       (log/debug "Background ktable size measurement worker done."))]
+    (fn
+      ([ktable]
+       (csp/>!! new-value-ch
+                ktable))
+      ([]
+       (csp/close! new-value-ch)
+       (csp/<!! worker)))))
+
 (-comp/defcomponent {::-comp/config-spec ::ktable-cfg
                      ::-comp/ig-kw       ::ktable}
   [{:as cfg
@@ -2347,46 +2440,10 @@ Returns a subscription handle with which you can unsubscribe later.")
                              retention-ms (assoc :retention-ms retention-ms))
 
 
-        ;; on the advice of the memomry-beter library authors, we are doing it
+        ;; on the advice of the memory-meter library authors, we are doing it
         ;; but not very frequently. So we are measuring "representation-size" of every topic-partition
         ;; shard of data in the ktable, once every minute.
-        ktable-size-measurement-last-instant (atom (-time/get-current-time clock))
-        maybe-log-ktable-size! (fn [{:as ktable-value}]
-                                 (let [now (-time/get-current-time clock)
-                                       when* @ktable-size-measurement-last-instant]
-                                   (when (t/after? now when*)
-                                     (log/debug "logging ktable size!")
-                                     (let [{} (meta ktable-value)
-
-                                           topic-partition-pairs (for [topic      (keys ktable-value)
-                                                                       partition  (->> (get ktable-value topic)
-                                                                                       (vals)
-                                                                                       (map (comp :partition meta))
-                                                                                       (into #{}))]
-                                                                   [topic partition])]
-                                       (doseq [[topic partition] topic-partition-pairs]
-                                         (log/with-context+ {:topic             topic
-                                                             :partition         partition
-                                                             :consumer-group-id consumer-group-id}
-                                           (log/trace "MeasurING ktable partition-size...")
-                                           (let [what-is-measured (into {}
-                                                                        (filter (fn [[_key record-value]]
-                                                                                  (= partition
-                                                                                     (-> record-value
-                                                                                         meta
-                                                                                         :partition))))
-                                                                        (get ktable-value topic))
-                                                 measurement (mm/measure what-is-measured
-                                                                         :bytes true)]
-                                             (log/with-context+ {:measurement measurement}
-                                               (log/trace "MeasurED topic-partition representation-size."))
-                                             (prom/set (get-gauge-ktable-partition-size-bytes {:consumer-group-id consumer-group-id
-                                                                                               :topic             topic
-                                                                                               :partition         partition})
-                                                       measurement))))
-                                       ;; when to measure next, a minute after measurement has ended
-                                       (reset! ktable-size-measurement-last-instant
-                                               (t/+ now (t/duration 1 :minutes)))))))
+        maybe-log-ktable-size! (start-background-ktable-measuring-worker {:consumer-group-id consumer-group-id})
 
 
         ;; NOTE: requires a "large" buffer that must absolutely never block
@@ -2444,6 +2501,7 @@ Returns a subscription handle with which you can unsubscribe later.")
     (reify
       IHaltable
       (halt [_]
+        (maybe-log-ktable-size!) ;; will stop the measurement worker
         (csp/close! ktable-update-msgs-ch)
         (-comp/halt consumer))
 
