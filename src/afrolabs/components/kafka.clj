@@ -2349,12 +2349,12 @@ Returns a subscription handle with which you can unsubscribe later.")
 
                                      ;; this code is actually noticably expensive for very large ktables
                                      (let [ktable-value what-to-measure
-                                           topic-partition-pairs (for [topic      (keys ktable-value)
-                                                                       partition  (->> (get ktable-value topic)
-                                                                                       (vals)
-                                                                                       (map (comp :partition meta))
-                                                                                       (into #{}))]
-                                                                   [topic partition])]
+                                           topic-partition-pairs (for [topic          (keys ktable-value)
+                                                                       this-partition (->> (get ktable-value topic)
+                                                                                           (vals)
+                                                                                           (map (comp :partition meta))
+                                                                                           (into #{}))]
+                                                                   [topic this-partition])]
                                        (doseq [[topic partition] topic-partition-pairs]
                                          (log/with-context+ {:topic             topic
                                                              :partition         partition
