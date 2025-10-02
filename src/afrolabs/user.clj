@@ -4,6 +4,7 @@
    [afrolabs.service :as -service]
    [integrant.core :as ig]
    [taoensso.timbre :as log]
+   [portal.api :as p]
    ))
 
 
@@ -97,3 +98,23 @@
        (defn ~(symbol "-main")
          [& args#]
          (apply afrolabs.user/main-impl ~config-files args#))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defonce portal
+  (let [p (p/open)]
+    ;; we will see how this goes auto-opening a dev-tool at dev-system startup
+    (add-tap #'p/submit)
+    (tap> "Hello portal world from `user.clj`.")
+    p))
+
+(comment
+
+  (let [p (p/open)]
+    ;; we will see how this goes auto-opening a dev-tool at dev-system startup
+    (add-tap #'p/submit)
+    (tap> "Hello portal world from `user.clj`.")
+    p)
+
+
+  )
