@@ -87,7 +87,8 @@
 
 ;; this assumes that the code can be loaded as in JVM
 (defn -main [& _]
-  (let [handler-s (System/getenv "_HANDLER")
+  (let [handler-s (or (System/getenv "_HANDLER")
+                      (System/getenv "__HANDLER"))
         _ (when (or (not handler-s)
                     (zero? (count handler-s)))
             (throw (ex-info "This lambda requires _HANDLER environment variable."
