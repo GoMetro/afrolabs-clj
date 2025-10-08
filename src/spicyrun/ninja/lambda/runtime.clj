@@ -4,7 +4,8 @@
     [clojure.string :as str]
     [cheshire.core :as json]
     [org.httpkit.client :as http]
-    [taoensso.timbre :as log]))
+    [taoensso.timbre :as log]
+    [afrolabs.logging :as -logging]))
 
 (defn- runtime-url
   [runtime-api path]
@@ -93,6 +94,8 @@
 
 ;; this assumes that the code can be loaded as in JVM
 (defn -main [& _]
+  (-logging/setup-simple-cli-logging!)
+  (log/debug "Starting lambda main process...")
   (let [handler-s (or (-read-non-empty-var "_HANDLER")
                       (-read-non-empty-var "__HANDLER"))
         _ (log/debug (str (System/getenv)))
@@ -101,6 +104,7 @@
                             {})))
         _ (log/info (str "Using '" handler-s "' as the symbol for the handler."))
         handler-fn (requiring-resolve (symbol handler-s))
+        _ (log/debug "Found the symbol for handling the lambda.")
 
         ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
         ;; for babashka
