@@ -86,13 +86,17 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn -read-non-empty-var [envvar]
+  (let [s (System/getenv envvar)]
+    (when (and s (not (zero? (count s))))
+      s)))
+
 ;; this assumes that the code can be loaded as in JVM
 (defn -main [& _]
-  (let [handler-s (or (System/getenv "_HANDLER")
-                      (System/getenv "__HANDLER"))
+  (let [handler-s (or (-read-non-empty-var "_HANDLER")
+                      (-read-non-empty-var "__HANDLER"))
         _ (log/debug (str (System/getenv)))
-        _ (when (or (not handler-s)
-                    (zero? (count handler-s)))
+        _ (when-not handler-s
             (throw (ex-info "This lambda requires _HANDLER environment variable."
                             {})))
         _ (log/info (str "Using '" handler-s "' as the symbol for the handler."))
