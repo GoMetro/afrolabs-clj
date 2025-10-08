@@ -3,7 +3,8 @@
   (:require
     [clojure.string :as str]
     [cheshire.core :as json]
-    [org.httpkit.client :as http]))
+    [org.httpkit.client :as http]
+    [taoensso.timbre :as log]))
 
 (defn- runtime-url
   [runtime-api path]
@@ -89,10 +90,12 @@
 (defn -main [& _]
   (let [handler-s (or (System/getenv "_HANDLER")
                       (System/getenv "__HANDLER"))
+        _ (log/debug (str (System/getenv)))
         _ (when (or (not handler-s)
                     (zero? (count handler-s)))
             (throw (ex-info "This lambda requires _HANDLER environment variable."
                             {})))
+        _ (log/info (str "Using '" handler-s "' as the symbol for the handler."))
         handler-fn (requiring-resolve (symbol handler-s))
 
         ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
