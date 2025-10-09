@@ -98,7 +98,6 @@
   (log/debug "Starting lambda main process...")
   (let [handler-s (or (-read-non-empty-var "_HANDLER")
                       (-read-non-empty-var "__HANDLER"))
-        _ (log/debug (str (System/getenv)))
         _ (when-not handler-s
             (throw (ex-info "This lambda requires _HANDLER environment variable."
                             {})))
