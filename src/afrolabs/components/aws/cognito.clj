@@ -5,6 +5,8 @@
             [cognitect.aws.client.api :as aws]
             [clojure.spec.alpha :as s]
             [taoensso.timbre :as log]
+            [org.httpkit.client :as http-client]
+            [afrolabs.utils :as -utils]
             )
   (:import
    [javax.crypto Mac]
@@ -140,11 +142,22 @@
 (s/def ::user-pool-id (s/and string?
                              (comp pos? count)))
 
+(s/def ::auth-url (s/and string?
+                         (comp pos? count)))
+(s/def ::auth-scope (s/and string?
+                           (comp pos? count)))
+(s/def ::redirect-uri (s/and string?
+                             (comp pos? count)))
+
 (s/def ::cognito-idp-client-cfg
   (s/keys :req-un [::aws-client-cfg]
           :opt-un [::client-id
                    ::client-secret
-                   ::user-pool-id]))
+                   ::user-pool-id
+
+                   ::auth-url
+                   ::auth-scope
+                   ::redirect-uri]))
 
 (defn make-cognito-client
   [{:keys [aws-client-cfg] :as cfg}]
@@ -167,7 +180,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn wrap-idp-session-refresh
+#_(defn wrap-idp-session-refresh
   "Verifies if the user's cognito session is still valid (for long enough) and refreshes cognito tokens in the session if tokens are about to expire or have expired."
   [handler]
   (fn [{:keys [session]
@@ -228,3 +241,42 @@
             ;; we will set the session value in the response map
             :else
             (assoc response :session updated-session)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn cognito:authentication:retrieve-code-request
+  "Makes a request to retrieve the user's authentication tokens using the token flow.
+  Returns the http Response of this call.
+  "
+  [{:as   _cfg
+    :keys [auth-url
+           client-id
+           client-secret
+           redirect-uri]}
+   code]
+  @(http-client/post (str auth-url "/oauth2/token")
+                     {:headers {"Content-Type" "application/x-www-form-urlencoded"
+                                "Authorization" (str "Basic "
+                                                     (.encodeToString (Base64/getEncoder)
+                                                                      (.getBytes (str client-id ":" client-secret))))}
+                      :body    (str "grant_type=authorization_code"
+                                    "&client_id="    client-id
+                                    "&redirect_uri=" (-utils/param-url-encode redirect-uri)
+                                    "&code="         code)}))
+
+(defn cognito:authentication:full-login-url
+  "This is the URL where the user must go to log in."
+  [{:as   _cfg
+    :keys [managed-login-ui
+           client-id
+           auth-scope
+           redirect-uri]}]
+  (str managed-login-ui
+       "?client_id="         client-id
+       "&response_type=code" ;;
+       "&scope="             auth-scope
+       "&redirect_uri="      (-utils/param-url-encode redirect-uri)))
+
+(defn other-name
+  "  Handles  an old-school server-side authentication flow callback from hosted-ui cognito."
+  [])
