@@ -16,6 +16,6 @@
                        token)
        (catch Throwable t
          (log/with-context+ {:token    token
-                             :jwts-url jwks-url}
+                             :jwks-url jwks-url}
            (log/debug t "Crypto token verification failed."))
          (f/fail "Failed crypto verification."))))
