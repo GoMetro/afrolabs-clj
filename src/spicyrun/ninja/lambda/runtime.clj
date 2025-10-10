@@ -117,3 +117,16 @@
     (if handler-fn
       (init handler-fn context)
       (throw (Exception. (format "Lambda handler '%s' not found" handler-s))))))
+
+(defn wrap-http-direct
+  "This gives special AWS cookie treatment for Set-Cookie headers."
+  [handler]
+  (fn [req]
+    (let [resp (handler req)]
+      (if (contains? (:headers resp) "Set-Cookie")
+        (update-in resp [:headers "Set-Cookie"] (fn [c]
+                                                  (cond
+                                                    (string? c) c
+                                                    (seq c) (str/join "," c)
+                                                    :else nil)))
+        resp))))
