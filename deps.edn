@@ -80,7 +80,7 @@
   com.cognitect/transit-clj                              {:mvn/version "1.0.333"}
 
   com.velisco/tagged                                     {:mvn/version "0.5.0"}
-  com.github.sikt-no/clj-jwt                             {:mvn/version "2.18.3"}}
+  com.github.sikt-no/clj-jwt                             {:mvn/version "0.5.105"}}
 
  :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
