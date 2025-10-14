@@ -241,7 +241,8 @@
     (try
       @loaded-enough-msgs
       (infof "Done waiting, received a total of '%d' messages." @running-total)
-      (ig/halt! system)
+      (try (ig/halt! system)
+           (catch Throwable t (log/warn t "Exception while shutting down.")))
       (info "System done shutting down.")
 
       (when stream-ch
