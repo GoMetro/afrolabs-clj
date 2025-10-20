@@ -801,7 +801,8 @@
                   assignment
                   (do
                     (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                    (.poll ^Consumer consumer 5000)
+                    (.poll ^Consumer consumer
+                           ^java.time.Duration (t/duration 5000 :millis))
                     (recur)))))]
         (doseq [[topic partition] (map (fn [topic-partition]
                                          [(.topic ^TopicPartition topic-partition)
@@ -850,7 +851,8 @@
                     assignment
                     (do
                       (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                      (.poll ^Consumer consumer 5000)
+                      (.poll ^Consumer consumer
+                             ^java.time.Duration (t/duration 5000 :millis))
                       (recur (dec remaining))))))]
           (doseq [[^TopicPartition topic-partition
                    ^OffsetAndTimestamp offset-and-timestamp]
@@ -1411,7 +1413,8 @@
                                                                    :key       (.key r)
                                                                    :timestamp (t/instant (.timestamp r))}
                                                                 (seq hdrs) (assoc :headers hdrs)))))
-                                                     (.poll consumer ^long poll-timeout))
+                                                     (.poll ^Consumer consumer
+                                                            ^java.time.Duration (t/duration poll-timeout :millis)))
 
                     ;; request the consumer lag on this consumer's topic-partition assignment
                     ;; and record it as a guage, per topic and per partition
@@ -2170,7 +2173,8 @@
       (post-init-hook [_ consumer]
         ;; poll once, to achieve a topic-partition assignment
         ;; This _is_ a ktable, so the assumption is that this is for _all_ partitions...
-        (.poll ^Consumer consumer 1000)
+        (.poll ^Consumer consumer
+               ^java.time.Duration (t/duration 1000 :millis))
         (doseq [^TopicPartition tp (.assignment ^Consumer consumer)
                 :let [t                     (.topic tp)
                       p                     (.partition tp)
@@ -2349,12 +2353,12 @@ Returns a subscription handle with which you can unsubscribe later.")
 
                                      ;; this code is actually noticably expensive for very large ktables
                                      (let [ktable-value what-to-measure
-                                           topic-partition-pairs (for [topic      (keys ktable-value)
-                                                                       partition  (->> (get ktable-value topic)
-                                                                                       (vals)
-                                                                                       (map (comp :partition meta))
-                                                                                       (into #{}))]
-                                                                   [topic partition])]
+                                           topic-partition-pairs (for [topic          (keys ktable-value)
+                                                                       this-partition (->> (get ktable-value topic)
+                                                                                           (vals)
+                                                                                           (map (comp :partition meta))
+                                                                                           (into #{}))]
+                                                                   [topic this-partition])]
                                        (doseq [[topic partition] topic-partition-pairs]
                                          (log/with-context+ {:topic             topic
                                                              :partition         partition

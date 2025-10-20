@@ -1,31 +1,31 @@
 {:deps
  {org.clojure/spec.alpha                                 {:mvn/version "0.5.238"},
-  org.clojure/clojure                                    {:mvn/version "1.12.0"},
+  org.clojure/clojure                                    {:mvn/version "1.12.3"},
   ;; com.google.javascript/closure-compiler-unshaded {:mvn/version "v20240317"},
   ;; org.clojure/clojurescript {:mvn/version "1.11.132", :exclusions [com.cognitect/transit-java]},
   org.clojure/test.check                                 {:mvn/version "1.1.1"},
   org.clojure/tools.reader                               {:mvn/version "1.5.2"},
-  org.eclipse.jetty/jetty-util                           {:mvn/version "9.4.57.v20241219"},
-  org.eclipse.jetty/jetty-http                           {:mvn/version "9.4.57.v20241219"},
-  org.eclipse.jetty/jetty-client                         {:mvn/version "9.4.57.v20241219"},
+  org.eclipse.jetty/jetty-util                           {:mvn/version "9.4.58.v20250814"},
+  org.eclipse.jetty/jetty-http                           {:mvn/version "9.4.58.v20250814"},
+  org.eclipse.jetty/jetty-client                         {:mvn/version "9.4.58.v20250814"},
   camel-snake-kebab/camel-snake-kebab                    {:mvn/version "0.4.3"},
   metosin/jsonista                                       {:mvn/version "0.3.13",
                                                           :exclusions  [com.fasterxml.jackson.core/jackson-core]},
   failjure/failjure                                      {:mvn/version "2.3.0"},
   org.clojure/core.async                                 {:mvn/version "1.8.741"},
   net.cgrand/xforms                                      {:mvn/version "0.19.6"},
-  com.rpl/specter                                        {:mvn/version "1.1.4"},
-  integrant/integrant                                    {:mvn/version "0.13.1"},
+  com.rpl/specter                                        {:mvn/version "1.1.6"},
+  integrant/integrant                                    {:mvn/version "1.0.1"},
   aero/aero                                              {:mvn/version "1.1.6"},
   beckon/beckon                                          {:mvn/version "0.1.1"},
-  http-kit/http-kit                                      {:mvn/version "2.8.0"},
+  http-kit/http-kit                                      {:mvn/version "2.8.1"},
   buddy/buddy-core                                       {:mvn/version "1.12.0-430"},
   buddy/buddy-hashers                                    {:mvn/version "2.0.167"},
   buddy/buddy-auth                                       {:mvn/version "3.0.323"},
   buddy/buddy-sign                                       {:mvn/version "3.6.1-359"},
-  ring/ring-core                                         {:mvn/version "1.14.1"},
+  ring/ring-core                                         {:mvn/version "1.15.3"},
   metosin/ring-http-response                             {:mvn/version "0.9.5"},
-  metosin/reitit                                         {:mvn/version "0.8.0",
+  metosin/reitit                                         {:mvn/version "0.9.1",
                                                           :exclusions  [com.fasterxml.jackson.core/jackson-core]},
   clojure.java-time/clojure.java-time                    {:mvn/version "1.4.3"},
   org.threeten/threeten-extra                            {:mvn/version "1.8.0"},
@@ -33,35 +33,35 @@
   io.prometheus/simpleclient                             {:mvn/version "0.16.0"},
   io.prometheus/simpleclient_hotspot                     {:mvn/version "0.16.0"},
   clj-commons/iapetos                                    {:mvn/version "0.1.14"},
-  com.cognitect.aws/api                                  {:mvn/version "0.8.735"},
-  com.cognitect.aws/endpoints                            {:mvn/version "871.2.30.22"},
-  com.cognitect.aws/sns                                  {:mvn/version "871.2.30.11"},
-  com.cognitect.aws/sqs                                  {:mvn/version "871.2.29.52"},
-  com.cognitect.aws/s3                                   {:mvn/version "871.2.30.22"},
-  com.cognitect.aws/monitoring                           {:mvn/version "871.2.29.35"},
-  com.cognitect.aws/logs                                 {:mvn/version "871.2.30.11"},
-  nrepl/nrepl                                            {:mvn/version "1.3.1"},
-  com.taoensso/encore                                    {:mvn/version "3.142.0"},
-  com.taoensso/timbre                                    {:mvn/version "6.6.1"},
+  com.cognitect.aws/api                                  {:mvn/version "0.8.774"},
+  com.cognitect.aws/endpoints                            {:mvn/version "871.2.35.6"},
+  com.cognitect.aws/sns                                  {:mvn/version "871.2.32.15"},
+  com.cognitect.aws/sqs                                  {:mvn/version "871.2.34.1"},
+  com.cognitect.aws/s3                                   {:mvn/version "871.2.33.5"},
+  com.cognitect.aws/monitoring                           {:mvn/version "871.2.33.10"},
+  com.cognitect.aws/logs                                 {:mvn/version "871.2.34.1"},
+  nrepl/nrepl                                            {:mvn/version "1.4.0"},
+  com.taoensso/encore                                    {:mvn/version "3.155.0"},
+  com.taoensso/timbre                                    {:mvn/version "6.8.0"},
   org.clojure/data.json                                  {:mvn/version "2.5.1"},
   org.clojure/data.csv                                   {:mvn/version "1.1.0"},
-  com.cnuernber/charred                                  {:mvn/version "1.036"},
+  com.cnuernber/charred                                  {:mvn/version "1.037"},
   org.clojure/core.rrb-vector                            {:mvn/version "0.2.0"},
-  fipp/fipp                                              {:mvn/version "0.6.27"},
-  metosin/malli                                          {:mvn/version "0.17.0"},
+  fipp/fipp                                              {:mvn/version "0.6.29"},
+  metosin/malli                                          {:mvn/version "0.19.2"},
   org.slf4j/log4j-over-slf4j                             {:mvn/version "2.0.17"},
   org.slf4j/jul-to-slf4j                                 {:mvn/version "2.0.17"},
   org.slf4j/jcl-over-slf4j                               {:mvn/version "2.0.17"},
   com.fzakaria/slf4j-timbre                              {:mvn/version "0.4.1"},
   viesti/timbre-json-appender                            {:mvn/version "0.2.14"},
-  com.fasterxml.jackson.core/jackson-databind            {:mvn/version "2.18.3"},
-  com.fasterxml.jackson.datatype/jackson-datatype-jsr310 {:mvn/version "2.18.3"},
+  com.fasterxml.jackson.core/jackson-databind            {:mvn/version "2.20.0"},
+  com.fasterxml.jackson.datatype/jackson-datatype-jsr310 {:mvn/version "2.20.0"},
   com.google.re2j/re2j                                   {:mvn/version "1.8"},
-  org.bouncycastle/bcpkix-jdk18on                        {:mvn/version "1.80"},
+  org.bouncycastle/bcpkix-jdk18on                        {:mvn/version "1.82"},
   ch.qos.reload4j/reload4j                               {:mvn/version "1.2.26"},
   org.javassist/javassist                                {:mvn/version "3.30.2-GA"},
   joda-time/joda-time                                    {:mvn/version "2.14.0"},
-  org.apache.kafka/kafka-clients                         {:mvn/version "7.9.0-ce"}
+  org.apache.kafka/kafka-clients                         {:mvn/version "8.0.2-ce"}
   #_#_io.confluent.ksql/ksqldb-api-client                {:mvn/version "7.6.0",
                                                           :exclusions
                                                           [org.slf4j/slf4j-log4j12
@@ -72,14 +72,15 @@
   ;; thheller/shadow-cljs {:mvn/version "2.28.11"},
   gsnewmark/ring-pratchett                               {:mvn/version "0.1.0"},
   net.sekao/odoyle-rules                                 {:mvn/version "1.3.1"},
-  com.clojure-goes-fast/clj-async-profiler               {:mvn/version "1.6.1"},
+  com.clojure-goes-fast/clj-async-profiler               {:mvn/version "1.6.2"},
   com.clojure-goes-fast/clj-memory-meter                 {:mvn/version "0.4.0"},
   lambdaisland/uri                                       {:mvn/version "1.19.155"},
   org.clj-commons/hickory                                {:mvn/version "0.7.7"},
   instaparse/instaparse                                  {:mvn/version "1.5.0"},
   com.cognitect/transit-clj                              {:mvn/version "1.0.333"}
 
-  com.velisco/tagged                                     {:mvn/version "0.5.0"}}
+  com.velisco/tagged                                     {:mvn/version "0.5.0"}
+  com.github.sikt-no/clj-jwt                             {:mvn/version "0.5.105"}}
 
  :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}
@@ -89,7 +90,7 @@
  :aliases       {:build/task ;; will build using `build.clj`
                  {:replace-paths ["."]
                   :replace-deps  {io.github.clojure/tools.build
-                                  {:git/tag "v0.10.8" :git/sha "2fdfd66"}}
+                                  {:git/tag "v0.10.10" :git/sha "deedd623574e3712687a657691c6b79f5026b3a1"}}
                   :ns-default    build}
 
                  :build/nvd-vulnerabilities ;; run with `clojure -M:build/nvd-vulnerabilities scan -p deps.edn`

@@ -2,7 +2,9 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.aws :as -aws]
             [cognitect.aws.client.api :as aws]
-            [clojure.spec.alpha :as s])
+            [clojure.spec.alpha :as s]
+            [afrolabs.components.aws.client-config :as -client-config]
+            [afrolabs.spec :as -spec])
   (:import [java.security MessageDigest]
            [java.util Base64]))
 
@@ -49,6 +51,31 @@
                           ;; :ContentMD5    (aws-contentmd5 content)
                           }})))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn list-objects
+  ([s3-client bucket] (list-objects s3-client bucket {}))
+  ([s3-client bucket opts]
+   (mapcat identity
+           (iteration (fn [k]
+                        (aws/invoke @s3-client
+                                    {:op      :ListObjectsV2
+                                     :request (cond-> (merge {:Bucket bucket}
+                                                             (or opts {}))
+                                                k (assoc :ContinuationToken k))}))
+                      :somef identity
+                      :vf    :Contents
+                      :kf    :NextContinuationToken
+                      :initk nil))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn get-object
+  ([s3-client bucket key]
+   (aws/invoke @s3-client
+               {:op      :GetObject
+                :request {:Bucket bucket
+                          :Key    key}})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -69,16 +96,13 @@
 ;;;;;;;;;;;;;;;;;;;;
 
 
-(s/def ::s3-client-cfg (s/keys :req-un [::-aws/aws-creds-component
-                                        ::-aws/aws-region-component]))
+(s/def ::s3-client-cfg (s/keys :req-un [::-client-config/aws-client-config]))
 
-(-comp/defcomponent {::-comp/ig-kw       ::s3-client
-                     ::-comp/config-spec ::s3-client-cfg}
-  [{:keys [aws-creds-component
-           aws-region-component]}]
-  (let [state (aws/client {:api                  :s3
-                           :credentials-provider aws-creds-component
-                           :region               (:region aws-region-component)})]
+(defn make-s3-client
+  [{:keys [aws-client-config] :as s3-cfg}]
+  (-spec/assert! ::s3-client-cfg s3-cfg)
+  (let [state (aws/client (merge aws-client-config
+                                 {:api :s3}))]
     (reify
       -comp/IHaltable
       (halt [_] (aws/stop state))
@@ -86,4 +110,6 @@
       clojure.lang.IDeref
       (deref [_] state))))
 
-
+(-comp/defcomponent {::-comp/ig-kw       ::s3-client
+                     ::-comp/config-spec ::s3-client-cfg}
+  [cfg] (#'make-s3-client cfg))

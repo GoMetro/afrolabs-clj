@@ -1,4 +1,8 @@
-(ns afrolabs.utils)
+(ns afrolabs.utils
+  (:require
+   [clojure.string :as str])
+  (:import
+   [java.net URLEncoder]))
 
 (defmacro condas->
   "A mixture of cond-> and as-> allowing more flexibility in the test and step forms"
@@ -70,4 +74,11 @@
   ;;   b (clojure.core/assoc "b" b))
 
 
+  )
+
+(defn param-url-encode
+  ([x]
+   (some-> x
+           (URLEncoder/encode)
+           (str/replace #"\+" "%20")))
   )
