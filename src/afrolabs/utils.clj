@@ -1,6 +1,8 @@
 (ns afrolabs.utils
   (:require
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [taoensso.timbre :as log]
+   )
   (:import
    [java.net URLEncoder]))
 
@@ -81,4 +83,39 @@
    (some-> x
            (URLEncoder/encode)
            (str/replace #"\+" "%20")))
+  )
+
+(defmacro time
+  "Evaluates expr and LOGS the time it took.  Returns the value of
+  expr.
+
+  Default log-level is :trace.
+  Overloads allow to specify the log-level and an additional string to prepend to the normal \"Elasped time: \"...
+
+  This is a modified clone of the stdlb time macro."
+  ([expr] `(time :trace nil ~expr))
+  ([log-msg-or-level expr]
+   `(time (or (when (#'log/valid-level? ~log-msg-or-level)
+                ~log-msg-or-level)
+              :trace)
+          (or (when-not (#'log/valid-level? ~log-msg-or-level)
+                ~log-msg-or-level)
+              nil)
+          ~expr))
+  ([log-level log-msg expr]
+   `(let [start# (. System (nanoTime))
+          ret# ~expr]
+      (log/log ~log-level
+        (str (when ~log-msg (str ~log-msg " || "))
+             "Elapsed time: " (/ (double (- (. System (nanoTime)) start#)) 1000000.0) " msecs"))
+      ret#)))
+
+(comment
+
+  (macroexpand '(time (println 1)))
+  (time :debug  "info" (println 1))
+  (time :debug  (println 1))
+  (time "debug" (println 1))
+  (time (println 1))
+
   )
