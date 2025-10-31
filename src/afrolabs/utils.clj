@@ -1,4 +1,5 @@
 (ns afrolabs.utils
+  (:refer-clojure :exclude [time])
   (:require
    [clojure.string :as str]
    [taoensso.timbre :as log]
