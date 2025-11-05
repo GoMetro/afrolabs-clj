@@ -1611,7 +1611,7 @@
 
 (defn ^{:deprecated    true
         :superseded-by "assert-topics!"} assert-topics
-  "SUPERSETED-BY `assert-topics!`
+  "SUPERSEDED-BY `assert-topics!`
   Makes sure topics exist with the given number of partitions.
   If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
   increased to match (when `increase-existing-partitions?` is `true`)."
@@ -1627,8 +1627,8 @@
                             (set))
         new-topics (into []
                          (comp
+                          (filter (complement existing-topics))
                           (distinct)
-                          (filter #(not (existing-topics %)))
                           (map (fn [topic-name]
                                  (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
                                                topic-name
