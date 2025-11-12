@@ -200,12 +200,12 @@
 
   Returns the schema-id if successful, otherwise a failjure."
   [{:as component}
-   options
    subject
    schema]
   (f/attempt-all [{:keys  [schema-registry-url]
                    ::keys [make-url
-                           registered-schemas]}
+                           registered-schemas
+                           options]}
                   @component
 
                   upload-result
