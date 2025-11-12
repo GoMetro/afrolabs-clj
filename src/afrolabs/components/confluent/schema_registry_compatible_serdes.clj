@@ -7,6 +7,7 @@
             [taoensso.timbre :as log]
             [clojure.java.io :as io]
             [afrolabs.components.confluent.schema-registry :as -sr]
+            [afrolabs.components.confluent.protocols :as -confluent-protocols]
             [afrolabs.components :as -comp])
   (:import [org.apache.kafka.clients.producer ProducerConfig]
            [afrolabs.components.kafka IUpdateProducerConfigHook]
@@ -68,8 +69,8 @@
    (let [{:keys [context-guid
                  key?]}      @(.state this)
          schema-asserter     (get @schema-asserter-registry context-guid)
-         schema-id           (-sr/get-schema-id schema-asserter
-                                                (str topic "-" (if key? "key" "value")))
+         schema-id           (-confluent-protocols/get-schema-id schema-asserter
+                                                                 (str topic "-" (if key? "key" "value")))
          bytes-output-stream (ByteArrayOutputStream.)
          schema-id-bytes     (int->4byte-array schema-id)]
 

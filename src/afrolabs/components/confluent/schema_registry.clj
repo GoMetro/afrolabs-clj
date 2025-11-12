@@ -1,12 +1,14 @@
 (ns afrolabs.components.confluent.schema-registry
   (:require  [afrolabs.components :as -comp]
              [afrolabs.components.kafka :as -kafka]
+             [afrolabs.components.confluent.protocols :as -confluent-protocols]
              [clojure.spec.alpha :as s]
              [reitit.core :as reitit]
              [org.httpkit.client :as http-client]
              [clojure.data.json :as json]
              [net.cgrand.xforms :as x]
-             [taoensso.timbre :as log])
+             [taoensso.timbre :as log]
+             [failjure.core :as f])
   (:import [afrolabs.components.kafka
             IUpdateConsumerConfigHook
             IUpdateProducerConfigHook
@@ -33,26 +35,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(defprotocol ISubjectJSONSchemaProvider
-  "A client protocol to provide a map between SUBJECT names and json schemas. The confluent schema asserter will consume this protocol against the schema registry.
-
-  The result must conform to ::get-subject-json-schemas, which conforms on a collection of maps, each contains a :subject & :schema.
-
-  - Schemas are JSON-encoded strings
-
-  Eg1: [{:subject \"topic-key\"    :schema \"<JSON Schema 1>\"}]
-  Eg2: [{:subject \"topic-value\"  :schema \"<JSON Schema 2>\"}]
-  Eg3: [{:subject \"some-subject\" :schema \"<JSON Schema 3>\"}
-        {:subject \"moar-subject\" :schema \"<JSON Schema 4>\"}] "
-  (get-subject-json-schemas [_] "Returns a collection of subject names with JSON schemas in string format."))
-
-(defprotocol IConfluentSchemaAsserter
-  "A protocol for using the schema registry, eg mapping from subject names to schema id's"
-  (get-schema-id [_ subject-name] "Returns the most recent known schema id for this SUBJECT."))
-
-;;;;;;;;;;;;;;;;;;;;
-
-(s/def ::subject-json-schema-provider #(satisfies? ISubjectJSONSchemaProvider %))
+(s/def ::subject-json-schema-provider #(satisfies? -confluent-protocols/ISubjectJSONSchemaProvider %))
 (s/def ::subject-json-schema-providers (s/coll-of ::subject-json-schema-provider))
 
 (s/def ::schema-registry-url (s/and string?
@@ -68,6 +51,8 @@
                                                         ::schema-registry-url
                                                         ::schema-registry-api-secret
                                                         ::schema-registry-api-key]))
+
+(s/def ::schema-registry-asserter #(satisfies? -confluent-protocols/IConfluentSchemaAsserter %))
 
 ;;;;;;;;;;;;;;;;;;;;
 ;; HTTP/REST utilities for confluent schema registry API
@@ -199,7 +184,8 @@
     (when-not (contains? (set body)
                          schema-type)
       (throw (ex-info (format "Schema Registry not configured to use '%s'" schema-type)
-                      {:supported-schema-types body})))))
+                      {:supported-schema-types body})))
+    (log/info "Verified schema registry support.")))
 
 (defn upload-subject-schema
   "Uploads a schema to a subject. Both subject and schema must be strings."
@@ -208,6 +194,38 @@
                                 (assoc options
                                        :body (json/write-str {:schema     schema
                                                               :schemaType "JSON"})))))
+
+(defn api:assert-subject-schema!
+  "Uploads (asserts) a schema to schema registry associated with the subject.
+
+  Returns the schema-id if successful, otherwise a failjure."
+  [{:as component}
+   options
+   subject
+   schema]
+  (f/attempt-all [{:keys  [schema-registry-url]
+                   ::keys [make-url
+                           registered-schemas]}
+                  @component
+
+                  upload-result
+                  (try (upload-subject-schema make-url
+                                              options
+                                              subject
+                                              schema)
+                       (catch Throwable t
+                         (log/with-context+ {:subject subject
+                                             :schema  schema
+                                             :options options}
+                           (log/error t "Unable to upload schema to confluent registry schema"))
+                         ;; exceptions are failjures
+                         t
+                         ))
+
+                  schema-id (get-in upload-result [:body "id"])
+                  _ (swap! registered-schemas
+                           assoc subject {:schema-id schema-id})]
+    schema-id))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -225,7 +243,7 @@
                                         "JSON")
 
     ;; get schemas; test if they were passed into this component correctly
-    (let [all-provided-schemas (mapcat #(get-subject-json-schemas %)
+    (let [all-provided-schemas (mapcat #(-confluent-protocols/get-subject-json-schemas %)
                                        subject-json-schema-providers)]
 
       ;; throw an error to the developer if ITopicJSONSchemaProvider was implemented incorrectly
@@ -267,7 +285,11 @@
                                     (map (fn [{:as x :keys [subject]}]
                                            [subject x]))
                                     (x/into {}))))
-                  all-provided-schemas)]
+                  all-provided-schemas)
+
+            cfg' (assoc cfg
+                        ::registered-schemas (atom success)
+                        ::make-url make-url)]
 
         ;; throw when schema uploads produced errors
         (when (seq error)
@@ -280,9 +302,13 @@
             (throw (ex-info err-msg {:incompatible-schemas (into [] error)}))))
 
         (reify
-          IConfluentSchemaAsserter
+          clojure.lang.IDeref
+          (deref [_] cfg')
+
+          -confluent-protocols/IConfluentSchemaAsserter
           (get-schema-id [_ subject]
-            (get-in success [subject :schema-id])))))))
+            (get-in @(::registered-schemas cfg')
+                    [subject :schema-id])))))))
 
 (comment
 
@@ -304,7 +330,7 @@
                        :schema-registry-api-key       (:confluent-schema-registry-api-key cfg-source)
                        :schema-registry-api-secret    (:confluent-schema-registry-api-secret cfg-source)
                        :subject-json-schema-providers [(reify
-                                                         ISubjectJSONSchemaProvider
+                                                         -confluent-protocols/ISubjectJSONSchemaProvider
                                                          (get-subject-json-schemas [_]
                                                            [{:subject "test-topic-key"
                                                              :schema  (json/write-str {:type                 "object",
@@ -313,7 +339,7 @@
                                                                                        :required             [:b :s]})}]
                                                            ))]})))
 
-  (get-schema-id schema-asserter "test-topic-value")
+  (-confluent-protocols/get-schema-id schema-asserter "test-topic-value")
 
   (upload-subject-schema make-url
                          def-opts
