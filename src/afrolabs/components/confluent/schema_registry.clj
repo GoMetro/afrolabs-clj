@@ -289,7 +289,8 @@
 
             cfg' (assoc cfg
                         ::registered-schemas (atom success)
-                        ::make-url make-url)]
+                        ::make-url make-url
+                        ::options (make-default-http-options cfg))]
 
         ;; throw when schema uploads produced errors
         (when (seq error)
