@@ -35,7 +35,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(gen-class :name       "afrolabs.components.confluent.sr_compat_serdes.Serializer"
+(gen-class :name       "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer"
            :prefix     "ser-"
            :main       false
            :init       "init"
@@ -48,7 +48,7 @@
   [this cfg key?]
   (swap! (.state this)
          assoc
-         :context-guid (get cfg (str "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid"))
+         :context-guid (get cfg "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer.context-guid")
          :key?         key?))
 
 (defn int->4byte-array
@@ -112,9 +112,9 @@
       IUpdateProducerConfigHook
       (update-producer-cfg-hook
           [_ cfg]
-        (cond->                       (assoc cfg                                          "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid" context-guid)
-          (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.sr_compat_serdes.Serializer")
-          (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer")))
+        (cond->                       (assoc cfg                                          "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer.context-guid" context-guid)
+          (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer")
+          (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer")))
 
       IHaltable
       (halt [_]
