@@ -198,10 +198,12 @@
 (defn api:assert-subject-schema!
   "Uploads (asserts) a schema to schema registry associated with the subject.
 
-  Returns the schema-id if successful, otherwise a failjure."
+  Returns the schema-id if successful, otherwise a failjure.
+  When `compat-level` has a value`, this will be applied to the config."
   [{:as component}
    subject
-   schema]
+   schema
+   & {:keys [compat-level]}]
   (f/attempt-all [{:keys  [schema-registry-url]
                    ::keys [make-url
                            registered-schemas
@@ -224,7 +226,17 @@
 
                   schema-id (get-in upload-result [:body "id"])
                   _ (swap! registered-schemas
-                           assoc subject {:schema-id schema-id})]
+                           assoc subject {:schema-id schema-id})
+
+                  _ (when (not (nil? compat-level))
+                      (try (api-result (http-client/post (make-url ::subject-config {:subject subject})
+                                                         (assoc options
+                                                                :body (json/write-str {:compatibility compat-level}))))
+                           (catch Throwable t
+                             (log/with-context+ {:subject      subject
+                                                 :compat-level compat-level}
+                               (log/error t "Unable to set the confluent schema registry compatibility mode on a subject."))
+                             t)))]
     schema-id))
 
 ;;;;;;;;;;;;;;;;;;;;
