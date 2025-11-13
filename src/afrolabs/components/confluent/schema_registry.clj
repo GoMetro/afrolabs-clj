@@ -229,9 +229,9 @@
                            assoc subject {:schema-id schema-id})
 
                   _ (when (not (nil? compat-level))
-                      (try (api-result (http-client/post (make-url ::subject-config {:subject subject})
-                                                         (assoc options
-                                                                :body (json/write-str {:compatibility compat-level}))))
+                      (try (api-result (http-client/put (make-url ::subject-config {:subject subject})
+                                                        (assoc options
+                                                               :body (json/write-str {:compatibility compat-level}))))
                            (catch Throwable t
                              (log/with-context+ {:subject      subject
                                                  :compat-level compat-level}
