@@ -99,6 +99,9 @@
                        producer]
       :or             {producer :value}}]
 
+  (when-not schema-asserter
+    (throw (ex-info "Unspecified schema-asserter for ConfluentJSONSchemaCompatibleSerializer." {})))
+
   (let [allowed-values #{:key :value :both}]
     (when-not (allowed-values producer)
       (throw (ex-info (format "ConfluentJSONSchemaCompatibleSerializer expects one of '%s' for :producer."
