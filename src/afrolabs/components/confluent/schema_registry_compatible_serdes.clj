@@ -7,6 +7,7 @@
             [taoensso.timbre :as log]
             [clojure.java.io :as io]
             [afrolabs.components.confluent.schema-registry :as -sr]
+            [afrolabs.components.confluent.protocols :as -confluent-protocols]
             [afrolabs.components :as -comp])
   (:import [org.apache.kafka.clients.producer ProducerConfig]
            [afrolabs.components.kafka IUpdateProducerConfigHook]
@@ -34,7 +35,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(gen-class :name       "afrolabs.components.confluent.sr_compat_serdes.Serializer"
+(gen-class :name       "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer"
            :prefix     "ser-"
            :main       false
            :init       "init"
@@ -47,7 +48,7 @@
   [this cfg key?]
   (swap! (.state this)
          assoc
-         :context-guid (get cfg (str "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid"))
+         :context-guid (get cfg "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer.context-guid")
          :key?         key?))
 
 (defn int->4byte-array
@@ -68,8 +69,8 @@
    (let [{:keys [context-guid
                  key?]}      @(.state this)
          schema-asserter     (get @schema-asserter-registry context-guid)
-         schema-id           (-sr/get-schema-id schema-asserter
-                                                (str topic "-" (if key? "key" "value")))
+         schema-id           (-confluent-protocols/get-schema-id schema-asserter
+                                                                 (str topic "-" (if key? "key" "value")))
          bytes-output-stream (ByteArrayOutputStream.)
          schema-id-bytes     (int->4byte-array schema-id)]
 
@@ -98,6 +99,9 @@
                        producer]
       :or             {producer :value}}]
 
+  (when-not schema-asserter
+    (throw (ex-info "Unspecified schema-asserter for ConfluentJSONSchemaCompatibleSerializer." {})))
+
   (let [allowed-values #{:key :value :both}]
     (when-not (allowed-values producer)
       (throw (ex-info (format "ConfluentJSONSchemaCompatibleSerializer expects one of '%s' for :producer."
@@ -111,9 +115,9 @@
       IUpdateProducerConfigHook
       (update-producer-cfg-hook
           [_ cfg]
-        (cond->                       (assoc cfg                                          "afrolabs.components.confluent.sr_compat_serdes.Serializer.context-guid" context-guid)
-          (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.sr_compat_serdes.Serializer")
-          (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.sr_compat_serdes.Serializer")))
+        (cond->                       (assoc cfg                                          "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer.context-guid" context-guid)
+          (#{:both :key}   producer)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer")
+          (#{:both :value} producer)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.confluent.schema_registry_compatible_serdes.Serializer")))
 
       IHaltable
       (halt [_]

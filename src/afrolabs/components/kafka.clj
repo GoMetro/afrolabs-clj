@@ -76,7 +76,7 @@
 (defprotocol IProducer
   "Can produce records. To kafka, probably."
 
-  (get-producer [_] "Returns the actual kafka API producer object")
+  (get-producer [_] "Returns the actual kafka API producer object. This is a bad api design, don't use this.")
   (produce! [_ records]
     "Produces a collection of record maps. This is a side-effect!"))
 

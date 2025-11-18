@@ -36,4 +36,4 @@
                                           afrolabs.components.kafka.bytes-serdes
                                           afrolabs.components.kafka.transit-serdes
                                           spicyrun.ninja.lambda.runtime
-                                          #_afrolabs.components.confluent.schema-registry-compatible-serdes]})))
+                                          afrolabs.components.confluent.schema-registry-compatible-serdes]})))
