@@ -79,6 +79,7 @@
   (s/and map?
          #(:credentials-provider %)))
 
-(-comp/defcomponent {::-comp/ig-kw       ::aws-client-config
-                     ::-comp/config-spec ::aws-client-config-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::aws-client-config
+                     ::-comp/config-spec        ::aws-client-config-cfg
+                     ::-comp/supports:disabled? true}
   [cfg] (#'make-aws-client cfg))

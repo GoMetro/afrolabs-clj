@@ -40,12 +40,15 @@
 
              ;; validation of config against config specification
              (when-not (s/valid? ~config-spec cfg#)
-               (throw (ex-info (str "Component '"
-                                    cfg-key#
-                                    "' did not receive valid configuration.")
-                               {::explain-str  (s/explain-str ~config-spec cfg#)
-                                ::explain-data (s/explain-data ~config-spec cfg#)
-                                ::spec         ~config-spec})))
+               (let [explanation-data# (s/explain-data ~config-spec cfg#)]
+                 (tap> [:invalid-config ~config-spec
+                        :explain-data  explanation-data#])
+                 (throw (ex-info (str "Component '"
+                                      cfg-key#
+                                      "' did not receive valid configuration.")
+                                 {::explain-str  (s/explain-str ~config-spec cfg#)
+                                  ::explain-data explanation-data#
+                                  ::spec         ~config-spec}))))
 
              ;; the body passed to the defcomponent, is actually the implementation of the ig/init-key, but kept in this separate init-fn
              ;; inline it here

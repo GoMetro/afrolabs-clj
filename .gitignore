@@ -5,3 +5,4 @@ target/
 /.clj-kondo/
 /.cpcache/
 /.lsp/
+/.cider-history
