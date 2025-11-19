@@ -778,15 +778,26 @@
                      ^Collection (resolve-topic-like-seq topics)
                      ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
-
-;; TODO - Add an overload for ConsumerRebalanceListener
 (defstrategy SubscribeWithTopicsRegex
-  [^java.util.regex.Pattern regex]
-  (reify
-    IConsumerInitHook
-    (consumer-init-hook
-        [_ consumer]
-      (.subscribe ^Consumer consumer regex))))
+  ([^java.util.regex.Pattern regex]
+   (reify
+     IConsumerInitHook
+     (consumer-init-hook
+         [_ consumer]
+       (.subscribe ^Consumer consumer regex))))
+  ([^java.util.regex.Pattern regex
+    rebalance-listeners]
+   (when-not (seq rebalance-listeners)
+     (throw (ex-info "Specify a collection of at least one element for the rebalance-listeners" {})))
+
+   (let [with-consumer-rebalance-listener (combine-all-rebalance-listeners rebalance-listeners)]
+     (reify
+       IConsumerInitHook
+       (consumer-init-hook
+           [_ consumer]
+         (.subscribe ^Consumer consumer
+                     ^java.util.regex.Pattern regex
+                     ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
 (defstrategy SeekToPartitionOffset
   [topic-partition-offsets]
