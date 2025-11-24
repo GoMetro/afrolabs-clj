@@ -242,7 +242,7 @@ The client is responsible for closing the stream.")
   (when-let [object-size (re-find #"[0-9]+$" content-range)]
     (Long/parseLong object-size)))
 
-(def ^{:private true
+(def ^{:private false
        :dynamic true
        :doc     "The size of the byte[]/chunks of data that is uploaded or downloaded to and from S3."}
   *chunk-size-bytes*
@@ -505,7 +505,7 @@ The client is responsible for closing the stream.")
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(defn- open-s3-upload-stream
+(defn open-s3-upload-stream
   "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
 
   It is the responsibility of the caller to close the result stream."
@@ -516,8 +516,8 @@ The client is responsible for closing the stream.")
                                         *chunk-size-bytes*)]
     ;; we start a thread that will read data in chunks from the OutputStream and upload it to S3
     (csp/thread (try (input-stream->multi-part-s3-upload input-stream
-                                                        s3-client
-                                                        destination-address)
+                                                         s3-client
+                                                         destination-address)
                      (catch Throwable t
                        (log/error t "Unable to upload input-stream to s3.")
                        (.close input-stream)

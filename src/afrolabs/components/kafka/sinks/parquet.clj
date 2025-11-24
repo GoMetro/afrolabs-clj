@@ -1,35 +1,32 @@
 (ns afrolabs.components.kafka.sinks.parquet
   "This namespace exports a component that can be used to 'sink' a kafka topic into
-  an s3-bucket-like storage system with parquet encoding.
-
-  This is to be used in unforeseeable ways, but right now is imagined to be
-  about
-
-  "
+  an S3 bucket like storage system with parquet encoding."
   (:require
    [afrolabs.components :as -comp]
    [afrolabs.components.aws.client-config :as -client-config]
    [afrolabs.components.health :as -health]
    [afrolabs.components.kafka :as -kafka]
    [afrolabs.components.kafka.back-pressure-aware-consumer :as -bpac]
+   [afrolabs.components.kafka.checkpoint-storage.stores :as -checkpoint-stores]
    [afrolabs.components.time :as -time]
    [clojure.core.async :as csp]
    [clojure.spec.alpha :as s]
+   [cognitect.aws.client.api :as aws]
    [integrant.core :as ig]
    [java-time.api :as t]
+   [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
    [tech.v3.dataset :as ds]
    [tech.v3.libs.parquet :as ds-parquet]
-   [net.cgrand.xforms :as x]
-   [afrolabs.components.kafka.checkpoint-storage.stores])
+   )
   (:import
    [java.io File FileOutputStream])
   )
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(def partition-instant-format-string (java.time.format.DateTimeFormatter/ofPattern "'year'=yyyy/'month'=MM/'day'=dd"))
-(let [zone-id (java.time.ZoneId/of "UTC")]
+(let [partition-instant-format-string (java.time.format.DateTimeFormatter/ofPattern "'year'=yyyy/'month'=MM/'day'=dd")
+      zone-id                         (java.time.ZoneId/of "UTC")]
   (defn- instant->partition
     "This fn accepts an instant and returns a/the generic HIVE-style partition for this instant.
   `<year>=YYYY/<month>=MM/<day>=DD`
@@ -77,7 +74,45 @@
           (log/error t "Unable to open a FileinputStream on checkpoint file.")
           (throw t))))))
 
+(s/def ::s3:bucket-name (s/and string?
+                               (comp pos? count)))
+(s/def ::s3:path-prefix (s/nilable (s/and string?
+                                          (comp pos? count))))
+(s/def ::storage-type #(:s3 :filesystem))
+
+(def ^:dynamic *s3-chunk-file-size* (* 256 1024 1024))
+(defn- s3:open-parquet-file-data-stream
+  "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
+
+  It is the responsibility of the caller to close the result stream."
+  [{:keys [s3-client
+           s3:path-prefix]}
+   partition]
+
+  (let [destination-address (str (when (seq s3:path-prefix)
+                                   (str s3:path-prefix "/"))
+                                 partition
+                                 "/part-" (random-uuid) ".parquet")]
+    ;; we are sneakily re-using the storage logic for ktable checkpoints
+    ;; because it knows how to upload very large inputstreams to s3
+    (binding [-checkpoint-stores/*chunk-size-bytes* *s3-chunk-file-size*]
+      (#'-checkpoint-stores/open-s3-upload-stream
+       {:s3-client           s3-client
+        :destination-address destination-address}))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(defmulti open-parquet-file-data-stream (fn [{:keys [storage-type]}_partition]
+                                          storage-type))
+(defmethod open-parquet-file-data-stream :s3
+  [cfg partition]
+  (s3:open-parquet-file-data-stream cfg partition))
+(defmethod open-parquet-file-data-stream :filesystem
+  [cfg partition]
+  (fs:open-parquet-file-data-stream cfg partition))
+
+;;;;;;;;;;;;;;;;;;;;
 
 (defn- export!
   "Creates parquet file exports from everything in `state`. Returns `nil`."
@@ -85,7 +120,7 @@
     :keys [record->event-timestamp-column-name]}
    state]
   (doseq [[partition {:keys [dataset topic]}] state]
-    (with-open [fos (fs:open-parquet-file-data-stream cfg partition)]
+    (with-open [fos (open-parquet-file-data-stream cfg partition)]
       (let [ds (ds/sort-by-column (dataset)
                                   (record->event-timestamp-column-name topic))]
         (ds-parquet/ds->parquet ds fos)
@@ -117,6 +152,7 @@
                                    (>= nr-records
                                        max-nr-of-msgs)))
 
+        ;; sort the data into what must be exported and what must be held back a little longer
         {held-state       false
          exportable-state true} (into {}
                                       (x/by-key exportable?
@@ -266,14 +302,65 @@
       (assoc cfg field replacement?)
       cfg)))
 
+;;;;;;;;;;;;;;;;;;;;
+
+(defmulti prepare-storage :storage-type)
+(defmethod prepare-storage :s3
+  [{:as cfg :keys [aws-client-config]}]
+  (assoc cfg
+         :s3-client
+         (aws/client (assoc aws-client-config :api :s3))))
+
+(def ^{:arglists '([storage-path])
+       :doc      "Checks that the path exists and is a directory, or creates it, or throws. Caches results per storage-path."
+       :private  true}
+  ensure-fs-directory-path!
+  (memoize (fn [storage-path]
+             (let [storage-path-f (File. ^String storage-path)]
+               (try
+                 (if (.exists storage-path-f)
+                   (when-not (.isDirectory storage-path-f)
+                     (throw (ex-info "The storage path for filesystem-checkpoint-storage must point to a directory."
+                                     {:path storage-path})))
+                   (when-not (.mkdirs storage-path-f)
+                     (throw (ex-info "Unable to create the file system ktable storage path."
+                                     {:path storage-path}))))
+                 (catch Throwable t
+                   (let [error-msg "Unable to initialize the filesystem checkpoint storage path."]
+                     (log/error t error-msg)
+                     (throw (ex-info error-msg
+                                     {:path storage-path}
+                                     t)))))
+               storage-path-f))))
+(defmethod prepare-storage :filesystem
+  [{:as cfg :keys [fs:store-root]}]
+  ;; side-effect only
+  (ensure-fs-directory-path! fs:store-root)
+  ;; return original
+  cfg)
+
+;;;;;;;;;;;;;;;;;;;;
+
 (defn make-component
   [{:as cfg :keys [topic-regex-str
-                   record->row:fn]}]
+                   storage-type
+                   fs:store-root
+                   s3:bucket-name]}]
+
+  ;; check storage parameters
+  (case storage-type
+    :s3 (when-not s3:bucket-name
+          (throw (ex-info "When the parquet sink is used with S3, a :bucket-name parameter is required."
+                          {:provided s3:bucket-name})))
+    :filesystem (when-not fs:store-root
+                  (throw (ex-info "When the parquet sink is used with filesystem, an :fs:store-root is required."
+                                  {:provided fs:store-root}))))
 
   (let [cfg (-> cfg
                 (resolve* :record->event-timestamp-column-name)
                 (resolve* :record->row:fn)
-                (update   :max-file-duration (partial apply t/duration)))
+                (update   :max-file-duration (partial apply t/duration))
+                (prepare-storage))
         incoming-msgs-ch (csp/chan 1)
         consumer-worker (make-msgs-consumer-worker cfg
                                                    incoming-msgs-ch)
@@ -340,7 +427,10 @@
                                         ::-kafka/strategies
                                         ::-health/service-health-trip-switch
                                         ::-time/clock
-                                        ::fs:store-root]))
+                                        ::storage-type]
+                               :opt-un [::fs:store-root
+                                        ::s3:bucket-name
+                                        ::s3:path-prefix]))
 
 (-comp/defcomponent {::-comp/ig-kw              ::parquet-sink
                      ::-comp/config-spec        ::component-cfg
