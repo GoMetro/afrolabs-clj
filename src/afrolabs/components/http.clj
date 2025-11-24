@@ -93,6 +93,8 @@
                            (str " [" status "]")))))
         res))))
 
+(defonce all-started-http-servers (atom #{}))
+
 (defn create-http-component
   [{:keys [port
            ip
@@ -148,9 +150,15 @@
                                  {:system-id (:afrolabs.components/ig-kw cfg)}
                                  t))))]
 
+      ;; save the started server for later
+      (swap! all-started-http-servers conj s)
+
       (reify
         IHaltable
-        (halt [_] (httpkit/server-stop! s))))))
+        (halt [_]
+          (swap! all-started-http-servers disj s)
+          (httpkit/server-stop! s)
+          )))))
 
 (-comp/defcomponent {::-comp/config-spec ::http-component-cfg
                      ::-comp/ig-kw       ::service}
