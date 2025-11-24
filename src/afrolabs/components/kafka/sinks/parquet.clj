@@ -78,7 +78,7 @@
                                (comp pos? count)))
 (s/def ::s3:path-prefix (s/nilable (s/and string?
                                           (comp pos? count))))
-(s/def ::storage-type #(:s3 :filesystem))
+(s/def ::storage-type #{:s3 :filesystem})
 
 (def ^:dynamic *s3-chunk-file-size* (* 256 1024 1024))
 (defn- s3:open-parquet-file-data-stream
@@ -103,7 +103,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-(defmulti open-parquet-file-data-stream (fn [{:keys [storage-type]}_partition]
+(defmulti open-parquet-file-data-stream (fn [{:keys [storage-type]} _partition]
                                           storage-type))
 (defmethod open-parquet-file-data-stream :s3
   [cfg partition]
@@ -387,6 +387,9 @@
         consumer (-kafka/make-consumer cfg)]
 
     (reify
+      clojure.lang.IDeref
+      (deref [_] cfg)
+
       -comp/IHaltable
       (halt [_]
         (-comp/halt consumer)
@@ -427,10 +430,12 @@
                                         ::-kafka/strategies
                                         ::-health/service-health-trip-switch
                                         ::-time/clock
-                                        ::storage-type]
+                                        ::storage-type
+                                        ]
                                :opt-un [::fs:store-root
                                         ::s3:bucket-name
-                                        ::s3:path-prefix]))
+                                        ::s3:path-prefix
+                                        ]))
 
 (-comp/defcomponent {::-comp/ig-kw              ::parquet-sink
                      ::-comp/config-spec        ::component-cfg
