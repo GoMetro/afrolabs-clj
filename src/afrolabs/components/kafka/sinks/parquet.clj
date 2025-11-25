@@ -61,7 +61,6 @@
    partition]
 
   (let [dir-file (-> (File. fs:store-root)
-                     (File. dataset-name)
                      (File. partition))]
     (log/with-context+ {:dir-file dir-file}
       (try
@@ -86,19 +85,21 @@
 
   It is the responsibility of the caller to close the result stream."
   [{:keys [s3-client
-           s3:path-prefix]}
+           s3:path-prefix
+           s3:bucket-name]}
    partition]
 
   (let [destination-address (str (when (seq s3:path-prefix)
-                                   (str s3:path-prefix "/"))
+                                   s3:path-prefix )
                                  partition
                                  "/part-" (random-uuid) ".parquet")]
     ;; we are sneakily re-using the storage logic for ktable checkpoints
     ;; because it knows how to upload very large inputstreams to s3
-    (binding [-checkpoint-stores/*chunk-size-bytes* *s3-chunk-file-size*]
-      (#'-checkpoint-stores/open-s3-upload-stream
-       {:s3-client           s3-client
-        :destination-address destination-address}))))
+    (binding [-checkpoint-stores/*chunk-size-bytes*                                 *s3-chunk-file-size*
+              -checkpoint-stores/*input-stream->multi-part-s3-upload:extra-s3-args* {:ServerSideEncryption "AES256"}]
+      (#'-checkpoint-stores/open-s3-upload-stream{:s3-client s3-client}
+                                                 {:bucket s3:bucket-name
+                                                  :key    destination-address}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -355,6 +356,8 @@
     :filesystem (when-not fs:store-root
                   (throw (ex-info "When the parquet sink is used with filesystem, an :fs:store-root is required."
                                   {:provided fs:store-root}))))
+
+  (tap> [:parquet-cfg cfg])
 
   (let [cfg (-> cfg
                 (resolve* :record->event-timestamp-column-name)

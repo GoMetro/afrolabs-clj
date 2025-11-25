@@ -365,14 +365,15 @@ The client is responsible for closing the stream.")
                                                                                             "default"))}))
 
   (aws/ops s3-client)
+  (aws/doc s3-client
+           :CreateMultipartUpload)
   (aws/invoke s3-client
               {:op :ListObjects
-               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"}})
-
-
-  )
+               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"}}))
 
 ;;;;;;;;;;;;;;;;;;;;
+
+(def ^:dynamic *input-stream->multi-part-s3-upload:extra-s3-args* {})
 
 (defn- input-stream->multi-part-s3-upload
   "Accepts a (java.io.) InputStream, an s3-client and an s3 object coordinate/destination.
@@ -396,9 +397,11 @@ The client is responsible for closing the stream.")
                  (-aws/throw-when-anomaly
                   (aws/invoke s3-client
                               {:op      :CreateMultipartUpload
-                               :request {:Bucket            bucket
-                                         :Key               key
-                                         :ChecksumAlgorithm "SHA1"}})))]
+                               :request (log/spy :trace "multipart upload parameters"
+                                                 (merge *input-stream->multi-part-s3-upload:extra-s3-args*
+                                                        {:Bucket            bucket
+                                                         :Key               key
+                                                         :ChecksumAlgorithm "SHA1"}))})))]
 
     (input-stream->chunks
      input-stream
