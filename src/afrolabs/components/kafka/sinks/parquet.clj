@@ -18,6 +18,7 @@
    [taoensso.timbre :as log]
    [tech.v3.dataset :as ds]
    [tech.v3.libs.parquet :as ds-parquet]
+   [com.potetm.fusebox.retry :as retry]
    )
   (:import
    [java.io File FileOutputStream])
@@ -115,19 +116,31 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
+(def max-export-retries 5)
+
+;; "simple" retrier with exponential backoff
+(def retryer (retry/init {::retry/retry? (fn [n ms ex]
+                                           (< n max-export-retries))
+                          ::retry/delay (fn [n ms ex]
+                                          (min (retry/delay-exp 500 n)
+                                               10000))}))
+
 (defn- export!
   "Creates parquet file exports from everything in `state`. Returns `nil`."
   [{:as   cfg
     :keys [record->event-timestamp-column-name]}
    state]
   (doseq [[partition {:keys [dataset topic]}] state]
-    (with-open [fos (open-parquet-file-data-stream cfg partition)]
-      (let [ds (ds/sort-by-column (dataset)
-                                  (record->event-timestamp-column-name topic))]
-        (ds-parquet/ds->parquet ds fos)
-        (log/with-context+ {:partition  partition
-                            :nr-records (ds/row-count ds)}
-          (log/info "Save parquet file. ")))))
+    (try (retry/with-retry retryer
+           (with-open [fos (open-parquet-file-data-stream cfg partition)]
+             (let [ds (ds/sort-by-column (dataset)
+                                         (record->event-timestamp-column-name topic))]
+               (ds-parquet/ds->parquet ds fos)
+               (log/with-context+ {:partition  partition
+                                   :nr-records (ds/row-count ds)}
+                 (log/info "Saved parquet file.")))))
+         (catch Throwable t
+           (log/error t "Unable to persist parquet files even after retries."))))
   nil)
 
 (defn- export-any!
