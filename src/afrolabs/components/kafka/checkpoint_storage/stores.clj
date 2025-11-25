@@ -242,7 +242,7 @@ The client is responsible for closing the stream.")
   (when-let [object-size (re-find #"[0-9]+$" content-range)]
     (Long/parseLong object-size)))
 
-(def ^{:private true
+(def ^{:private false
        :dynamic true
        :doc     "The size of the byte[]/chunks of data that is uploaded or downloaded to and from S3."}
   *chunk-size-bytes*
@@ -365,14 +365,15 @@ The client is responsible for closing the stream.")
                                                                                             "default"))}))
 
   (aws/ops s3-client)
+  (aws/doc s3-client
+           :CreateMultipartUpload)
   (aws/invoke s3-client
               {:op :ListObjects
-               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"}})
-
-
-  )
+               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"}}))
 
 ;;;;;;;;;;;;;;;;;;;;
+
+(def ^:dynamic *input-stream->multi-part-s3-upload:extra-s3-args* {})
 
 (defn- input-stream->multi-part-s3-upload
   "Accepts a (java.io.) InputStream, an s3-client and an s3 object coordinate/destination.
@@ -396,9 +397,11 @@ The client is responsible for closing the stream.")
                  (-aws/throw-when-anomaly
                   (aws/invoke s3-client
                               {:op      :CreateMultipartUpload
-                               :request {:Bucket            bucket
-                                         :Key               key
-                                         :ChecksumAlgorithm "SHA1"}})))]
+                               :request (log/spy :trace "multipart upload parameters"
+                                                 (merge *input-stream->multi-part-s3-upload:extra-s3-args*
+                                                        {:Bucket            bucket
+                                                         :Key               key
+                                                         :ChecksumAlgorithm "SHA1"}))})))]
 
     (input-stream->chunks
      input-stream
@@ -505,7 +508,7 @@ The client is responsible for closing the stream.")
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(defn- open-s3-upload-stream
+(defn open-s3-upload-stream
   "Will return a `java.io.OutputStream` which can be used to upload data (byte[]) to an s3 object.
 
   It is the responsibility of the caller to close the result stream."
@@ -516,8 +519,8 @@ The client is responsible for closing the stream.")
                                         *chunk-size-bytes*)]
     ;; we start a thread that will read data in chunks from the OutputStream and upload it to S3
     (csp/thread (try (input-stream->multi-part-s3-upload input-stream
-                                                        s3-client
-                                                        destination-address)
+                                                         s3-client
+                                                         destination-address)
                      (catch Throwable t
                        (log/error t "Unable to upload input-stream to s3.")
                        (.close input-stream)

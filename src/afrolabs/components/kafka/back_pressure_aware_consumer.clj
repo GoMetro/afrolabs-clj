@@ -58,8 +58,8 @@
                                (reset! pause-unpause-state :paused))))
         ensure-unpaused  (fn []
                            (when-not (= :unpaused @pause-unpause-state)
-                             (log/info "Back-pressure aware consumer strategy is consuming.")
                              (when-let [assigned-partitions* @assigned-partitions]
+                               (log/info "Back-pressure aware consumer strategy is consuming.")
                                (.resume ^Consumer @consumer* assigned-partitions*)
                                (prom/observe (get-gauge-consumer-paused {:component component-kw})
                                              0)
