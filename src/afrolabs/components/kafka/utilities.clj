@@ -85,9 +85,12 @@
       :or {nr-msgs           :all
            msg-filter        identity
            extra-strategies  []
-           offset-reset      "earliest"
            collect-messages? true}}]
-  (let [loaded-msgs (atom (transient []))
+  (let [offset-reset      (or offset-reset
+                              (when from-timestamp "latest")
+                              "earliest")
+
+        loaded-msgs (atom (transient []))
         loaded-enough-msgs (promise)
 
         running-total (atom 0)
