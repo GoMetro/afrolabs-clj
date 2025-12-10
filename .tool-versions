@@ -1,1 +1,2 @@
-java openjdk-11
+java openjdk-25
+clojure 1.12.3.1577
