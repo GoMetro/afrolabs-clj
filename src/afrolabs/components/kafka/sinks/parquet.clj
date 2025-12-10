@@ -74,8 +74,8 @@
           (log/error t "Unable to open a FileinputStream on checkpoint file.")
           (throw t))))))
 
-(s/def ::s3:bucket-name (s/and string?
-                               (comp pos? count)))
+(s/def ::s3:bucket-name (s/nilable (s/and string?
+                                          (comp pos? count))))
 (s/def ::s3:path-prefix (s/nilable string?))
 (s/def ::storage-type #{:s3 :filesystem})
 
