@@ -50,7 +50,7 @@
              (try
                (cb thread ex)
                (catch Throwable t
-                 (log/warn t "Uncaught exception on the uncaught exception handler. Booooooooo."))))))))
+                 (log/warn t "Uncaught exception on the uncaught exception handler. BOOOOOOooooo!!!!"))))))))
 
     callbacks))
 
@@ -94,37 +94,23 @@
                          (remove-watch healthy? ::healthy-watcher))))
 
         ;; helper callback
-        indicate-unhealthy (fn []
-                             (reset! healthy? false))
+        indicate-unhealthy (fn [] (reset! healthy? false))
 
-        self-destruct-singleton (delay
-                                  (.start (Thread. (do
-                                                     (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
-                                                       (log/warnf "Self destructing in %d seconds..." i)
-                                                       (Thread/sleep (* i 1000)))
-                                                     (System/exit 1)))))
+        self-destruct! (fn []
+                         (.start (Thread. (do
+                                            (doseq [i (reverse (range 1 trigger-self-destruct-timer-seconds))]
+                                              (log/warnf "Self destructing in %d seconds..." i)
+                                              (Thread/sleep 999))
+                                            (System/exit 1)))))]
 
-        os-signal-handler-self-destruct-log-msg
-        (delay
-          (log/warn "Triggering the self-destruct timer if another OS signal arrives."))
-
-        uncaught-exception-handler-self-destruct-log-msg
-        (delay
-          (log/warn "Triggering the self-destruct timer if another uncaught exception arrives."))]
-
-    (letfn [(self-destruct
-              [& _]
-              (when trigger-self-destruct-timer-seconds
-                @self-destruct-singleton))
-
-            (os-signal-handler
+    (letfn [(os-signal-handler
               [signal]
               (log/fatalf "Health component received OS signal '%s', marking the system as unhealthy."
                           signal)
               (indicate-unhealthy)
               (when trigger-self-destruct-timer-seconds
-                @os-signal-handler-self-destruct-log-msg
-                (swap! signal-callbacks conj self-destruct)))
+                (log/warn "Triggering the self-destruct timer if another OS signal arrives.")
+                (self-destruct!)))
 
             (uncaught-exception-handler
               [thread exception]
@@ -133,8 +119,8 @@
                           (str thread) (str exception))
               (indicate-unhealthy)
               (when trigger-self-destruct-timer-seconds
-                @uncaught-exception-handler-self-destruct-log-msg
-                (swap! uncaught-exception-handlers conj self-destruct)))]
+                (log/warn "Triggering the self-destruct timer if another uncaught exception arrives.")
+                (self-destruct!)))]
 
       (when intercept-signals
         (log/info "Setting up the OS signal handler...")
