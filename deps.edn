@@ -1,5 +1,5 @@
 {:deps
- {org.clojure/spec.alpha                                 {:mvn/version "0.5.238"},
+ {org.clojure/spec.alpha                                 {:mvn/version "0.6.249"},
   org.clojure/clojure                                    {:mvn/version "1.12.3"},
   ;; com.google.javascript/closure-compiler-unshaded {:mvn/version "v20240317"},
   ;; org.clojure/clojurescript {:mvn/version "1.11.132", :exclusions [com.cognitect/transit-java]},
