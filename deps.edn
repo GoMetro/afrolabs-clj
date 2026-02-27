@@ -82,7 +82,11 @@
   com.velisco/tagged                                     {:mvn/version "0.5.0"}
   com.github.sikt-no/clj-jwt                             {:mvn/version "0.5.105"}
 
-  com.potetm/fusebox {:mvn/version "1.0.11"}}
+  com.potetm/fusebox {:mvn/version "1.0.11"}
+
+  ;; NippySerializer strategy
+  com.taoensso/nippy             {:mvn/version "3.6.0"}
+}
 
  :paths         ["src" "resources" "target/classes"]
  :mvn/repos     {"confluent" {:url "https://packages.confluent.io/maven/"}}

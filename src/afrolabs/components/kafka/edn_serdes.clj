@@ -4,7 +4,7 @@
    :main false)
   (:require [clojure.tools.reader.edn :as edn]
             [taoensso.timbre :as log]
-            [java-time :as t])
+            [java-time.api :as t])
   (:import
    [org.apache.kafka.common.header Headers]
    [java.nio ByteBuffer]))
