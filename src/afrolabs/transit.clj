@@ -49,6 +49,8 @@
                       :write-fn #(.getValue ^Month %)
                       :read-fn #(Month/of (int %))}})
 
+(def ^:dynamic *transit-encoding-type* :json)
+
 (def ^:private write-handlers
   (into {}
         (for [[time-name {time-class :class
@@ -63,7 +65,7 @@
 
 (defn write-transit [coll output-stream]
   (t/write (t/writer output-stream
-                     :json
+                     *transit-encoding-type*
                      {:handlers write-handlers})
            coll))
 
@@ -77,7 +79,7 @@
 
 (defn read-transit [input-stream]
   (t/read (t/reader input-stream
-                    :json
+                    *transit-encoding-type*
                     {:handlers read-handlers})))
 
 (defn read-transit-json [^String s]
