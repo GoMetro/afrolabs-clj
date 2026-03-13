@@ -1590,6 +1590,8 @@
                      ::-comp/config-spec  ::admin-client-cfg}
   [cfg] (make-admin-client cfg))
 
+(s/def ::admin-client #(instance? clojure.lang.IDeref %))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn increase-topic-partitions!
@@ -1707,17 +1709,23 @@
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
                                            (catch NumberFormatException _ false))))
-(s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
-                                   (s/keys :req-un [::topic-name-providers]
-                                           :opt-un [::nr-of-partitions
-                                                    ::increase-existing-partitions?])))
+(s/def ::topic-asserter-cfg
+  (s/or :implied-admin-client (s/and ::admin-client-cfg
+                                     (s/keys :req-un [::topic-name-providers]
+                                             :opt-un [::nr-of-partitions
+                                                      ::increase-existing-partitions?]))
+        :provided-admin-client (s/keys :req-un [::admin-client
+                                                ::topic-name-providers]
+                                       :opt-un [::nr-of-partitions
+                                                ::increase-existing-partitions?])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
                      ::-comp/config-spec ::topic-asserter-cfg}
   [{:as   cfg
     :keys [topic-name-providers
            nr-of-partitions
-           increase-existing-partitions?]
+           increase-existing-partitions?
+           admin-client]
     :or   {increase-existing-partitions? false}}]
 
   (let [^java.lang.Integer
@@ -1727,7 +1735,8 @@
                              (when (number? nr-of-partitions)
                                (Integer. nr-of-partitions))
                              nr-of-partitions)
-        ac (make-admin-client cfg)]
+        ac (or admin-client
+               (make-admin-client cfg))]
 
     (assert-topics! @ac
                     (mapcat #(get-topic-names %) topic-name-providers)
@@ -1782,22 +1791,35 @@
                                     "delete,compact"
                                     ;; same as `delete,compact`
                                     "compact,delete"})
-(s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
-                                    (s/keys :req-un [::topic-name-providers]
-                                            :opt-un [::nr-of-partitions
-                                                     ::topic-delete-retention-ms
-                                                     ::ktable-segment-ms
-                                                     ::ktable-min-cleanable-dirty-ratio
-                                                     ::recreate-topics-with-bad-config
-                                                     ::update-topics-with-bad-config
-                                                     ::ktable-max-compaction-lag-ms
-                                                     ::ktable-compaction-policy
-                                                     ::increase-existing-partitions?])))
+(s/def ::ktable-asserter-cfg
+  (s/or :implicit-admin-client (s/and ::admin-client-cfg
+                                      (s/keys :req-un [::topic-name-providers]
+                                              :opt-un [::nr-of-partitions
+                                                       ::topic-delete-retention-ms
+                                                       ::ktable-segment-ms
+                                                       ::ktable-min-cleanable-dirty-ratio
+                                                       ::recreate-topics-with-bad-config
+                                                       ::update-topics-with-bad-config
+                                                       ::ktable-max-compaction-lag-ms
+                                                       ::ktable-compaction-policy
+                                                       ::increase-existing-partitions?]))
+        :provided-admin-client (s/keys :req-un [::admin-client
+                                                ::topic-name-providers]
+                                       :opt-un [::nr-of-partitions
+                                                ::topic-delete-retention-ms
+                                                ::ktable-segment-ms
+                                                ::ktable-min-cleanable-dirty-ratio
+                                                ::recreate-topics-with-bad-config
+                                                ::update-topics-with-bad-config
+                                                ::ktable-max-compaction-lag-ms
+                                                ::ktable-compaction-policy
+                                                ::increase-existing-partitions?])))
 
 (-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
                      ::-comp/config-spec ::ktable-asserter-cfg}
   [{:as   cfg
-    :keys [topic-name-providers
+    :keys [admin-client
+           topic-name-providers
            nr-of-partitions
            topic-delete-retention-ms
            ktable-segment-ms
@@ -1825,7 +1847,8 @@
                              (when (number? nr-of-partitions)
                                (Integer. nr-of-partitions))
                              nr-of-partitions)
-        ac (make-admin-client cfg)
+        ac (or admin-client
+               (make-admin-client cfg))
         existing-topics (-> ^AdminClient @ac
                             (.listTopics)
                             (.names)
