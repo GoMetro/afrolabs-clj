@@ -1743,8 +1743,9 @@
                     :nr-of-partitions              nr-of-partitions
                     :increase-existing-partitions? increase-existing-partitions?)
 
-    ;; stop the admin client
-    (-comp/halt ac)
+    ;; stop the admin client, but only when we created it
+    (when-not admin-client
+      (-comp/halt ac))
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
@@ -1946,8 +1947,9 @@
         (.all)
         (.get))
 
-    ;; stop the admin client
-    (-comp/halt ac)
+    ;; stop the admin client, but only when we created it
+    (when-not admin-client
+      (-comp/halt ac))
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
