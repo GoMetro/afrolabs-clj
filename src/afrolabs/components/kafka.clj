@@ -1312,8 +1312,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(-comp/defcomponent {::-comp/ig-kw       ::kafka-producer
-                     ::-comp/config-spec ::producer-config}
+(-comp/defcomponent {::-comp/ig-kw              ::kafka-producer
+                     ::-comp/config-spec        ::producer-config
+                     ::-comp/supports:disabled? true}
   [cfg] (make-producer cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1586,8 +1587,9 @@
       IHaltable
       (halt [_] (.close ac)))))
 
-(-comp/defcomponent {::-comp/ig-kw ::admin-client
-                     ::-comp/config-spec  ::admin-client-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::admin-client
+                     ::-comp/config-spec        ::admin-client-cfg
+                     ::-comp/supports:disabled? true}
   [cfg] (make-admin-client cfg))
 
 (s/def ::admin-client #(instance? clojure.lang.IDeref %))
@@ -1719,8 +1721,9 @@
                                        :opt-un [::nr-of-partitions
                                                 ::increase-existing-partitions?])))
 
-(-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
-                     ::-comp/config-spec ::topic-asserter-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::topic-asserter
+                     ::-comp/config-spec        ::topic-asserter-cfg
+                     ::-comp/supports:disabled? true}
   [{:as   cfg
     :keys [topic-name-providers
            nr-of-partitions
@@ -1816,8 +1819,9 @@
                                                 ::ktable-compaction-policy
                                                 ::increase-existing-partitions?])))
 
-(-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
-                     ::-comp/config-spec ::ktable-asserter-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::ktable-asserter
+                     ::-comp/config-spec        ::ktable-asserter-cfg
+                     ::-comp/supports:disabled? true}
   [{:as   cfg
     :keys [admin-client
            topic-name-providers
@@ -2437,8 +2441,9 @@ Returns a subscription handle with which you can unsubscribe later.")
        (csp/close! new-value-ch)
        (csp/<!! worker)))))
 
-(-comp/defcomponent {::-comp/config-spec ::ktable-cfg
-                     ::-comp/ig-kw       ::ktable}
+(-comp/defcomponent {::-comp/config-spec        ::ktable-cfg
+                     ::-comp/ig-kw              ::ktable
+                     ::-comp/supports:disabled? true}
   [{:as cfg
     :keys [ktable-id
            caught-up-once?
