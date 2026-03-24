@@ -9,8 +9,7 @@
             [afrolabs.components.http :as -http]
             [ring.util.response :as ring-response]
             [ring.util.io :as ring-io]
-            [clojure.java.io :as io])
-  (:import [afrolabs.components.http IHttpRequestHandler]))
+            [clojure.java.io :as io]))
 
 
 (defonce registry
@@ -64,7 +63,7 @@
                      ::-comp/ig-kw       ::metrics-endpoint}
   [{:keys [endpoint]}]
   (reify
-    IHttpRequestHandler
+    -http/IHttpRequestHandler
     (handle-http-request [_ {:keys [uri
                                     request-method]}]
       (when (and (= uri endpoint)
