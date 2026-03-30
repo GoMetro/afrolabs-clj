@@ -92,9 +92,29 @@
 
 (defmethod aero/reader 'long?
   [_ _ value]
-  (when (and value
-             (seq value))
-    (Long/parseLong (str value))))
+  (when value
+    (cond
+      (number? value)
+      (long value)
+
+      (string? value)
+      (Long/parseLong value)
+
+      :else
+      (Long/parseLong (str value)))))
+
+(defmethod aero/reader 'int?
+  [_ _ value]
+  (when value
+    (cond
+      (number? value)
+      (int value)
+
+      (string? value)
+      (Integer/parseInt value)
+
+      :else
+      (Integer/parseInt (str value)))))
 
 (defmethod aero/reader 'edn
   [_ _ value]

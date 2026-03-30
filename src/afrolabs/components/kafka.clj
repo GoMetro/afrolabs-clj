@@ -6,6 +6,7 @@
    [afrolabs.components.kafka.edn-serdes :as -edn-serdes]
    [afrolabs.components.kafka.json-serdes :as -json-serdes]
    [afrolabs.components.kafka.transit-serdes :as -transit-serdes]
+   [afrolabs.components.kafka.nippy :as -nippy]
    [afrolabs.components.kafka.checkpoint-storage :as -ktable-checkpoints]
    [afrolabs.components.time :as -time]
    [afrolabs.prometheus :as -prom]
@@ -1311,8 +1312,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(-comp/defcomponent {::-comp/ig-kw       ::kafka-producer
-                     ::-comp/config-spec ::producer-config}
+(-comp/defcomponent {::-comp/ig-kw              ::kafka-producer
+                     ::-comp/config-spec        ::producer-config
+                     ::-comp/supports:disabled? true}
   [cfg] (make-producer cfg))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1585,9 +1587,12 @@
       IHaltable
       (halt [_] (.close ac)))))
 
-(-comp/defcomponent {::-comp/ig-kw ::admin-client
-                     ::-comp/config-spec  ::admin-client-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::admin-client
+                     ::-comp/config-spec        ::admin-client-cfg
+                     ::-comp/supports:disabled? true}
   [cfg] (make-admin-client cfg))
+
+(s/def ::admin-client #(instance? clojure.lang.IDeref %))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1706,17 +1711,24 @@
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
                                            (catch NumberFormatException _ false))))
-(s/def ::topic-asserter-cfg (s/and ::admin-client-cfg
-                                   (s/keys :req-un [::topic-name-providers]
-                                           :opt-un [::nr-of-partitions
-                                                    ::increase-existing-partitions?])))
+(s/def ::topic-asserter-cfg
+  (s/or :implied-admin-client (s/and ::admin-client-cfg
+                                     (s/keys :req-un [::topic-name-providers]
+                                             :opt-un [::nr-of-partitions
+                                                      ::increase-existing-partitions?]))
+        :provided-admin-client (s/keys :req-un [::admin-client
+                                                ::topic-name-providers]
+                                       :opt-un [::nr-of-partitions
+                                                ::increase-existing-partitions?])))
 
-(-comp/defcomponent {::-comp/ig-kw       ::topic-asserter
-                     ::-comp/config-spec ::topic-asserter-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::topic-asserter
+                     ::-comp/config-spec        ::topic-asserter-cfg
+                     ::-comp/supports:disabled? true}
   [{:as   cfg
     :keys [topic-name-providers
            nr-of-partitions
-           increase-existing-partitions?]
+           increase-existing-partitions?
+           admin-client]
     :or   {increase-existing-partitions? false}}]
 
   (let [^java.lang.Integer
@@ -1726,15 +1738,17 @@
                              (when (number? nr-of-partitions)
                                (Integer. nr-of-partitions))
                              nr-of-partitions)
-        ac (make-admin-client cfg)]
+        ac (or admin-client
+               (make-admin-client cfg))]
 
     (assert-topics! @ac
                     (mapcat #(get-topic-names %) topic-name-providers)
                     :nr-of-partitions              nr-of-partitions
                     :increase-existing-partitions? increase-existing-partitions?)
 
-    ;; stop the admin client
-    (-comp/halt ac)
+    ;; stop the admin client, but only when we created it
+    (when-not admin-client
+      (-comp/halt ac))
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
@@ -1781,22 +1795,36 @@
                                     "delete,compact"
                                     ;; same as `delete,compact`
                                     "compact,delete"})
-(s/def ::ktable-asserter-cfg (s/and ::admin-client-cfg
-                                    (s/keys :req-un [::topic-name-providers]
-                                            :opt-un [::nr-of-partitions
-                                                     ::topic-delete-retention-ms
-                                                     ::ktable-segment-ms
-                                                     ::ktable-min-cleanable-dirty-ratio
-                                                     ::recreate-topics-with-bad-config
-                                                     ::update-topics-with-bad-config
-                                                     ::ktable-max-compaction-lag-ms
-                                                     ::ktable-compaction-policy
-                                                     ::increase-existing-partitions?])))
+(s/def ::ktable-asserter-cfg
+  (s/or :implicit-admin-client (s/and ::admin-client-cfg
+                                      (s/keys :req-un [::topic-name-providers]
+                                              :opt-un [::nr-of-partitions
+                                                       ::topic-delete-retention-ms
+                                                       ::ktable-segment-ms
+                                                       ::ktable-min-cleanable-dirty-ratio
+                                                       ::recreate-topics-with-bad-config
+                                                       ::update-topics-with-bad-config
+                                                       ::ktable-max-compaction-lag-ms
+                                                       ::ktable-compaction-policy
+                                                       ::increase-existing-partitions?]))
+        :provided-admin-client (s/keys :req-un [::admin-client
+                                                ::topic-name-providers]
+                                       :opt-un [::nr-of-partitions
+                                                ::topic-delete-retention-ms
+                                                ::ktable-segment-ms
+                                                ::ktable-min-cleanable-dirty-ratio
+                                                ::recreate-topics-with-bad-config
+                                                ::update-topics-with-bad-config
+                                                ::ktable-max-compaction-lag-ms
+                                                ::ktable-compaction-policy
+                                                ::increase-existing-partitions?])))
 
-(-comp/defcomponent {::-comp/ig-kw       ::ktable-asserter
-                     ::-comp/config-spec ::ktable-asserter-cfg}
+(-comp/defcomponent {::-comp/ig-kw              ::ktable-asserter
+                     ::-comp/config-spec        ::ktable-asserter-cfg
+                     ::-comp/supports:disabled? true}
   [{:as   cfg
-    :keys [topic-name-providers
+    :keys [admin-client
+           topic-name-providers
            nr-of-partitions
            topic-delete-retention-ms
            ktable-segment-ms
@@ -1824,7 +1852,8 @@
                              (when (number? nr-of-partitions)
                                (Integer. nr-of-partitions))
                              nr-of-partitions)
-        ac (make-admin-client cfg)
+        ac (or admin-client
+               (make-admin-client cfg))
         existing-topics (-> ^AdminClient @ac
                             (.listTopics)
                             (.names)
@@ -1922,8 +1951,9 @@
         (.all)
         (.get))
 
-    ;; stop the admin client
-    (-comp/halt ac)
+    ;; stop the admin client, but only when we created it
+    (when-not admin-client
+      (-comp/halt ac))
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
@@ -2411,8 +2441,9 @@ Returns a subscription handle with which you can unsubscribe later.")
        (csp/close! new-value-ch)
        (csp/<!! worker)))))
 
-(-comp/defcomponent {::-comp/config-spec ::ktable-cfg
-                     ::-comp/ig-kw       ::ktable}
+(-comp/defcomponent {::-comp/config-spec        ::ktable-cfg
+                     ::-comp/ig-kw              ::ktable
+                     ::-comp/supports:disabled? true}
   [{:as cfg
     :keys [ktable-id
            caught-up-once?
@@ -2662,3 +2693,32 @@ Returns a subscription handle with which you can unsubscribe later.")
           (produce! producer
                     forwarded))))))
 
+
+(defstrategy NippySerializer
+  [& {producer-option :producer
+      consumer-option :consumer
+      :or {producer-option :none
+           consumer-option :none}}]
+
+  (let [allowed-values #{:key :value :both :none}]
+    (when-not (or (allowed-values producer-option)
+                  (allowed-values consumer-option))
+      (throw (ex-info "NippySerializer expects one of #{:key :value :both :none} for either or each of :producer & :consumer, eg (NippySerializer :consumer :value)"
+                      {::allowed-values  allowed-values
+                       ::consumer-option consumer-option
+                       ::producer-option producer-option}))))
+
+  (reify
+    IUpdateProducerConfigHook
+    (update-producer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   producer-option)  (assoc ProducerConfig/KEY_SERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.nippy.Serializer")
+        (#{:both :value} producer-option)  (assoc ProducerConfig/VALUE_SERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.nippy.Serializer")))
+
+    IUpdateConsumerConfigHook
+    (update-consumer-cfg-hook
+        [_ cfg]
+      (cond-> cfg
+        (#{:both :key}   consumer-option)  (assoc ConsumerConfig/KEY_DESERIALIZER_CLASS_CONFIG   "afrolabs.components.kafka.nippy.Deserializer")
+        (#{:both :value} consumer-option)  (assoc ConsumerConfig/VALUE_DESERIALIZER_CLASS_CONFIG "afrolabs.components.kafka.nippy.Deserializer")))))

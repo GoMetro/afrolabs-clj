@@ -98,6 +98,7 @@
 
         caught-up-ch (csp/chan)
         _ (csp/go (csp/<! caught-up-ch)
+                  (csp/close! caught-up-ch) ;; prevents publishers from blocking
                   (info "Caught up to the end of the subscribed topics, closing...")
                   (deliver loaded-enough-msgs true))
 

@@ -49,8 +49,9 @@
   (handle-http-request [_ req] "httpkit-compatible http handler."))
 
 (s/def ::http-request-handler
-  (s/or :protocol #(satisfies? IHttpRequestHandler %)
-        :meta-data #(meta %)))
+  (s/nilable
+   (s/or :protocol #(satisfies? IHttpRequestHandler %)
+         :meta-data #(meta %))))
 
 (s/def ::worker-thread-name-prefix (s/and string?
                                           #(pos-int? (count %))))
@@ -112,9 +113,9 @@
                       ::http-ip   ip}
     (log/info "Attempting to start HTTP component")
     (let [handler (apply some-fn
-                         (map #(partial handle-http-request
-                                        %)
-                              handlers))
+                         (->> handlers
+                              (remove nil?)
+                              (map #(partial handle-http-request %))))
           middleware-chain (or (when (seq middleware-providers)
                                  (->> middleware-providers
                                       (mapcat get-middleware)
