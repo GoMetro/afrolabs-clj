@@ -83,3 +83,57 @@
   []
   (timbre/merge-config! {:appenders
                          {:println (context-println-appender :colorized-output? true)}}))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; in-memory log tap
+;;
+;; A single global ring buffer appender. Install it once; read from anywhere.
+;; nil = not installed.
+
+(defonce ^:private tap-state (atom nil))
+
+(defn- log-tap-appender-fn
+  [{:keys [output_ level ?ns-str ?file ?line ?err context]}]
+  (let [entry {:output  (force output_)
+               :level   level
+               :ns      ?ns-str
+               :file    ?file
+               :line    ?line
+               :context context
+               :error   ?err}]
+    (swap! tap-state
+           (fn [{:keys [mode n buffer] :as state}]
+             (when state
+               (let [buf' (conj buffer entry)]
+                 (assoc state :buffer
+                        (if (and (= mode :most-recent-n) (> (count buf') n))
+                          (subvec buf' 1)
+                          buf'))))))))
+
+(defn install-log-tap!
+  "Install a global in-memory log buffer appender. Idempotent — calling again
+  when already installed is a no-op.
+
+  mode:
+    :most-recent-n  (default) retain only the last `n` log entries (ring buffer)
+    :all            retain every entry (unbounded — use with care)"
+  ([] (install-log-tap! :most-recent-n 100))
+  ([mode] (install-log-tap! mode 100))
+  ([mode n]
+   (when (compare-and-set! tap-state nil {:mode mode :n n :buffer []})
+     (timbre/merge-config!
+      {:appenders {::log-tap {:enabled? true
+                              :async?   false
+                              :fn       log-tap-appender-fn}}}))))
+
+(defn log-tap-entries
+  "Return the current contents of the in-memory log buffer, oldest first.
+  Returns nil if the tap has not been installed."
+  []
+  (:buffer @tap-state))
+
+(defn uninstall-log-tap!
+  "Remove the in-memory log buffer appender and discard buffered entries."
+  []
+  (reset! tap-state nil)
+  (timbre/merge-config! {:appenders {::log-tap nil}}))
