@@ -127,3 +127,20 @@ For topics where each message is a single record, wrap in a vector or use `:valu
 ## Ad-hoc Integrant Systems
 
 Several functions here spin up their own inline `ig/init` / `ig/halt!` systems rather than relying on an outer integrant context. They use `make-fake-health-trip-switch` (from `utilities.healthcheck`) to drive shutdown: a `promise` is delivered when consumption is complete, which triggers `ig/halt!`.
+
+## Timbre logging macros: never embed side effects
+
+Timbre's `log/debug`, `log/trace`, etc. are **macros** that skip argument evaluation entirely when the active log level is above the macro's level. This means any side-effectful expression (e.g. `swap!`, `reset!`, `deliver`) nested inside a log call is silently a no-op in production.
+
+```clojure
+;; WRONG — swap! is never called at :info log level
+(log/debug [:remaining (swap! my-atom f)])
+
+;; CORRECT — always execute the side effect, then log the result
+(let [result (swap! my-atom f)]
+  (log/debug [:remaining result]))
+```
+
+`log/spy` is the one exception: it **always** evaluates its form regardless of level, and only conditionally emits the log line. It is safe to use for side effects, though it's cleaner to keep side effects explicit.
+
+This bug caused `load-messages-from-confluent-topic` with `:to-timestamp` to hang indefinitely in production (`:info` level) because the atom tracking remaining partitions was never updated.
