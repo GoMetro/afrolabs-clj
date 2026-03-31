@@ -99,7 +99,7 @@
         caught-up-ch (csp/chan)
         _ (csp/go (csp/<! caught-up-ch)
                   (csp/close! caught-up-ch) ;; prevents publishers from blocking
-                  (info "Caught up to the end of the subscribed topics, closing...")
+                  (info "CaughtUpNotifications fired: consumer reached end of all partitions, stopping...")
                   (deliver loaded-enough-msgs true))
 
         health-trip-switch (-healthcheck/make-fake-health-trip-switch loaded-enough-msgs)
@@ -125,18 +125,26 @@
 
                                                  ;; we want to throw if no clause matches
                                                  )))
+                  raw-count (count msgs)
                   msgs (filter (fn [msg]
                                  (and (msg-filter msg)
                                       (from-to-timestamp-filter msg)))
                                msgs)
+                  filtered-count (count msgs)
+
+                  _ (log/trace "consume-messages batch"
+                               {:raw-count      raw-count
+                                :filtered-count filtered-count
+                                :has-stream-ch  (some? stream-ch)})
 
                   _ (when collect-messages?
                       (swap! loaded-msgs conj! msgs))
-                  how-many (swap! running-total + (count msgs))]
+                  how-many (swap! running-total + filtered-count)]
 
               ;; is streaming defined? if so, send it on
               (when stream-ch
                 (when-not (csp/>!! stream-ch msgs)
+                  (info "stream-ch closed by consumer, stopping...")
                   (deliver loaded-enough-msgs true)))
 
               ;; do we have enough yet? is anything ever enough?
@@ -183,7 +191,6 @@
                                                                ;; what is the ultimate max offset per topic-partition
                                                                partition-highest-offsets (.endOffsets ^Consumer consumer
                                                                                                       partition-assignment)
-                                                               #_#__ (tap> [:partition-highest-offsets partition-highest-offsets])
 
                                                                ;; what is the offset for the to-timestamp value
                                                                offsets-for-times (into {}
@@ -191,7 +198,6 @@
                                                                                                          (into {}
                                                                                                                (map #(vector % to-timestamp-ms))
                                                                                                                partition-assignment)))
-                                                               #_#__ (tap> [:offsets-for-times offsets-for-times])
 
                                                                ;; where are the offsets, where we must consume from?
                                                                relevant-offsets (->> (for [[^TopicPartition tp highest-offset] partition-highest-offsets
@@ -200,47 +206,56 @@
                                                                                                        (get tp)
                                                                                                        (.offset))
                                                                                                highest-offset)])
-                                                                                     (into {}))
-                                                               #_#__ (tap> [:relevant-offsets relevant-offsets])]
-                                                           (log/spy :trace "remaining"
-                                                                    (reset! remaining-topic-partitions
-                                                                            (set (keys relevant-offsets))))
-                                                           (log/spy :trace "topic-partitinos-end-offests"
-                                                                    (reset! topic-partition-end-offsets
-                                                                            relevant-offsets))))
+                                                                                     (into {}))]
+
+                                                           (reset! remaining-topic-partitions (set (keys relevant-offsets)))
+                                                           (reset! topic-partition-end-offsets relevant-offsets)
+
+                                                           (log/trace "to-timestamp strategy: initialized"
+                                                                      {:to-timestamp-ms          to-timestamp-ms
+                                                                       :partition-count           (count partition-assignment)
+                                                                       :tracked-partition-count   (count relevant-offsets)
+                                                                       :partitions-with-ts-offset (->> offsets-for-times
+                                                                                                       (keep (fn [[tp o]] (when o (.toString tp))))
+                                                                                                       count)
+                                                                       :partitions-using-end-offset (->> offsets-for-times
+                                                                                                         (keep (fn [[tp o]] (when-not o (.toString tp))))
+                                                                                                         count)})))
 
 
                                                        ;; now we inspect the consumed-records and pause partitions
                                                        ;; where we see offsets higher than what is in topic-partition-end-offsets
-                                                       (let [;; (k/msgs->topic-partition-maxoffsets consumed-records)
-                                                             ;; _ (tap> [:max-offsets-per-topic-partition max-offsets-per-topic-partition])
-                                                             overrun-topic-partitions (->> @remaining-topic-partitions
-                                                                                           (map (fn [tp] [tp (.position ^Consumer consumer tp)]))
+                                                       (let [partition-positions (into {}
+                                                                                       (map (fn [tp] [tp (.position ^Consumer consumer tp)]))
+                                                                                       @remaining-topic-partitions)
+
+                                                             overrun-topic-partitions (->> partition-positions
                                                                                            (filter (fn [[topic-partition position]]
-                                                                                                     (log/trace [:position                     position
-                                                                                                                 :topic-partition              topic-partition
-                                                                                                                 :topic-partitions-and-offsets @topic-partition-end-offsets
-                                                                                                                 :max-topic-partition          (get @topic-partition-end-offsets
-                                                                                                                                                    topic-partition)])
                                                                                                      (if-let [test-offset (get @topic-partition-end-offsets topic-partition)]
                                                                                                        (<= test-offset position)
                                                                                                        true ;; if we don't have a fixed dest-offset, and neither a valid end-offset, it means this topic has no data and we should stop consuming from it
                                                                                                        )))
                                                                                            (mapv first))]
 
+                                                         (log/trace "to-timestamp strategy: poll"
+                                                                    {:remaining-count (count @remaining-topic-partitions)
+                                                                     :overrun-count   (count overrun-topic-partitions)})
+
                                                          ;; pause the partition that has overrun
                                                          ;; AND remove it from the list of partitions we are consuming from (assignment)
                                                          (when (seq overrun-topic-partitions)
-                                                           (log/debug (str "Pausing " overrun-topic-partitions))
+                                                           (log/debug "to-timestamp strategy: pausing overrun partitions"
+                                                                      {:pausing overrun-topic-partitions})
                                                            (.pause ^Consumer consumer overrun-topic-partitions)
-                                                           (log/debug [:remaining
-                                                                       (swap! remaining-topic-partitions
-                                                                              (fn [remaining]
-                                                                                (set/difference remaining
-                                                                                                (set overrun-topic-partitions))))]))
+                                                           (let [remaining (swap! remaining-topic-partitions
+                                                                                  set/difference
+                                                                                  (set overrun-topic-partitions))]
+                                                             (log/trace "to-timestamp strategy: updated remaining"
+                                                                        {:remaining-count (count remaining)})))
 
                                                          ;; when we're no longer remaining with any partitions, stop the consumer
                                                          (when-not (seq @remaining-topic-partitions)
+                                                           (log/info "to-timestamp strategy: all partitions consumed to to-timestamp, stopping")
                                                            (deliver loaded-enough-msgs true)))))))])
                                         extra-strategies)]
           {::k/kafka-consumer
