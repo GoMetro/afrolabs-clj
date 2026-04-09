@@ -82,9 +82,14 @@
   com.velisco/tagged                                     {:mvn/version "0.5.0"}
   com.github.sikt-no/clj-jwt                             {:mvn/version "0.5.107"}
 
-  com.potetm/fusebox {:mvn/version "1.0.11"}
+  ;; reliability
+  com.potetm/fusebox                {:mvn/version "1.0.11"}
 
-  ;; NippySerializer strategy
+  ;; openapi client-side
+  com.github.oliyh/martian          {:mvn/version "0.2.2"}
+  com.github.oliyh/martian-httpkit  {:mvn/version "0.2.2"}
+
+  ;; NippySerializer strategy for kafka*
   com.taoensso/nippy             {:mvn/version "3.6.0"}
 }
 
