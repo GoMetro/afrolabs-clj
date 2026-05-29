@@ -373,8 +373,6 @@
                   (throw (ex-info "When the parquet sink is used with filesystem, an :fs:store-root is required."
                                   {:provided fs:store-root}))))
 
-  (tap> [:parquet-cfg cfg])
-
   (let [cfg (-> cfg
                 (resolve* :record->event-timestamp-column-name)
                 (resolve* :record->row:fn)
