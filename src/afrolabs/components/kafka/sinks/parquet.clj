@@ -127,13 +127,17 @@
 (defn- export!
   "Creates parquet file exports from everything in `state`. Returns `nil`."
   [{:as   cfg
-    :keys [record->event-timestamp-column-name]}
+    :keys [record->event-timestamp-column-name
+           parallel-sort?]
+    :or   {parallel-sort? false}}
    state]
   (doseq [[partition {:keys [dataset topic]}] state]
     (try (retry/with-retry retryer
            (with-open [fos (open-parquet-file-data-stream cfg partition)]
              (let [ds (ds/sort-by-column (dataset)
-                                         (record->event-timestamp-column-name topic))]
+                                         (record->event-timestamp-column-name topic)
+                                         nil
+                                         {:parallel? parallel-sort?})]
                (ds-parquet/ds->parquet ds fos)
                (log/with-context+ {:partition  partition
                                    :nr-records (ds/row-count ds)}
@@ -413,6 +417,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
+(s/def ::parallel-sort? boolean?)
 (s/def ::max-nr-of-msgs pos-int?)
 (s/def ::max-file-duration (s/or :duration-spec (s/tuple pos-int? #{:seconds :minutes :hours})
                                  :duration-instance #(instance? java.time.Duration %)))
@@ -450,6 +455,7 @@
                                :opt-un [::fs:store-root
                                         ::s3:bucket-name
                                         ::s3:path-prefix
+                                        ::parallel-sort?
                                         ]))
 
 (-comp/defcomponent {::-comp/ig-kw              ::parquet-sink
