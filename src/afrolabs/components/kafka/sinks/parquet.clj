@@ -148,10 +148,12 @@
                                      :nr-records (ds/row-count ds)}
                    (log/info "Saved parquet file.")))))
            (catch Throwable t
-             (log/error t "Unable to persist parquet files even after retries."))))
-    ;; NOTE: This will sync on post-consume-hook or stall
-    ;; FIXME: This commits offsets regardless of success or failure
-    (csp/>!! commit-ch [topic partition-offsets]))
+             (log/error t "Unable to persist parquet files even after retries.")))))
+
+  ;; NOTE: This will sync on post-consume-hook or stall
+  ;; FIXME: This commits offsets regardless of success or failure
+  (csp/>!! commit-ch (vec (for [[topic {:keys [partition-offsets]}] state]
+                            [topic partition-offsets])))
   nil)
 
 (defn- export-any!
@@ -382,21 +384,23 @@
                 (resolve* :record->row:fn)
                 (update   :max-file-duration (partial apply t/duration))
                 (prepare-storage))
+
         incoming-msgs-ch (csp/chan 1)
         commit-ch (csp/chan 1) ;; receives offsets that can be committed
         post-consume-hook (reify
                             -kafka/IPostConsumeHook
                             (post-consume-hook [_ consumer _consumed-records]
-                              (when-let [[topic' partition-offsets] (csp/poll! commit-ch)]
-                                (log/with-context+ {:topic             topic'
-                                                    :partition-offsets partition-offsets}
-                                  (log/trace "Commit offsets for parquet consumer."))
-                                (.commitSync ^Consumer consumer
-                                             (into {}
-                                                   (map (fn [[partition' offset']]
-                                                          [(TopicPartition. topic' (inc (int partition')))
-                                                           (OffsetAndMetadata. offset')]))
-                                                   partition-offsets)))))
+                              (when-let [all-commits (csp/poll! commit-ch)]
+                                (doseq [[topic' partition-offsets] all-commits]
+                                  (log/with-context+ {:topic             topic'
+                                                      :partition-offsets partition-offsets}
+                                    (log/trace "Commit offsets for parquet consumer."))
+                                  (.commitSync ^Consumer consumer
+                                               (into {}
+                                                     (map (fn [[partition' offset']]
+                                                            [(TopicPartition. topic' (int partition'))
+                                                             (OffsetAndMetadata. (inc offset'))]))
+                                                     partition-offsets))))))
 
         consumer-worker (make-msgs-consumer-worker cfg
                                                    incoming-msgs-ch
