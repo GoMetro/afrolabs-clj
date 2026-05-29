@@ -117,14 +117,16 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(def max-export-retries 5)
+(def max-export-retries 12)
 
-;; "simple" retrier with exponential backoff
-(def retryer (retry/init {::retry/retry? (fn [n ms ex]
+;; Exponential backoff with jitter, capped at 30 s. 12 attempts gives ~5 min total worst-case,
+;; enough to outlast S3 throttle (503 SlowDown) events.
+(def retryer (retry/init {::retry/retry? (fn [n _ms _ex]
                                            (< n max-export-retries))
-                          ::retry/delay (fn [n ms ex]
-                                          (min (retry/delay-exp 500 n)
-                                               10000))}))
+                          ::retry/delay  (fn [n _ms _ex]
+                                           (retry/jitter 0.2
+                                                         (min (retry/delay-exp 500 n)
+                                                              30000)))}))
 
 (defn- export!
   "Creates parquet file exports from everything in `state`. Returns `nil`."
