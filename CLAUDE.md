@@ -10,13 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # AOT-compile Kafka serializers and Lambda runtime (required before using as a library)
-clojure -M:build/task compile-aot
+clojure -T:build/task compile-aot
 
 # Clean build artifacts
-clojure -M:build/task clean
+clojure -T:build/task clean
 
 # Display build configuration
-clojure -M:build/task config
+clojure -T:build/task config
 
 # Vulnerability scan
 clojure -M:build/nvd-vulnerabilities scan -p deps.edn
