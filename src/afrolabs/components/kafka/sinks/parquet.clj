@@ -136,24 +136,23 @@
     :or   {parallel-sort? false}}
    state
    commit-ch]
-  (doseq [[topic {:as topic-accumulator :keys [datasets partition-offsets]}] state]
-    (doseq [[data-partition dataset]  datasets]
-      ;; partition {:keys [dataset topic]}
-      (try (retry/with-retry retryer
-             (with-open [fos (open-parquet-file-data-stream cfg data-partition)]
-               (let [ds (ds/sort-by-column (dataset)
-                                           (record->event-timestamp-column-name topic)
-                                           nil
-                                           {:parallel? parallel-sort?})]
-                 (ds-parquet/ds->parquet ds fos)
-                 (log/with-context+ {:partition  data-partition
-                                     :nr-records (ds/row-count ds)}
-                   (log/info "Saved parquet file.")))))
-           (catch Throwable t
-             (log/error t "Unable to persist parquet files even after retries.")))))
+  (doseq [[topic {:as _topic-accumulator :keys [datasets]}] state]
+    (doseq [[data-partition dataset] datasets]
+      ;; Each retry opens a new uniquely-named file so partial/failed writes are not overwritten.
+      ;; Throws on exhaustion — caller must not commit offsets if this propagates.
+      (retry/with-retry retryer
+        (with-open [fos (open-parquet-file-data-stream cfg data-partition)]
+          (let [ds (ds/sort-by-column (dataset)
+                                      (record->event-timestamp-column-name topic)
+                                      nil
+                                      {:parallel? parallel-sort?})]
+            (ds-parquet/ds->parquet ds fos)
+            (log/with-context+ {:partition  data-partition
+                                :nr-records (ds/row-count ds)}
+              (log/info "Saved parquet file.")))))))
 
+  ;; Only reached when ALL files have been saved successfully.
   ;; NOTE: This will sync on post-consume-hook or stall
-  ;; FIXME: This commits offsets regardless of success or failure
   (csp/>!! commit-ch (vec (for [[topic {:keys [partition-offsets]}] state]
                             [topic partition-offsets])))
   nil)
@@ -273,13 +272,20 @@
   [{:as   cfg
     :keys [clock]}
    incoming-msgs-ch
-   commit-ch]
+   commit-ch
+   shutdown-fn]
   (csp/thread (loop [state {}]
                 ;; this loop performs the ->parquet export at the start of the loop, if there is anything to do
                 (let [;; NOTE: shadow-binding of `state`
-                      state           (export-any! cfg
-                                                   state
-                                                   commit-ch)
+                      state           (try
+                                        (export-any! cfg state commit-ch)
+                                        (catch Throwable t
+                                          (log/error t
+                                                     (str "Parquet export failed after all retries. "
+                                                          "Shutting down parquet sink to protect data. "
+                                                          "Offsets will NOT be committed — messages will be replayed on restart."))
+                                          (shutdown-fn)
+                                          nil))
                       next-to-instant (next-timeout cfg
                                                     state)
                       next-timeout-ch (when next-to-instant
@@ -412,9 +418,23 @@
                                                                   partition-offsets)))
                                                    all-commits)))))
 
+        ;; Forward reference: consumer is created after the worker, so we use a volatile.
+        ;; The race is safe — shutdown-fn can only be triggered after messages have been processed,
+        ;; which requires the Kafka consumer to be running, which only starts after vreset! below.
+        consumer-volatile (volatile! nil)
+        consumer-halted?  (atom false)
+        halt-consumer!    (fn []
+                            (when (compare-and-set! consumer-halted? false true)
+                              (when-let [c @consumer-volatile]
+                                (-comp/halt c))))
+        shutdown-fn       (fn []
+                            (csp/close! incoming-msgs-ch)
+                            (halt-consumer!))
+
         consumer-worker (make-msgs-consumer-worker cfg
                                                    incoming-msgs-ch
-                                                   commit-ch)
+                                                   commit-ch
+                                                   shutdown-fn)
         consumer-client (reify
                           -kafka/IConsumerClient
                           (consume-messages [_ msgs]
@@ -439,22 +459,23 @@
 
         consumer (-kafka/make-consumer cfg)]
 
+    (vreset! consumer-volatile consumer)
+
     (reify
       clojure.lang.IDeref
       (deref [_] cfg)
 
       -comp/IHaltable
       (halt [_]
-        ;; this will start to discard incoming messages
-        ;; and also signal a stop on the export loop
-        ;; giving chance to finish
+        ;; Closes incoming channel, signalling the worker to stop.
+        ;; Idempotent — shutdown-fn may have already closed it.
         (csp/close! incoming-msgs-ch)
 
         ;; post-consume-hook will still run through all of this
         ;; giving a chance to commit the last possible committables in the channel
         (csp/<!! consumer-worker)
 
-        (-comp/halt consumer)))))
+        (halt-consumer!)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
