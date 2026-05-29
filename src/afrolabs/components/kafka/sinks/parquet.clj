@@ -391,16 +391,16 @@
                             -kafka/IPostConsumeHook
                             (post-consume-hook [_ consumer _consumed-records]
                               (when-let [all-commits (csp/poll! commit-ch)]
-                                (doseq [[topic' partition-offsets] all-commits]
-                                  (log/with-context+ {:topic             topic'
-                                                      :partition-offsets partition-offsets}
-                                    (log/trace "Commit offsets for parquet consumer."))
-                                  (.commitSync ^Consumer consumer
-                                               (into {}
-                                                     (map (fn [[partition' offset']]
-                                                            [(TopicPartition. topic' (int partition'))
-                                                             (OffsetAndMetadata. (inc offset'))]))
-                                                     partition-offsets))))))
+                                (log/with-context+ {:all-commits all-commits}
+                                  (log/trace "Commit offsets for parquet consumer."))
+                                (.commitSync ^Consumer consumer
+                                             (into {}
+                                                   (mapcat (fn [[topic' partition-offsets]]
+                                                             (map (fn [[partition' offset']]
+                                                                    [(TopicPartition. topic' (int partition'))
+                                                                     (OffsetAndMetadata. (inc offset'))])
+                                                                  partition-offsets)))
+                                                   all-commits)))))
 
         consumer-worker (make-msgs-consumer-worker cfg
                                                    incoming-msgs-ch
