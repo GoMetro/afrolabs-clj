@@ -294,6 +294,7 @@
                         (and (= ch incoming-msgs-ch)
                              (nil? v))
                         (do (log/trace "fin.")
+                            (csp/close! commit-ch)
                             nil)
 
                         ;; we now know we've received messages in v
@@ -389,7 +390,11 @@
                 (prepare-storage))
 
         incoming-msgs-ch (csp/chan 1)
-        commit-ch (csp/chan 1) ;; receives offsets that can be committed
+
+        ;; Receives offsets that can be committed to the consumer.
+        ;; By not specifying chan-size, the put (containing offsets) will block
+        ;; until the poll reads it, synchronizing to the extend that offsets won't be lost during shutdown
+        commit-ch (csp/chan)
         post-consume-hook (reify
                             -kafka/IPostConsumeHook
                             (post-consume-hook [_ consumer _consumed-records]
@@ -438,9 +443,16 @@
 
       -comp/IHaltable
       (halt [_]
-        (-comp/halt consumer)
+        ;; this will start to discard incoming messages
+        ;; and also signal a stop on the export loop
+        ;; giving chance to finish
         (csp/close! incoming-msgs-ch)
-        (csp/<!! consumer-worker)))))
+
+        ;; post-consume-hook will still run through all of this
+        ;; giving a chance to commit the last possible committables in the channel
+        (csp/<!! consumer-worker)
+
+        (-comp/halt consumer)))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
