@@ -111,7 +111,11 @@
                  :build/nvd-vulnerabilities ;; run with `clojure -M:build/nvd-vulnerabilities scan -p deps.edn`
                  {:replace-deps {io.github.clj-holmes/clj-watson
                                  {:git/tag "v6.0.1" :git/sha "b520351"}}
-                  :main-opts    ["-m" "clj-watson.cli"]}}
+                  :main-opts    ["-m" "clj-watson.cli"]}
+
+                 :repl
+                 {:extra-deps {djblue/portal            {:mvn/version "0.64.0"}
+                               criterium/criterium      {:mvn/version "0.4.6"}}}}
 
 
  }
