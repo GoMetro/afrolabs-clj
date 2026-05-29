@@ -21,7 +21,9 @@
    [com.potetm.fusebox.retry :as retry]
    )
   (:import
-   [java.io File FileOutputStream])
+   [java.io File FileOutputStream]
+   [org.apache.kafka.common TopicPartition]
+   [org.apache.kafka.clients.consumer Consumer OffsetAndMetadata])
   )
 
 ;;;;;;;;;;;;;;;;;;;;
@@ -130,20 +132,26 @@
     :keys [record->event-timestamp-column-name
            parallel-sort?]
     :or   {parallel-sort? false}}
-   state]
-  (doseq [[partition {:keys [dataset topic]}] state]
-    (try (retry/with-retry retryer
-           (with-open [fos (open-parquet-file-data-stream cfg partition)]
-             (let [ds (ds/sort-by-column (dataset)
-                                         (record->event-timestamp-column-name topic)
-                                         nil
-                                         {:parallel? parallel-sort?})]
-               (ds-parquet/ds->parquet ds fos)
-               (log/with-context+ {:partition  partition
-                                   :nr-records (ds/row-count ds)}
-                 (log/info "Saved parquet file.")))))
-         (catch Throwable t
-           (log/error t "Unable to persist parquet files even after retries."))))
+   state
+   commit-ch]
+  (doseq [[topic {:as topic-accumulator :keys [datasets partition-offsets]}] state]
+    (doseq [[data-partition dataset]  datasets]
+      ;; partition {:keys [dataset topic]}
+      (try (retry/with-retry retryer
+             (with-open [fos (open-parquet-file-data-stream cfg data-partition)]
+               (let [ds (ds/sort-by-column (dataset)
+                                           (record->event-timestamp-column-name topic)
+                                           nil
+                                           {:parallel? parallel-sort?})]
+                 (ds-parquet/ds->parquet ds fos)
+                 (log/with-context+ {:partition  data-partition
+                                     :nr-records (ds/row-count ds)}
+                   (log/info "Saved parquet file.")))))
+           (catch Throwable t
+             (log/error t "Unable to persist parquet files even after retries."))))
+    ;; NOTE: This will sync on post-consume-hook or stall
+    ;; FIXME: This commits offsets regardless of success or failure
+    (csp/>!! commit-ch [topic partition-offsets]))
   nil)
 
 (defn- export-any!
@@ -158,13 +166,14 @@
     :keys [clock
            max-file-duration
            max-nr-of-msgs]}
-   state]
+   state
+   commit-ch]
   (let [duration-based-cutof (t/- (-time/get-current-instant clock)
                                   max-file-duration)
-        exportable?          (fn [[_key {:as   _state-item
-                                         :keys [oldest-timestamp
-                                                nr-records]}]]
-                               (or (t/before? oldest-timestamp
+        exportable?          (fn [[_topic {:as   _state-item
+                                           :keys [accumulation-starts
+                                                  nr-records]}]]
+                               (or (t/before? accumulation-starts
                                               duration-based-cutof)
                                    (>= nr-records
                                        max-nr-of-msgs)))
@@ -178,7 +187,7 @@
 
     ;; export what qualified
     (when (seq exportable-state)
-      (export! cfg exportable-state))
+      (export! cfg exportable-state commit-ch))
 
     held-state))
 
@@ -189,21 +198,12 @@
   [{:as   _cfg
     :keys [max-file-duration]}
    state]
-  (cond
-    (not (seq state))
+  (if (not (seq state))
     nil
-
-    (= 1 (count state))
-    (t/+ (-> state first second :oldest-timestamp)
-         max-file-duration)
-
-    :else
-    (let [earliest-timestamp
-          (->> state
-               (map (comp :oldest-timestamp second))
-               (reduce t/min))]
-      (t/+ earliest-timestamp
-           max-file-duration))))
+    (t/+ (->> state
+              (map (comp :accumulation-starts second))
+              (reduce t/min))
+         max-file-duration)))
 
 (defn- ->msg
   "Accepts a message and returns a 2-tuple of
@@ -236,40 +236,45 @@
    state
    msgs]
   (let [right-now (-time/get-current-instant clock)]
-    (reduce (fn [state' {:as msg :keys [topic]}]
+    (reduce (fn [state' {:as msg :keys [topic partition offset]}]
               (let [[dataset-partition row-data] (->msg cfg msg)]
-                (update state'
-                        dataset-partition
-                        (fnil (fn [{:as   partition-state
-                                    :keys [dataset]}]
-
-                                ;; this is a side-effect!
-                                ;; `dataset` is a reader-fn that accepts one record at a time, building up fancy things in the background
-                                (dataset row-data)
-                                (update partition-state :nr-records inc))
-                              {:oldest-timestamp right-now
-                               :topic            topic
-                               :dataset          (ds/mapseq-parser)
-                               :nr-records       0}))))
+                (-> state'
+                    (update-in [topic]
+                               (fnil (fn [topic-state]
+                                       (-> topic-state
+                                           (update :nr-records inc)
+                                           (update-in [:partition-offsets partition] (fnil max 0) offset)))
+                                     {:topic               topic
+                                      :nr-records          0
+                                      :accumulation-starts right-now
+                                      :datasets            {}
+                                      :partition-offsets   {}}))
+                    (update-in [topic :datasets dataset-partition]
+                               (fnil (fn [dataset]
+                                       ;; this is a side-effect!
+                                       ;; `dataset` is a reader-fn that accepts one record at a time,
+                                       ;; building up fancy unboxed-array things in the background
+                                       (dataset row-data) ;; returns nil
+                                       dataset)
+                                     (ds/mapseq-parser))))))
             (or state {})
             msgs)))
-
-(defn- cleanup!
-  "Exports any and all state, flushes into new parquet files regardless of collection duration.
-
-  This should only be used when the consumer is shutting down."
-  [cfg state] (export! cfg state))
 
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn make-msgs-consumer-worker
   [{:as   cfg
     :keys [clock]}
-   incoming-msgs-ch]
+   incoming-msgs-ch
+   commit-ch]
   (csp/thread (loop [state {}]
                 ;; this loop performs the ->parquet export at the start of the loop, if there is anything to do
-                (let [state           (export-any! cfg state) ;; NOTE: shadow-binding
-                      next-to-instant (next-timeout cfg state)
+                (let [;; NOTE: shadow-binding of `state`
+                      state           (export-any! cfg
+                                                   state
+                                                   commit-ch)
+                      next-to-instant (next-timeout cfg
+                                                    state)
                       next-timeout-ch (when next-to-instant
                                         (csp/timeout (.toMillis (t/duration (-time/get-current-instant clock)
                                                                             next-to-instant))))
@@ -283,8 +288,7 @@
                         ;; stop signal
                         (and (= ch incoming-msgs-ch)
                              (nil? v))
-                        (do (log/trace "cleaning up...")
-                            (cleanup! cfg state)
+                        (do (log/trace "fin.")
                             nil)
 
                         ;; we now know we've received messages in v
@@ -379,8 +383,24 @@
                 (update   :max-file-duration (partial apply t/duration))
                 (prepare-storage))
         incoming-msgs-ch (csp/chan 1)
+        commit-ch (csp/chan 1) ;; receives offsets that can be committed
+        post-consume-hook (reify
+                            -kafka/IPostConsumeHook
+                            (post-consume-hook [_ consumer _consumed-records]
+                              (when-let [[topic' partition-offsets] (csp/poll! commit-ch)]
+                                (log/with-context+ {:topic             topic'
+                                                    :partition-offsets partition-offsets}
+                                  (log/trace "Commit offsets for parquet consumer."))
+                                (.commitSync ^Consumer consumer
+                                             (into {}
+                                                   (map (fn [[partition' offset']]
+                                                          [(TopicPartition. topic' (inc (int partition')))
+                                                           (OffsetAndMetadata. offset')]))
+                                                   partition-offsets)))))
+
         consumer-worker (make-msgs-consumer-worker cfg
-                                                   incoming-msgs-ch)
+                                                   incoming-msgs-ch
+                                                   commit-ch)
         consumer-client (reify
                           -kafka/IConsumerClient
                           (consume-messages [_ msgs]
@@ -398,6 +418,8 @@
                                                       (re-pattern topic-regex-str)
                                                       [back-pressure-aware-consumer])
                                                      back-pressure-aware-consumer
+                                                     (-kafka/AutoCommitOffsets :disabled true)
+                                                     post-consume-hook ;; has the job of committing offsets
                                                      ]))))
                 (assoc :consumer/client back-pressure-aware-consumer))
 
