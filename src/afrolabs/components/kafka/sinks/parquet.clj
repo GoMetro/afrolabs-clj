@@ -239,26 +239,29 @@
    msgs]
   (let [right-now (-time/get-current-instant clock)]
     (reduce (fn [state' {:as msg :keys [topic partition offset]}]
-              (let [[dataset-partition row-data] (->msg cfg msg)]
-                (-> state'
-                    (update-in [topic]
-                               (fnil (fn [topic-state]
-                                       (-> topic-state
-                                           (update :nr-records inc)
-                                           (update-in [:partition-offsets partition] (fnil max 0) offset)))
-                                     {:topic               topic
-                                      :nr-records          0
-                                      :accumulation-starts right-now
-                                      :datasets            {}
-                                      :partition-offsets   {}}))
-                    (update-in [topic :datasets dataset-partition]
-                               (fnil (fn [dataset]
-                                       ;; this is a side-effect!
-                                       ;; `dataset` is a reader-fn that accepts one record at a time,
-                                       ;; building up fancy unboxed-array things in the background
-                                       (dataset row-data) ;; returns nil
-                                       dataset)
-                                     (ds/mapseq-parser))))))
+              ;; (->msg ...) may return nil if the record is misformed
+              (or (when-let [[dataset-partition row-data] (->msg cfg msg)]
+                    (-> state'
+                        (update-in [topic]
+                                   (fnil (fn [topic-state]
+                                           (-> topic-state
+                                               (update :nr-records inc)
+                                               (update-in [:partition-offsets partition] (fnil max 0) offset)))
+                                         {:topic               topic
+                                          :nr-records          0
+                                          :accumulation-starts right-now
+                                          :datasets            {}
+                                          :partition-offsets   {}}))
+                        (update-in [topic :datasets dataset-partition]
+                                   (fnil (fn [dataset]
+                                           ;; this is a side-effect!
+                                           ;; `dataset` is a reader-fn that accepts one record at a time,
+                                           ;; building up fancy unboxed-array things in the background
+                                           (dataset row-data) ;; returns nil
+                                           dataset)
+                                         (ds/mapseq-parser)))))
+                  ;; if the msg is misformed, we keep the current state and continue
+                  state'))
             (or state {})
             msgs)))
 
