@@ -528,6 +528,66 @@ The client is responsible for closing the stream.")
 
     result))
 
+(defn open-s3-download-stream
+  "Returns a `java.io.PipedInputStream` from which the S3 object at `s3-obj-address` can be read.
+
+  NOTE: This method is a reimplementation of the `s3-object->InputStream` fn.
+  It has not been activated into any active codepath yet, pending more efficient encoding than EDN+GZIP
+
+  A background thread fetches the object in range-request chunks and writes each chunk's bytes
+  into the pipe as soon as they arrive, overlapping network I/O with the caller's reads.
+  After writing chunk N to the pipe buffer the background thread immediately issues the S3
+  request for chunk N+1, hiding inter-chunk round-trip latency from the caller.
+
+  It is the caller's responsibility to close the returned stream."
+  [{:keys [s3-client]} s3-obj-address]
+  (let [pipe-out (PipedOutputStream.)
+        pipe-in  (PipedInputStream. pipe-out *chunk-size-bytes*)]
+    (csp/thread
+      (try
+        (doseq [^InputStream chunk-is (get-object-chunks s3-client s3-obj-address)]
+          (.transferTo chunk-is pipe-out))
+        (.close pipe-out)
+        (catch Throwable t
+          (log/error t "Unable to download S3 object chunk.")
+          (.close pipe-out))))
+    pipe-in))
+
+(comment
+
+  (require '[afrolabs.components.aws.sso :as -aws-sso-profile-provider])
+
+  (def s3-client (aws/client {:api :s3
+                              :region "af-south-1"
+                              :credentials-provider (-aws-sso-profile-provider/provider (or (System/getenv "AWS_PROFILE")
+                                                                                            (System/getProperty "aws.profile")
+                                                                                            "default"))}))
+
+  (time (binding [*chunk-size-bytes* 250000
+                  ]
+          (with-open [in (open-s3-download-stream {:s3-client s3-client}
+                                                  {:bucket "ktable-checkpoint-store20250409130905505000000001"
+                                                   :key "ktable-checkpoints/lkc-12gm26_location-replay-state/1780278732002-2026-06-01T01:52:12.00228535Z.edn.gz"})]
+            (afrolabs.components.kafka.checkpoint-storage/deserialize in))))
+
+
+
+  (time (binding [*chunk-size-bytes* 250000]
+          (with-open [in (s3-object->InputStream {:s3-client s3-client}
+                                                 {:bucket "ktable-checkpoint-store20250409130905505000000001"
+                                                  :key "ktable-checkpoints/lkc-12gm26_location-replay-state/1780278732002-2026-06-01T01:52:12.00228535Z.edn.gz"})]
+            (afrolabs.components.kafka.checkpoint-storage/deserialize in))))
+
+  (aws/invoke s3-client
+              {:op :ListObjects
+               :request {:Bucket }})
+
+
+  )
+
+
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- s3:open-checkpoint-output-stream
@@ -576,14 +636,17 @@ The client is responsible for closing the stream.")
              #"/")
 
   (aws/ops s3-client)
-  (aws/invoke s3-client
-              {:op :ListObjectsV2
-               :request {:Bucket "ktable-checkpoint-store20250401120818030200000001"
-                         :Prefix ""}})
+
+  (->>
+   (aws/invoke s3-client
+               {:op :ListObjectsV2
+                :request {:Bucket "ktable-checkpoint-store20250409130905505000000001"
+                          :Prefix ""}})
+   :Contents)
 
   (s3:list-checkpoint-ids {:s3-client      s3-client
-                           :s3:bucketname  "ktable-checkpoint-store20250401120818030200000001"
-                           :s3:path-prefix "test"}
+                           :s3:bucketname  "ktable-checkpoint-store20250409130905505000000001"
+                           :s3:path-prefix "ktable-checkpoints"}
                           "boom-ktable-id")
   (count *1)
 
