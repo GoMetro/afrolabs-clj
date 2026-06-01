@@ -9,9 +9,11 @@
    [afrolabs.components.kafka.back-pressure-aware-consumer :as -bpac]
    [afrolabs.components.kafka.checkpoint-storage.stores :as -checkpoint-stores]
    [afrolabs.components.time :as -time]
+   [afrolabs.prometheus :as -prom]
    [clojure.core.async :as csp]
    [clojure.spec.alpha :as s]
    [cognitect.aws.client.api :as aws]
+   [iapetos.core :as prom]
    [integrant.core :as ig]
    [java-time.api :as t]
    [net.cgrand.xforms :as x]
@@ -46,6 +48,39 @@
 
                (t/zoned-date-time? i)
                (t/with-zone-same-instant i zone-id)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(-prom/register-metric (prom/counter ::records-exported
+                                     {:description "Records successfully written to parquet files."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/counter ::parquet-files-written
+                                     {:description "Parquet files successfully written to storage."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/counter ::records-dropped
+                                     {:description "Records dropped due to ->msg conversion failure."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/gauge ::datasets-in-progress
+                                   {:description "Datasets currently accumulating in the parquet sink."}))
+(-prom/register-metric (prom/gauge ::records-in-progress
+                                   {:description "Records in all in-progress datasets in the parquet sink."}))
+(-prom/register-metric (prom/counter ::export-retries
+                                     {:description "Parquet export attempts that failed and triggered a retry."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/counter ::export-critical-failure
+                                     {:description "CRITICAL: parquet export exhausted all retries; sink is shutting down."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/summary ::export-write-duration-secs
+                                     {:description "Time taken to write one parquet file to storage (excludes sorting)."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/summary ::export-sort-duration-secs
+                                     {:description "Time taken to sort a dataset by event timestamp before export."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/summary ::accumulation-age-secs
+                                     {:description "How long a dataset accumulated before being flushed to parquet."
+                                      :labels      [:topic]}))
+(-prom/register-metric (prom/summary ::incoming-batch-size
+                                     {:description "Number of messages per batch delivered to the parquet sink collector."}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -141,15 +176,24 @@
       ;; Each retry opens a new uniquely-named file so partial/failed writes are not overwritten.
       ;; Throws on exhaustion — caller must not commit offsets if this propagates.
       (retry/with-retry retryer
-        (with-open [fos (open-parquet-file-data-stream cfg data-partition)]
-          (let [ds (ds/sort-by-column (dataset)
-                                      (record->event-timestamp-column-name topic)
-                                      nil
-                                      {:parallel? parallel-sort?})]
-            (ds-parquet/ds->parquet ds fos)
-            (log/with-context+ {:partition  data-partition
-                                :nr-records (ds/row-count ds)}
-              (log/info "Saved parquet file.")))))))
+        (try
+          (with-open [fos (open-parquet-file-data-stream cfg data-partition)]
+            (let [ds        (prom/with-duration (get-summary-export-sort-duration-secs {:topic topic})
+                              (ds/sort-by-column (dataset)
+                                                 (record->event-timestamp-column-name topic)
+                                                 nil
+                                                 {:parallel? parallel-sort?}))
+                  row-count (ds/row-count ds)]
+              (prom/with-duration (get-summary-export-write-duration-secs {:topic topic})
+                (ds-parquet/ds->parquet ds fos))
+              (prom/inc (get-counter-records-exported {:topic topic}) row-count)
+              (prom/inc (get-counter-parquet-files-written {:topic topic}))
+              (log/with-context+ {:partition  data-partition
+                                  :nr-records row-count}
+                (log/info "Saved parquet file."))))
+          (catch Throwable t
+            (prom/inc (get-counter-export-retries {:topic topic}))
+            (throw t))))))
 
   ;; Only reached when ALL files have been saved successfully.
   ;; NOTE: This will sync on post-consume-hook or stall
@@ -190,6 +234,10 @@
 
     ;; export what qualified
     (when (seq exportable-state)
+      (let [now (-time/get-current-instant clock)]
+        (doseq [[topic {:keys [accumulation-starts]}] exportable-state]
+          (prom/observe (get-summary-accumulation-age-secs {:topic topic})
+                        (/ (.toMillis (t/duration accumulation-starts now)) 1000.0))))
       (export! cfg exportable-state commit-ch))
 
     held-state))
@@ -229,6 +277,7 @@
        (catch Throwable t
          (log/with-context+ (select-keys kafka-msg [:topic :partition :offset])
            (log/error t "->msg failed to work for a message."))
+         (prom/inc (get-counter-records-dropped {:topic topic}))
          nil ;; be explicit
          )))
 
@@ -238,6 +287,7 @@
     :keys [clock]}
    state
    msgs]
+  (prom/observe (get-summary-incoming-batch-size) (count msgs))
   (let [right-now (-time/get-current-instant clock)]
     (reduce (fn [state' {:as msg :keys [topic partition offset]}]
               ;; (->msg ...) may return nil if the record is misformed
@@ -266,6 +316,12 @@
             (or state {})
             msgs)))
 
+(defn- update-in-progress-metrics! [state]
+  (prom/observe (get-gauge-datasets-in-progress)
+                (transduce (map (comp count :datasets second)) + 0 state))
+  (prom/observe (get-gauge-records-in-progress)
+                (transduce (map (comp :nr-records second)) + 0 state)))
+
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn make-msgs-consumer-worker
@@ -284,6 +340,8 @@
                                                      (str "Parquet export failed after all retries. "
                                                           "Shutting down parquet sink to protect data. "
                                                           "Offsets will NOT be committed — messages will be replayed on restart."))
+                                          (doseq [topic (keys state)]
+                                            (prom/inc (get-counter-export-critical-failure {:topic topic})))
                                           (shutdown-fn)
                                           nil))
                       next-to-instant (next-timeout cfg
@@ -320,6 +378,7 @@
                         (do (log/trace "timed out")
                             state))]
                   (when next-state
+                    (update-in-progress-metrics! next-state)
                     (recur next-state))))
               (log/info "Parquet sink worker thread stopped.")))
 
