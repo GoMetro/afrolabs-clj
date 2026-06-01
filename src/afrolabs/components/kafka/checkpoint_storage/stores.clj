@@ -578,9 +578,7 @@ The client is responsible for closing the stream.")
                                                   :key "ktable-checkpoints/lkc-12gm26_location-replay-state/1780278732002-2026-06-01T01:52:12.00228535Z.edn.gz"})]
             (afrolabs.components.kafka.checkpoint-storage/deserialize in))))
 
-  (aws/invoke s3-client
-              {:op :ListObjects
-               :request {:Bucket }})
+
 
 
   )
