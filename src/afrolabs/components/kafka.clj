@@ -2292,8 +2292,8 @@ Returns a subscription handle with which you can unsubscribe later.")
                                       (keep (fn [[topic partition offset]]
                                               (let [ktable-progress-offset (get-in ktable-topic-partition-offsets
                                                                                    [topic partition])]
-                                                (when (and ktable-progress-offset
-                                                           (< ktable-progress-offset offset))
+                                                (when (or (nil? ktable-progress-offset)
+                                                          (< ktable-progress-offset offset))
                                                   :not-caught-up-yet))))
                                       (count)
                                       (zero?)))))]
