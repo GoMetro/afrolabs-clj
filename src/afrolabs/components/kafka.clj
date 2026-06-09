@@ -2286,6 +2286,12 @@ Returns a subscription handle with which you can unsubscribe later.")
                                      (ktable->topic-partition-offsets ktable-value)]
 
                                  (->> topic-partition-offset
+                                      ;; Only ever wait on topics this ktable actually consumes.
+                                      ;; A ktable can never make progress on a topic it does not
+                                      ;; subscribe to, so an offset for an untracked topic is not
+                                      ;; "behind" — it is simply not ours to wait for. Drop it.
+                                      (filter (fn [[topic _partition-offset]]
+                                                (contains? ktable-topic-partition-offsets topic)))
                                       (mapcat (fn [[topic partition-offset]]
                                                 (map (fn [[partition offset]] [topic partition offset])
                                                      partition-offset)))
