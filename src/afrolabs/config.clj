@@ -179,10 +179,11 @@
                                                 (read-system-props))))
 
 (defn read-parameter-sources
-  [dotenv-file]
-  (merge @static-parameter-sources
-         (if-not dotenv-file {}
-                 (read-dotenv-file dotenv-file))))
+  ([] (read-parameter-sources nil))
+  ([dotenv-file]
+   (merge @static-parameter-sources
+          (if-not dotenv-file {}
+                  (read-dotenv-file dotenv-file)))))
 
 (defn read-config
   [config-file-location
