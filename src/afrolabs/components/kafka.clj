@@ -2219,7 +2219,9 @@
                 :let [t                     (.topic tp)
                       p                     (.partition tp)
                       offset-to-resume-from (get-in topic-partition-offsets [t p])]
-                :when offset-to-resume-from]
+                :when (and offset-to-resume-from
+                           ;; there are cases where this offset might be seeded with a sentinal value of -1
+                           (<= 0 offset-to-resume-from))]
           (log/with-context+ {:topic     t
                               :partition p
                               :offset    offset-to-resume-from}
@@ -2538,13 +2540,38 @@ Returns a subscription handle with which you can unsubscribe later.")
 
                         :else nil)
 
+        seeded-topic-partition-meta-data? (atom false)
+
         cfg (-> cfg
-                (update-in [:strategies] concat (remove nil?
-                                                        [(OffsetReset "earliest")
-                                                         (ConsumerGroup consumer-group-id)
-                                                         (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
-                                                         caught-up-notifications-strategy
-                                                         seek-strategy]))
+                (update-in [:strategies] concat
+                           (remove nil?
+                                   [(OffsetReset "earliest")
+                                    (ConsumerGroup consumer-group-id)
+                                    (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
+                                    caught-up-notifications-strategy
+                                    seek-strategy
+                                    (reify
+                                      IPostConsumeHook
+                                      (post-consume-hook [_ consumer _consumed-records]
+                                        ;; this seeds the ktable value's meta-data with "fake" topic-partition offset values (-1)
+                                        ;; so that later when we are in `ktable-atom-wait-for-catchup` we know which topics we are
+                                        ;; subscribed to, so we can wait effectively even on topics that are empty.
+                                        (when-not @seeded-topic-partition-meta-data?
+                                          (let [assignment (.assignment consumer)]
+                                            ;; the assignment might still be empty on the first (few) invocations
+                                            (when (seq assignment)
+                                              (swap! ktable-state
+                                                     (fn [ktable-state-value]
+                                                       (vary-meta ktable-state-value
+                                                                  (fn [old-meta-data]
+                                                                    (reduce (fn [acc tp]
+                                                                              (update-in acc [:ktable/topic-partition-offsets
+                                                                                              (.topic ^TopicPartition tp)
+                                                                                              (.partition ^TopicPartition tp)]
+                                                                                         (fnil identity -1)))
+                                                                            old-meta-data
+                                                                            assignment)))))
+                                              (reset! seeded-topic-partition-meta-data? true))))))]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
