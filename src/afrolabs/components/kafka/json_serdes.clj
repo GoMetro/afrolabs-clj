@@ -108,6 +108,8 @@
 
 (comment
 
+  ;; this is important, once per session
+  (set! *compile-path* "target/classes")
   (compile 'afrolabs.components.kafka.json-serdes)
 
 

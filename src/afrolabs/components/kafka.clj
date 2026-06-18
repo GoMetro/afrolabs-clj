@@ -21,7 +21,6 @@
    [java-time.api :as t]
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
-   [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
    [clj-memory-meter.core :as mm])
   (:import [org.apache.kafka.clients.producer
             ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
@@ -165,9 +164,9 @@
   [x]
   (let [t (type x)]
     (when-not (@default-serialize-producer-record-header-used t)
-      (warnf "Using the default Kafka header value serializer for type: '%s'. defmethod on '%s' to silence this warning and provide better serialization."
-             (str t)
-             (str `serialize-producer-record-header))
+      (log/warnf "Using the default Kafka header value serializer for type: '%s'. defmethod on '%s' to silence this warning and provide better serialization."
+                 (str t)
+                 (str `serialize-producer-record-header))
       (swap! default-serialize-producer-record-header-used conj t)))
   (serialize-producer-record-header (str x)))
 
@@ -182,16 +181,16 @@
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
   (onCompletion [_ meta-data ex]
-    (trace (str "Firing onCompletion for msg. "))
+    (log/trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
-      (trace "Forwarding delivery exception...")
+      (log/trace "Forwarding delivery exception...")
       (csp/go
         (csp/>!! delivered-ch ex)
         (csp/close! delivered-ch)
-        (trace "when exception onCompletion done.")))
+        (log/trace "when exception onCompletion done.")))
     (when-not ex
-      (trace "Forwarding delivery notification...")
+      (log/trace "Forwarding delivery notification...")
       (csp/go
         (csp/>! delivered-ch (merge msg
                                     (cond-> {:topic     (.topic ^RecordMetadata meta-data)
@@ -203,7 +202,7 @@
                                       (.hasTimestamp ^RecordMetadata meta-data)
                                       (assoc :timestamp (t/instant (.timestamp ^RecordMetadata meta-data))))))
         (csp/close! delivered-ch)
-        (trace "onCompletion delivered result.")))))
+        (log/trace "onCompletion delivered result.")))))
 
 (-prom/register-metric (prom/counter ::producer-msgs-produced
                                      {:description "How many messages are being produce via producer-produce."
@@ -1076,8 +1075,8 @@
        [_ cfg]
      (let [group-id (str (when group-id-prepend (str group-id-prepend "-"))
                          (UUID/randomUUID))]
-       (info (format "Creating consumer group-id: %s"
-                     group-id))
+       (log/info (format "Creating consumer group-id: %s"
+                         group-id))
        (assoc cfg ConsumerConfig/GROUP_ID_CONFIG group-id)))))
 
 (defstrategy ConsumerGroup
@@ -1474,7 +1473,7 @@
                           strategies)]
           (try (shutdown-hook s consumer)
                (catch Throwable t
-                 (error t (str "Exception while calling shutdown-hook.")))))
+                 (log/error t "Exception while calling shutdown-hook."))))
 
         ;; close the consumer. this commits and exits cleanly
         (.close consumer)))))
@@ -1495,9 +1494,9 @@
                                                   :consumer-config consumer-config
                                                   :consumer-properties consumer-properties))))]
         (when (= :error status)
-          (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
-                 (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
-                         consumer-group-id))
+          (log/error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
+                     (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
+                             consumer-group-id))
           (-health/indicate-unhealthy! service-health-trip-switch component-kw))
 
         ;; Anyway deliver the value into the promise.
@@ -1646,10 +1645,10 @@
                           (filter (complement existing-topics))
                           (distinct)
                           (map (fn [topic-name]
-                                 (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
-                                               topic-name
-                                               (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                               "CLUSTER_DEFAULT"))
+                                 (log/info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                                   topic-name
+                                                   (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                                   "CLUSTER_DEFAULT"))
                                  (NewTopic. ^String topic-name
                                             ^java.util.Optional
                                             (if nr-of-partitions
@@ -1904,9 +1903,9 @@
 
               ;; here the topics will be modified
               (do
-                (warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
-                              (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
-                              ktable-compaction-policy))
+                (log/warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                                  (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
+                                  ktable-compaction-policy))
 
                 (let [change-spec [(AlterConfigOp. (ConfigEntry. "cleanup.policy"
                                                                  ktable-compaction-policy)
@@ -1926,11 +1925,11 @@
                                    existing-topics)
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
-                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
-                                                      topic-name
-                                                      (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                      "CLUSTER_DEFAULT"
-                                                      ktable-compaction-policy))
+                                        (log/info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
+                                                          topic-name
+                                                          (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                                          "CLUSTER_DEFAULT"
+                                                          ktable-compaction-policy))
                                         (let [new-topic (NewTopic. ^String   topic-name
                                                                    ^Optional (if nr-of-partitions
                                                                                (Optional/of nr-of-partitions)
@@ -2103,8 +2102,8 @@
                                      ;; default, return old value
                                      :else
                                      (do
-                                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                                     (str t) (str k) (str v)))
+                                       (log/warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                                         (str t) (str k) (str v)))
                                        old)))
                                  (fn [old-meta]
                                    (cond-> old-meta
@@ -2492,7 +2491,7 @@ Returns a subscription handle with which you can unsubscribe later.")
                              retention-ms (assoc :retention-ms retention-ms))
 
 
-        ;; on the advice of the memory-meter library authors, we are doing it
+        ;; On the advice of the memory-meter library authors, we are measuring the size of the full ktable value
         ;; but not very frequently. So we are measuring "representation-size" of every topic-partition
         ;; shard of data in the ktable, once every minute.
         maybe-log-ktable-size! (start-background-ktable-measuring-worker {:consumer-group-id consumer-group-id})
@@ -2689,8 +2688,8 @@ Returns a subscription handle with which you can unsubscribe later.")
   (let [transformer-actual (cond
                              literal-fn
                              (do
-                               (warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
-                                          literal-fn))
+                               (log/warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
+                                              literal-fn))
                                (eval literal-fn)))]
     (reify
       IConsumedResultsHandler
