@@ -1,5 +1,6 @@
 (ns afrolabs.prometheus
   (:require [iapetos.core :as p]
+            [iapetos.collector :as collector]
             [iapetos.registry :as promr]
             [iapetos.collector.jvm]
             [iapetos.export]
@@ -9,12 +10,23 @@
             [afrolabs.components.http :as -http]
             [ring.util.response :as ring-response]
             [ring.util.io :as ring-io]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io])
+  (:import [io.prometheus.client.hotspot MemoryAllocationExports]))
 
 
 (defonce registry
   (atom (-> (p/collector-registry)
-            (iapetos.collector.jvm/initialize))))
+            (iapetos.collector.jvm/initialize)
+            ;; iapetos' jvm/initialize registers standard, gc, memory-pools and
+            ;; threads collectors — but NOT allocation exports. Add it explicitly so
+            ;; we export jvm_memory_pool_allocated_bytes_total{pool="..."}, the
+            ;; cumulative-bytes-allocated counter whose rate() is the JVM allocation
+            ;; rate — the leading indicator of GC pressure / allocation-limited work.
+            (p/register
+             (collector/named
+              {:namespace "iapetos_internal"
+               :name      "jvm_memory_allocation"}
+              (MemoryAllocationExports.))))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
