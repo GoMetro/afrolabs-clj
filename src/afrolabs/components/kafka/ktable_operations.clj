@@ -199,7 +199,7 @@
 
 (defn send-command!
   "Operator/REPL helper. Enriches (`prepare-command`), produces the command onto the
-  command topic and waits for the delivery ack. Returns the enriched command (so the
+  command topic. Returns the enriched command (so the
   operator can correlate log lines by `:ktable-ops.command/id`); throws when delivery fails."
   [ops-component command]
   (let [{:keys [command-topic producer]} @ops-component
