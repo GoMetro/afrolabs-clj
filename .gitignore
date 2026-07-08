@@ -6,3 +6,4 @@ target/
 /.cpcache/
 /.lsp/
 /.cider-history
+/.deps.prepped
