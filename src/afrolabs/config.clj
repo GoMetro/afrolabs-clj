@@ -175,6 +175,15 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defmethod aero/reader 'resolve-and-get/symbol
+  [_ _ value]
+  (when-not (symbol? value)
+    (throw (ex-info "Provide a symbol to resolve-and-get/symbol aero tag."
+                    {:value value})))
+  (var-get (requiring-resolve value)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defonce static-parameter-sources (delay (merge (read-system-env)
                                                 (read-system-props))))
 
