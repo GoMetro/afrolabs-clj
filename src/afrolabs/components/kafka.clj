@@ -133,6 +133,15 @@
   [header-name (when header-value
                  (deserialize-consumer-record-header header-name header-value))])
 
+(defn consumer-record-timestamp->instant
+  "Converts a `ConsumerRecord`'s raw `.timestamp` (epoch millis) to a `java.time.Instant`,
+  mapping non-positive values to `nil`. Kafka uses `-1` (`RecordBatch/NO_TIMESTAMP`) for
+  records without a timestamp; converting that blindly yields 1969-12-31T23:59:59.999Z,
+  which downstream consumers would mistake for a real (very old) timestamp."
+  [^long raw-timestamp]
+  (when (pos? raw-timestamp)
+    (t/instant raw-timestamp)))
+
 (comment
 
   (def serialize-producer-record-header-by-name nil)
@@ -1423,7 +1432,7 @@
                                                                    :offset    (.offset r)
                                                                    :value     (.value r)
                                                                    :key       (.key r)
-                                                                   :timestamp (t/instant (.timestamp r))}
+                                                                   :timestamp (consumer-record-timestamp->instant (.timestamp r))}
                                                                 (seq hdrs) (assoc :headers hdrs)))))
                                                      (.poll ^Consumer consumer
                                                             ^java.time.Duration (t/duration poll-timeout :millis)))
@@ -2157,7 +2166,8 @@
                                                         specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
                                                         specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect record key, continue to record value
                                                         :timestamp                                                   ;; navigate to :timestamp
-                                                        #(t/before? % cutoff-timestamp)                              ;; match only when :timestamp is before cutoff
+                                                        ;; a record without a :timestamp (eg kafka NO_TIMESTAMP) is never expired
+                                                        #(and % (t/before? % cutoff-timestamp))                      ;; match only when :timestamp is before cutoff
                                                         ]
                                                        (meta result)))
              result-without-records (reduce (fn [acc [topic record-key]]
