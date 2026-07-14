@@ -118,8 +118,13 @@
       -comp/IHaltable
       (halt [_]
         (csp/close! incoming-msgs)
-        (csp/close! result-msgs) ;; this carries the danger of losing some results
-        (csp/<!! msgs-handling-thread))
+        ;; The handling thread may be parked on `(csp/>!! result-msgs results)`
+        (let [drainer (csp/thread
+                        (loop []
+                          (when (some? (csp/<!! result-msgs))
+                            (recur))))]
+          (csp/<!! msgs-handling-thread)
+          (csp/<!! drainer)))
 
       -kafka/IConsumerPostInitHook
       (post-init-hook [_this consumer]
