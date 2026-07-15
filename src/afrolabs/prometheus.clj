@@ -86,12 +86,13 @@
         ;; give the prometheus write-text-format a writer that is based on the stream that will become the http response body
         ;;
         ;; lifted from: https://nelsonmorris.net/2015/04/22/streaming-responses-using-ring.html
-        (ring-response/response
-         (ring-io/piped-input-stream
-          (fn [output-stream]
-            (with-open [^java.io.BufferedWriter w (io/make-writer output-stream {})]
-              (iapetos.export/write-text-format! w @registry)
-              (.flush w)))))))))
+        (-> (ring-response/response
+             (ring-io/piped-input-stream
+              (fn [output-stream]
+                (with-open [^java.io.BufferedWriter w (io/make-writer output-stream {})]
+                  (iapetos.export/write-text-format! w @registry)
+                  (.flush w)))))
+            (ring-response/content-type "text/plain; version=0.0.4; charset=utf8"))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
