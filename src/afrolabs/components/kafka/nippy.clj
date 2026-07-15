@@ -32,10 +32,17 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def magic-marker-array
-  (let [bb (ByteBuffer/allocate 4)]
-    (.putInt bb 69420)
-    (.array bb)))
+(def nippy-encoding-starter
+  "This has been cribbed from the nippy source. It is the magic marker that identifies a stream as nippy-encoded. We will use it, sniff the packet, and know whether to even try nippy or go straight to Edn for deser."
+  (.getBytes "NPY" java.nio.charset.StandardCharsets/UTF_8))
+
+(defn bytes-starts-with-NPI?
+  [^bytes bs]
+  (and bs
+       (< 3 (alength bs))
+       (= (aget bs 0) (aget nippy-encoding-starter 0))
+       (= (aget bs 1) (aget nippy-encoding-starter 1))
+       (= (aget bs 2) (aget nippy-encoding-starter 2))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Deserializer
@@ -67,14 +74,16 @@
   were not nippy-encoded. Any other exception is logged and nil is returned."
   [^bytes byte-data topic]
   (try
-    (nippy/thaw byte-data)
-    (catch clojure.lang.ExceptionInfo ei
-      (if (nippy-decode-exception? ei)
-        (edn-fallback byte-data topic)
-        (when *log-thaw-exceptions*
-          (log/error ei (str "Unable to deserialize nippy bytes from topic '" topic "'")))))
+    (if (bytes-starts-with-NPI? byte-data)
+      (nippy/thaw byte-data)
+      (edn/read-string {:readers {'inst #(t/instant %)}} (String. byte-data)))
     (catch Throwable ex
-      (log/error ex (str "Unable to deserialize nippy bytes from topic '" topic "'")))))
+      (log/error ex (str "Unable to deserialize nippy bytes from topic '" topic "'"))))
+
+  #_(try
+    (nippy/thaw byte-data)
+    (catch Throwable ex
+      (edn/read-string {:readers {'inst #(t/instant %)}} (String. byte-data)))))
 
 (defn deser-deserialize-String-Headers-byte<>
   ([_ topic ^bytes byte-data]
