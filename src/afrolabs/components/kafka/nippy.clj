@@ -40,9 +40,9 @@
   [^bytes bs]
   (and bs
        (< 3 (alength bs))
-       (= (aget bs 0) (aget nippy-encoding-starter 0))
-       (= (aget bs 1) (aget nippy-encoding-starter 1))
-       (= (aget bs 2) (aget nippy-encoding-starter 2))))
+       (= (aget bs 0) (aget ^bytes nippy-encoding-starter 0))
+       (= (aget bs 1) (aget ^bytes nippy-encoding-starter 1))
+       (= (aget bs 2) (aget ^bytes nippy-encoding-starter 2))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Deserializer
