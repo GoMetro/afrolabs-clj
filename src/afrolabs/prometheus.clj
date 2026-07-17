@@ -2,6 +2,8 @@
   (:require [iapetos.core :as p]
             [iapetos.collector :as collector]
             [iapetos.registry :as promr]
+            [iapetos.registry.collectors :as promc]
+            [iapetos.metric :as promm]
             [iapetos.collector.jvm]
             [iapetos.export]
             [afrolabs.components :as -comp]
@@ -35,6 +37,11 @@
 
   - Uses a defonce so that each metric is registered only once per JVM instance.
   - Creates an accessor fn called \"get-\"<metric-type>\"-\"<metric-name>, which can be used with prometheus api fns.
+  - For metrics that declare :labels, ALSO creates a companion fn called
+    \"remove-\"<metric-type>\"-\"<metric-name>, which excises a single labeled child
+    (one label-value combination) from the metric. This is the only way to make the
+    prometheus exporter stop emitting a stale series (eg a revoked kafka partition's
+    lag gauge); merely ceasing to `set` it leaves the last value frozen forever.
   - If you change the metric definition, you'll have to restart the JVM to see the effect.
 
   (eg)
@@ -46,21 +53,52 @@
 
   (register-metric (prometheus/counter ::test2 {:description \"d\" :labels [:label-name]}))
   ...
-  (prometheus/inc (get-counter-test2 {:label-name \"label-value\"}))"
+  (prometheus/inc (get-counter-test2 {:label-name \"label-value\"}))
+  ;; excise the child for a specific label-value combination:
+  (remove-counter-test2 {:label-name \"label-value\"})
+
+  The remove-* fn takes a map of {:label value}. All declared labels must be supplied
+  and must match an existing child exactly for the removal to take effect; a partial or
+  non-matching map is a silent no-op (prometheus' own .remove semantics). A later `set`
+  cleanly re-creates the child."
   [iapetos-metric-definition]
-  (let [metric-name (second iapetos-metric-definition)
-        metric-type (-> iapetos-metric-definition first name)
-        metric-fn-name (name metric-name)]
-    `(defonce ~(symbol (str "get-" metric-type "-" metric-fn-name))
-       (do
-         (swap! registry
-                (fn [old-registry#]
-                  (p/register old-registry#
-                              ~iapetos-metric-definition)))
-         (fn [& [labels# & _#]]
-           (if labels#
-             (@registry ~metric-name labels#)
-             (@registry ~metric-name)))))))
+  (let [metric-name    (second iapetos-metric-definition)
+        metric-type    (-> iapetos-metric-definition first name)
+        metric-fn-name (name metric-name)
+        ;; the :labels vector is a literal in the metric definition, so we can read it
+        ;; at macro-expansion time and pre-compute the (dasherized) label order.
+        labels         (:labels (nth iapetos-metric-definition 2 nil))]
+    `(do
+       (defonce ~(symbol (str "get-" metric-type "-" metric-fn-name))
+         (do
+           (swap! registry
+                  (fn [old-registry#]
+                    (p/register old-registry#
+                                ~iapetos-metric-definition)))
+           (fn [& [labels# & _#]]
+             (if labels#
+               (@registry ~metric-name labels#)
+               (@registry ~metric-name)))))
+
+       ;; only labeled metrics have removable children.
+       ~@(when (seq labels)
+           [`(defonce ~(symbol (str "remove-" metric-type "-" metric-fn-name))
+               ;; registration already happened in the get-* defonce above (top-to-bottom).
+               ;; capture the underlying io.prometheus.client.SimpleCollector ONCE, here at
+               ;; declaration time, so the hot path is a bare .remove with no reflection and
+               ;; no coupling to iapetos internals.
+               (let [raw#         (:raw (promc/lookup (.-collectors ^iapetos.registry.IapetosRegistry @registry)
+                                                      ~metric-name
+                                                      (.-options ^iapetos.registry.IapetosRegistry @registry)))
+                     ;; pre-computed dasherized label order — mirrors iapetos' set-labels,
+                     ;; so the values array we build matches the child that `set` created.
+                     label-order# (mapv promm/dasherize ~labels)]
+                 (fn [label->value#]
+                   (let [m# (into {}
+                                  (map (fn [[k# v#]] [(promm/dasherize k#) v#]))
+                                  label->value#)]
+                     (.remove ^io.prometheus.client.SimpleCollector raw#
+                              (into-array String (map (fn [l#] (str (get m# l#))) label-order#)))))))]))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

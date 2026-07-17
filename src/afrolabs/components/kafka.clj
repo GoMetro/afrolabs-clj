@@ -1415,7 +1415,12 @@
 
       (combined-post-init-hooks consumer)
 
-      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
+      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))
+            ;; the set of {:consumer-group-id :topic :partition} label maps we currently
+            ;; hold a lag-gauge child for. Compared against the live assignment on every
+            ;; poll so that, on a rebalance, revoked partitions' children can be excised —
+            ;; otherwise the exporter emits their last (now-frozen) lag value forever.
+            gauge-lag-labels  (atom #{})]
 
         (while (not @must-stop)
           (let [consume-id                 (random-uuid)]
@@ -1440,8 +1445,23 @@
                     ;; request the consumer lag on this consumer's topic-partition assignment
                     ;; and record it as a guage, per topic and per partition
                     ;; ALSO - measure how long it takes to make this measurement
-                    _ (let [start-millis (System/currentTimeMillis)]
-                        (doseq [^TopicPartition assignment (.assignment consumer)
+                    _ (let [start-millis   (System/currentTimeMillis)
+                            assignments    (.assignment consumer)
+                            current-labels (into #{}
+                                                 (map (fn [^TopicPartition tp]
+                                                        {:consumer-group-id consumer-group-id
+                                                         :topic             (.topic tp)
+                                                         :partition         (.partition tp)}))
+                                                 assignments)]
+                        ;; .assignment only changes on a rebalance; when it does, excise the
+                        ;; gauge children for revoked partitions. Guarded so the steady-state
+                        ;; hot path is just a set-equality check (no diff, no removal calls).
+                        (when (not= current-labels @gauge-lag-labels)
+                          (doseq [revoked (set/difference @gauge-lag-labels current-labels)]
+                            (remove-gauge-consumer-partition-lag revoked))
+                          (reset! gauge-lag-labels current-labels))
+
+                        (doseq [^TopicPartition assignment assignments
                                 :let [assignment-lag (.currentLag consumer assignment)]
                                 :when (not (.isEmpty assignment-lag))]
                           (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
