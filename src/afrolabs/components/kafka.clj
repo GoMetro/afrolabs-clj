@@ -1345,7 +1345,7 @@
 
 (-prom/register-metric (prom/counter ::consumer-main-msgs-consumed
                                      {:description "All messages consumed by kafka consumer-main."
-                                      :labels [:topic]}))
+                                      :labels [:topic :consumer-group-id]}))
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
@@ -1480,7 +1480,8 @@
                     _ (doseq [[topic msgs-count] (into {}
                                                        (x/by-key :topic x/count)
                                                        consumed-records)]
-                        (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
+                        (prom/inc (get-counter-consumer-main-msgs-consumed {:topic             topic
+                                                                            :consumer-group-id consumer-group-id})
                                   msgs-count))
                     consumption-results        (->> consumed-records
                                                     (consumer-messages-pre-processor-chain)
