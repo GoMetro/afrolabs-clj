@@ -2392,6 +2392,21 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                :partition
                                                :consumer-group-id]}))
 
+(-prom/register-metric (prom/gauge ::ktable-entry-count
+                                   {:description "Number of live key->value entries held in a ktable, per topic."
+                                    :labels [:ktable-id
+                                             :topic]}))
+
+(-prom/register-metric (prom/gauge ::ktable-info
+                                   {:description "Constant-1 series identifying a ktable copy (name <-> consumer-group-id/uuid)."
+                                    :labels [:ktable-id
+                                             :consumer-group-id]}))
+
+(-prom/register-metric (prom/counter ::ktable-updates
+                                     {:description "Total messages merged into a ktable, per topic."
+                                      :labels [:ktable-id
+                                               :topic]}))
+
 (defn- start-background-ktable-measuring-worker
   "Starts a process that can measure the size of even enormous ktable values in the background, without interfering
   with the primary consumer.
@@ -2492,6 +2507,9 @@ Returns a subscription handle with which you can unsubscribe later.")
 
   (let [consumer-group-id (str  "ktable-" ktable-id "-"
                                 (UUID/randomUUID))
+        _ (prom/set (get-gauge-ktable-info {:ktable-id         ktable-id
+                                            :consumer-group-id consumer-group-id})
+                    1)
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
         _ (csp/go (csp/<! caught-up-ch)
@@ -2550,6 +2568,14 @@ Returns a subscription handle with which you can unsubscribe later.")
                                           (swap! ktable-state
                                                  #(merge-updates-with-ktable % msgs merge-updates-opts))]
                                       (maybe-log-ktable-size! latest-ktable-value)
+                                      (doseq [t (keys latest-ktable-value)]
+                                        (prom/set (get-gauge-ktable-entry-count {:ktable-id ktable-id
+                                                                                 :topic     t})
+                                                  (count (get latest-ktable-value t))))
+                                      (doseq [[t cnt] (frequencies (map :topic msgs))]
+                                        (prom/inc (get-counter-ktable-updates {:ktable-id ktable-id
+                                                                               :topic     t})
+                                                  cnt))
                                       (when ktable-checkpoint-storage
                                         ;; This `register-ktable-value` is called after _every_ update to the ktable value.
                                         ;; We are depending on the implementation to store only a subset of registered ktable values.
@@ -2612,6 +2638,11 @@ Returns a subscription handle with which you can unsubscribe later.")
       (halt [_]
         (maybe-log-ktable-size!) ;; will stop the measurement worker
         (csp/close! ktable-update-msgs-ch)
+        ;; remove this copy's per-copy gauge children so a stopped copy leaves Prometheus cleanly
+        ;; (the ::ktable-updates counter is cumulative and intentionally left in place)
+        (remove-gauge-ktable-info {:ktable-id ktable-id :consumer-group-id consumer-group-id})
+        (doseq [t (keys @ktable-state)]
+          (remove-gauge-ktable-entry-count {:ktable-id ktable-id :topic t}))
         (-comp/halt consumer))
 
       IKTable
