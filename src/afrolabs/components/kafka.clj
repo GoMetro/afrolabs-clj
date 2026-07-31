@@ -2407,6 +2407,15 @@ Returns a subscription handle with which you can unsubscribe later.")
                                       :labels [:ktable-id
                                                :topic]}))
 
+(-prom/register-metric (prom/gauge ::ktable-startup-duration-secs
+                                   {:description "Wall-clock seconds from ktable init until the first caught-up signal."
+                                    :labels [:ktable-id
+                                             :consumer-group-id]}))
+
+(-prom/register-metric (prom/summary ::ktable-checkpoint-retrieve-secs
+                                     {:description "How long retrieving the latest ktable checkpoint takes."
+                                      :labels [:ktable-id]}))
+
 (defn- start-background-ktable-measuring-worker
   "Starts a process that can measure the size of even enormous ktable values in the background, without interfering
   with the primary consumer.
@@ -2510,9 +2519,16 @@ Returns a subscription handle with which you can unsubscribe later.")
         _ (prom/set (get-gauge-ktable-info {:ktable-id         ktable-id
                                             :consumer-group-id consumer-group-id})
                     1)
+        ;; monotonic clock for durations — the injected `clock` is wall-time and is
+        ;; only present when `retention-ms` is set, so we can't rely on it here.
+        start-nanos (System/nanoTime)
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
         _ (csp/go (csp/<! caught-up-ch)
+                  (prom/set (get-gauge-ktable-startup-duration-secs
+                             {:ktable-id         ktable-id
+                              :consumer-group-id consumer-group-id})
+                            (/ (double (- (System/nanoTime) start-nanos)) 1e9))
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
 
@@ -2533,8 +2549,10 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                               (when-not caught-up-once?
                                                                 caught-up-ch)]))
         ktable-initial-value (or (when ktable-checkpoint-storage
-                                   (-ktable-checkpoints/retrieve-latest-checkpoint ktable-checkpoint-storage
-                                                                                   ktable-id))
+                                   (prom/with-duration (get-summary-ktable-checkpoint-retrieve-secs
+                                                        {:ktable-id ktable-id})
+                                     (-ktable-checkpoints/retrieve-latest-checkpoint ktable-checkpoint-storage
+                                                                                     ktable-id)))
                                  {})
         ktable-state (atom ktable-initial-value)
 
@@ -2641,6 +2659,7 @@ Returns a subscription handle with which you can unsubscribe later.")
         ;; remove this copy's per-copy gauge children so a stopped copy leaves Prometheus cleanly
         ;; (the ::ktable-updates counter is cumulative and intentionally left in place)
         (remove-gauge-ktable-info {:ktable-id ktable-id :consumer-group-id consumer-group-id})
+        (remove-gauge-ktable-startup-duration-secs {:ktable-id ktable-id :consumer-group-id consumer-group-id})
         (doseq [t (keys @ktable-state)]
           (remove-gauge-ktable-entry-count {:ktable-id ktable-id :topic t}))
         (-comp/halt consumer))
