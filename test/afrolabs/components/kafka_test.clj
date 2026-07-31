@@ -1,6 +1,6 @@
 (ns afrolabs.components.kafka-test
   (:require [afrolabs.components.kafka :as sut]
-            [clojure.test :as t :refer [deftest is]]
+            [clojure.test :as t :refer [deftest is testing]]
             [java-time.api :as jt]))
 
 (deftest AdhocConfig-throw-on-uneven-config
@@ -74,3 +74,62 @@
         "A record older than retention-ms (relative to the max encountered timestamp) is expunged.")
     (is (= {:a 2} (get-in ktable ["topic" "no-ts"])))
     (is (= {:a 3} (get-in ktable ["topic" "fresh"])))))
+
+;;;; ktable-atom-wait-for-catchup ;;;;
+;;
+;; This is the "caught-up" detector that drives the ktable's first-caught-up signal
+;; (and, downstream, the ktable-startup-duration-secs gauge). It works purely off an
+;; atom whose value carries :ktable/topic-partition-offsets metadata, so it can be
+;; tested without a broker. `topic-partition-offset` and the offsets metadata are both
+;; {topic {partition offset}}.
+
+(defn- ktable-with-offsets
+  "A ktable atom value (empty map) whose metadata advertises the given progress offsets."
+  [offsets]
+  (with-meta {} {:ktable/topic-partition-offsets offsets}))
+
+(deftest ktable-wait-returns-immediately-when-already-caught-up
+  (let [offsets {"topic" {0 100}}
+        a       (atom (ktable-with-offsets offsets))
+        result  (sut/ktable-atom-wait-for-catchup a
+                                                  {"topic" {0 50}}
+                                                  (jt/duration 1 :seconds)
+                                                  ::timeout)]
+    (is (not= ::timeout result)
+        "Progress (100) already exceeds the target (50), so it must not time out.")
+    (is (= offsets result)
+        "When already caught up it returns the ktable's current progress offsets.")))
+
+(deftest ktable-wait-times-out-when-target-not-reached
+  (let [a      (atom (ktable-with-offsets {"topic" {0 10}}))
+        result (sut/ktable-atom-wait-for-catchup a
+                                                 {"topic" {0 1000}}
+                                                 (jt/duration 200 :millis)
+                                                 ::timeout)]
+    (is (= ::timeout result)
+        "Progress (10) never reaches the target (1000) and the atom never changes.")))
+
+(deftest ktable-wait-returns-once-offsets-advance
+  (let [a (atom (ktable-with-offsets {"topic" {0 5}}))]
+    ;; advance progress past the target shortly after the wait begins
+    (future (Thread/sleep 100)
+            (swap! a vary-meta assoc-in [:ktable/topic-partition-offsets "topic" 0] 500))
+    (let [result (sut/ktable-atom-wait-for-catchup a
+                                                   {"topic" {0 100}}
+                                                   (jt/duration 5 :seconds)
+                                                   ::timeout)]
+      (is (not= ::timeout result)
+          "The background advance to 500 crosses the target (100) before the timeout.")
+      (is (= {"topic" {0 500}} result)
+          "It returns the progress offsets observed at the moment it caught up."))))
+
+(deftest ktable-wait-ignores-offsets-for-untracked-topics
+  (let [offsets {"tracked" {0 100}}
+        a       (atom (ktable-with-offsets offsets))
+        result  (sut/ktable-atom-wait-for-catchup a
+                                                  {"tracked"   {0 50}
+                                                   "untracked" {0 999999}}
+                                                  (jt/duration 1 :seconds)
+                                                  ::timeout)]
+    (is (= offsets result)
+        "An offset for a topic the ktable does not consume must not block catch-up.")))
