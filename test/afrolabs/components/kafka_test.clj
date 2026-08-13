@@ -1,5 +1,6 @@
 (ns afrolabs.components.kafka-test
   (:require [afrolabs.components.kafka :as sut]
+            [afrolabs.prometheus :as -prom]
             [clojure.test :as t :refer [deftest is testing]]
             [java-time.api :as jt]))
 
@@ -133,3 +134,96 @@
                                                   ::timeout)]
     (is (= offsets result)
         "An offset for a topic the ktable does not consume must not block catch-up.")))
+
+;;;; ktable-entry-count ;;;;
+;;
+;; `publish-ktable-entry-counts!` is the only writer of the ::ktable-entry-count gauge. It is
+;; called twice: once at ktable init from the restored checkpoint value, and after every consumed
+;; batch. The init call is the reason this exists -- a checkpoint-restored ktable on a near-silent
+;; topic used to publish nothing at all, so its size was invisible until a message happened to
+;; arrive (which for a config topic can be a day away).
+;;
+;; It needs no broker, so we drive it directly and read the gauge back through the same
+;; sample-extraction path the /metrics endpoint uses.
+
+(def ^:private publish-entry-counts! #'sut/publish-ktable-entry-counts!)
+
+(defn- entry-counts
+  "Scrape the live exporter for ::ktable-entry-count children of `ktable-id`, as {topic -> value}."
+  [ktable-id]
+  (->> (-prom/extract-samples #".*ktable_entry_count")
+       (mapcat :samples)
+       (filter #(= ktable-id (get-in % [:labels "ktable_id"])))
+       (map (juxt #(get-in % [:labels "topic"]) :value))
+       (into (sorted-map))))
+
+(defn- clear-entry-counts!
+  "Idempotently excise our children, so a test starts clean even if a previous run in the same JVM
+   was interrupted before its cleanup. The registry is JVM-global."
+  [ktable-id topics]
+  (doseq [t topics]
+    (sut/remove-gauge-ktable-entry-count {:ktable-id ktable-id :topic t})))
+
+(deftest publish-ktable-entry-counts-publishes-one-child-per-topic
+  (let [ktable-id "kafka-test-entry-count"
+        topics    ["topic-a" "topic-b" "topic-c"]]
+    (clear-entry-counts! ktable-id topics)
+    (try
+      (testing "one child per topic, valued by the number of live keys in that topic"
+        (publish-entry-counts! ktable-id {"topic-a" {"k1" {:a 1} "k2" {:a 2}}
+                                          "topic-b" {"k1" {:b 1}}})
+        (is (= {"topic-a" 2.0 "topic-b" 1.0} (entry-counts ktable-id))))
+
+      (testing "an emptied sub-map (tombstones, retention) publishes 0, not nothing"
+        (publish-entry-counts! ktable-id {"topic-a" {"k1" {:a 1} "k2" {:a 2}}
+                                          "topic-b" {}
+                                          "topic-c" {}})
+        (is (= {"topic-a" 2.0 "topic-b" 0.0 "topic-c" 0.0} (entry-counts ktable-id))))
+      (finally
+        (clear-entry-counts! ktable-id topics)))))
+
+(deftest publish-ktable-entry-counts-on-an-empty-value-publishes-nothing
+  ;; The init call site passes the restored checkpoint value, which is `{}` when
+  ;; `retrieve-latest-checkpoint` returned nil, or when there is no checkpoint storage at all.
+  (let [ktable-id "kafka-test-entry-count-empty"]
+    (publish-entry-counts! ktable-id {})
+    (is (= {} (entry-counts ktable-id)))
+    (publish-entry-counts! ktable-id nil)
+    (is (= {} (entry-counts ktable-id))
+        "A nil ktable value must neither throw nor publish.")))
+
+(deftest publish-ktable-entry-counts-ignores-ktable-meta-data
+  ;; All `:ktable/...` data is meta-data, never a map key. If it leaked into the map it would be
+  ;; published as a bogus `topic` label -- and, worse, survive halt's removal loop.
+  (let [ktable-id "kafka-test-entry-count-meta"
+        value     (with-meta {"topic-a" {"k1" {:a 1}}}
+                    {:ktable/topic-partition-offsets {"topic-a" {0 42}}
+                     :ktable/record-data             {"topic-a" {"k1" {:offset 42 :partition 0}}}
+                     :ktable/record-headers          {"topic-a" {"k1" {}}}})]
+    (clear-entry-counts! ktable-id ["topic-a"])
+    (try
+      (publish-entry-counts! ktable-id value)
+      (is (= {"topic-a" 1.0} (entry-counts ktable-id))
+          "Only real topics become `topic` labels; meta-data keys must not leak.")
+      (finally
+        (clear-entry-counts! ktable-id ["topic-a"])))))
+
+(deftest publish-ktable-entry-counts-matches-a-value-built-by-merge-updates
+  ;; End-to-end on the shape: the counts published are the counts a real ktable value carries,
+  ;; including after a tombstone has emptied a topic. That a topic key is never dissoc'd is what
+  ;; keeps the init-time publish paired with halt's removal loop.
+  (let [ktable-id "kafka-test-entry-count-merged"
+        msg       (fn [t k v] {:topic t :key k :value v :partition 0 :offset 1})
+        value     (-> (sut/merge-updates-with-ktable nil [(msg "t1" "a" {:x 1})
+                                                          (msg "t1" "b" {:x 2})
+                                                          (msg "t2" "c" {:x 3})])
+                      (sut/merge-updates-with-ktable [(msg "t2" "c" nil)]))]
+    (clear-entry-counts! ktable-id ["t1" "t2"])
+    (try
+      (is (= #{"t1" "t2"} (set (keys value)))
+          "A tombstone empties a topic's map but must not remove the topic key.")
+      (publish-entry-counts! ktable-id value)
+      (is (= {"t1" 2.0 "t2" 0.0} (entry-counts ktable-id))
+          "A topic emptied by a tombstone stays a key and reports 0.")
+      (finally
+        (clear-entry-counts! ktable-id ["t1" "t2"])))))

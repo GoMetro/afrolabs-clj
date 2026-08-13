@@ -142,6 +142,26 @@ A KTable is a consumer that maintains an in-memory snapshot of the latest value 
 
 KTable config requires `::ktable-id` (a unique string) and a `:clock` component (from `afrolabs.components.time`). Optionally supports `::ktable-checkpoint-storage` to persist and resume from offset checkpoints.
 
+### KTable metrics
+
+Every machine builds its own copy of each ktable (a distinct `ktable-<ktable-id>-<uuid>` consumer group), so most of these are per-copy series. **When** a metric is published matters as much as what it measures — several are one-shot per process and do not refresh on a timer.
+
+| Metric                            | Type            | Labels                              | When published                                                                              |
+|-----------------------------------|-----------------|-------------------------------------|---------------------------------------------------------------------------------------------|
+| `ktable-info`                     | gauge (const 1) | ktable-id, consumer-group-id        | once at init; removed at halt                                                               |
+| `ktable-entry-count`              | gauge           | ktable-id, topic                    | once at init from the restored checkpoint, then after every consumed batch; removed at halt |
+| `ktable-updates`                  | counter         | ktable-id, topic                    | per consumed batch; cumulative, never removed                                               |
+| `ktable-startup-duration-secs`    | gauge           | ktable-id, consumer-group-id        | on the first caught-up signal; removed at halt                                              |
+| `ktable-consume-time-secs`        | summary         | ktable-id                           | per consumed batch                                                                          |
+| `ktable-checkpoint-retrieve-secs` | summary         | ktable-id                           | once at init, only when checkpoint storage is configured                                    |
+| `ktable-partition-size-bytes`     | gauge           | topic, partition, consumer-group-id | background measuring worker, ~every 60s                                                     |
+
+Caveats worth knowing before building dashboards or alerts on these:
+
+- `ktable-entry-count` only has children for topics **present in the ktable value**. A topic that has never received a record and was not in the checkpoint has no series at all — so never alert on `absent(ktable_entry_count)`; join against `ktable-info` instead, which is the reliable "this copy is alive" signal.
+- With `retention-ms`, entries expire only inside `merge-updates-with-ktable`, which only runs when messages arrive. A silent ktable's entry count is therefore "as of the last update", not as of now. Note also that the checkpoint seek strategy takes precedence over `SeekToTimestampOffset`, so a restore can reinstate entries that are already past their retention window.
+- `ktable-entry-count` carries no per-copy label. Separation between machines comes from Prometheus' scrape-time `instance` label. Two copies of the same `ktable-id` in the *same* JVM would share gauge children, and one copy's halt would remove children the other still owns.
+
 ## `redeclare-*` Macros
 
 Every `defcomponent` generates a `redeclare-<component-name>` macro that re-registers the same init/halt logic under a new Integrant keyword. This allows multiple independent instances of the same component type in one Integrant system:

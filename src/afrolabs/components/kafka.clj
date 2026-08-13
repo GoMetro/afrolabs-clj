@@ -2416,6 +2416,22 @@ Returns a subscription handle with which you can unsubscribe later.")
                                      {:description "How long retrieving the latest ktable checkpoint takes."
                                       :labels [:ktable-id]}))
 
+(defn- publish-ktable-entry-counts!
+  "Publishes the `::ktable-entry-count` gauge for every topic in `ktable-value`.
+
+  A ktable value has the shape {topic-name {record-key record-value}}, so its top-level keys are
+  exactly the topics we hold data for. (Everything `:ktable/...` lives in meta-data, never as a
+  key.) An emptied per-topic map (tombstones, retention) is a legitimate 0 and is published as such.
+
+  Called twice: once at init from the restored checkpoint value, and after every consumed batch.
+  The init call matters because a checkpoint-restored ktable on a near-silent topic would otherwise
+  never publish its size at all -- the gauge would only appear when a message happens to arrive."
+  [ktable-id ktable-value]
+  (doseq [[t entries] ktable-value]
+    (prom/set (get-gauge-ktable-entry-count {:ktable-id ktable-id
+                                             :topic     t})
+              (count entries))))
+
 (defn- start-background-ktable-measuring-worker
   "Starts a process that can measure the size of even enormous ktable values in the background, without interfering
   with the primary consumer.
@@ -2555,6 +2571,7 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                                                      ktable-id)))
                                  {})
         ktable-state (atom ktable-initial-value)
+        _ (publish-ktable-entry-counts! ktable-id ktable-initial-value)
 
         merge-updates-opts (cond-> {}
                              retention-ms (assoc :retention-ms retention-ms))
@@ -2586,10 +2603,7 @@ Returns a subscription handle with which you can unsubscribe later.")
                                           (swap! ktable-state
                                                  #(merge-updates-with-ktable % msgs merge-updates-opts))]
                                       (maybe-log-ktable-size! latest-ktable-value)
-                                      (doseq [t (keys latest-ktable-value)]
-                                        (prom/set (get-gauge-ktable-entry-count {:ktable-id ktable-id
-                                                                                 :topic     t})
-                                                  (count (get latest-ktable-value t))))
+                                      (publish-ktable-entry-counts! ktable-id latest-ktable-value)
                                       (doseq [[t cnt] (frequencies (map :topic msgs))]
                                         (prom/inc (get-counter-ktable-updates {:ktable-id ktable-id
                                                                                :topic     t})
@@ -2658,6 +2672,9 @@ Returns a subscription handle with which you can unsubscribe later.")
         (csp/close! ktable-update-msgs-ch)
         ;; remove this copy's per-copy gauge children so a stopped copy leaves Prometheus cleanly
         ;; (the ::ktable-updates counter is cumulative and intentionally left in place)
+        ;; The entry-count loop below is paired with `publish-ktable-entry-counts!`: nothing ever
+        ;; dissocs a topic key from the ktable value, so every topic we published -- including the
+        ;; ones published at init from the checkpoint -- is still a key here.
         (remove-gauge-ktable-info {:ktable-id ktable-id :consumer-group-id consumer-group-id})
         (remove-gauge-ktable-startup-duration-secs {:ktable-id ktable-id :consumer-group-id consumer-group-id})
         (doseq [t (keys @ktable-state)]
