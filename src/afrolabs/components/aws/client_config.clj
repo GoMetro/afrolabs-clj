@@ -13,12 +13,21 @@
 (s/def ::secret-access-key (s/nilable string?))
 (s/def ::region (s/nilable string?))
 (s/def ::load-sso? boolean?)
+(s/def ::assume-role-arn (s/nilable (s/and string? (comp pos? count))))
+(s/def ::assume-role-session-name (s/nilable (s/and string? (comp pos? count))))
 (s/def ::aws-client-config-cfg
-  (s/keys :req-un [::access-key-id
-                   ::secret-access-key
-                   ::region]
-          :opt-un [::profile
-                   ::load-sso?]))
+  (s/and
+   (s/keys :req-un [::region]
+           :opt-un [::access-key-id
+                    ::secret-access-key
+                    ::profile
+                    ::load-sso?
+                    ::assume-role-arn
+                    ::assume-role-session-name])
+   ;; If we assume a role, STS requires a session name for it, so demand one.
+   (fn [{:keys [assume-role-arn assume-role-session-name]}]
+     (or (not assume-role-arn)
+         (boolean assume-role-session-name)))))
 
 (defn basic-session-token-provider
   [access-key-id
@@ -31,49 +40,85 @@
        :aws/secret-access-key secret-access-key
        :aws/session-token     session-token})))
 
-(defn make-aws-client
-  [{:keys [region
-           access-key-id
+(defn- base-credentials-provider
+  "The 'ordinary' credentials provider, before any AssumeRole wrapping: explicit
+  basic keys (optionally with a session token), or - when no keys are supplied -
+  the default credentials chain (instance-profile / env / etc, optionally + SSO)."
+  [{:keys [access-key-id
            secret-access-key
            session-token
            profile
-           load-sso?]
-    :as _cfg}]
-
-  (cond-> {}
-    region
-    (assoc :region region)
-
+           load-sso?]}]
+  (cond
     (and access-key-id
          secret-access-key
          (not session-token))
-    (assoc :credentials-provider
-           (aws-creds/basic-credentials-provider
-            {:access-key-id     access-key-id
-             :secret-access-key secret-access-key}))
+    (aws-creds/basic-credentials-provider
+     {:access-key-id     access-key-id
+      :secret-access-key secret-access-key})
 
     (and access-key-id
          secret-access-key
          session-token)
-    (assoc :credentials-provider
-           (basic-session-token-provider access-key-id
-                                         secret-access-key
-                                         session-token))
+    (basic-session-token-provider access-key-id
+                                  secret-access-key
+                                  session-token)
 
-    (not (and access-key-id
-              secret-access-key))
+    :else
+    (aws-creds/chain-credentials-provider
+     (vec (remove nil?
+                  [(aws-creds/default-credentials-provider (aws/default-http-client))
+                   ;; this crazy shit provides a work-around because
+                   ;; cognitect's profile credentials provider does not work for sso.
+                   ;; We are adding it at the end of the chain.
+                   (when load-sso?
+                     (-aws-sso-profile-provider/provider (or profile
+                                                             (System/getenv "AWS_PROFILE")
+                                                             (System/getProperty "aws.profile")
+                                                             "default")))])))))
+
+(defn assume-role-credentials-provider
+  "Wraps `base-credentials-provider` in an STS AssumeRole exchange: uses the base
+  credentials to call `sts:AssumeRole` for `assume-role-arn`, and hands back the
+  temporary role credentials. The result auto-refreshes in a background daemon
+  thread before the temporary credentials expire, via cognitect's
+  `cached-credentials-with-auto-refresh` reading the `:Expiration` of the STS
+  response (see `calculate-ttl`)."
+  [{:keys [region
+           assume-role-arn
+           assume-role-session-name]
+    :as   cfg}]
+  (let [base (base-credentials-provider cfg)
+        sts  (aws/client (cond-> {:api :sts}
+                           region (assoc :region region)
+                           base   (assoc :credentials-provider base)))]
+    (aws-creds/cached-credentials-with-auto-refresh
+     (reify aws-creds/CredentialsProvider
+       (fetch [_]
+         (let [{:as resp :keys [Credentials]}
+               (aws/invoke sts {:op      :AssumeRole
+                                :request {:RoleArn         assume-role-arn
+                                          :RoleSessionName assume-role-session-name}})]
+           (when (:cognitect.anomalies/category resp)
+             (throw (ex-info "Unable to sts:AssumeRole for the aws client-config."
+                             {:assume-role-arn assume-role-arn
+                              :response        resp})))
+           {:aws/access-key-id     (:AccessKeyId Credentials)
+            :aws/secret-access-key (:SecretAccessKey Credentials)
+            :aws/session-token     (:SessionToken Credentials)
+            ::aws-creds/ttl        (aws-creds/calculate-ttl Credentials)}))))))
+
+(defn make-aws-client
+  [{:keys [region assume-role-arn] :as cfg}]
+  (cond-> {}
+    region
+    (assoc :region region)
+
+    :always
     (assoc :credentials-provider
-           (aws-creds/chain-credentials-provider
-            (vec (remove nil?
-                         [(aws-creds/default-credentials-provider (aws/default-http-client))
-                          ;; this crazy shit provides a work-around because
-                          ;; cognitect's profile credentials provider does not work for sso.
-                          ;; We are adding it at the end of the chain.
-                          (when load-sso?
-                            (-aws-sso-profile-provider/provider (or profile
-                                                                    (System/getenv "AWS_PROFILE")
-                                                                    (System/getProperty "aws.profile")
-                                                                    "default")))]))))))
+           (if assume-role-arn
+             (assume-role-credentials-provider cfg)
+             (base-credentials-provider cfg)))))
 
 (s/def ::aws-client-config
   (s/and map?
