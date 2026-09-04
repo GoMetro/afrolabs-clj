@@ -104,7 +104,14 @@
   (let [base (or (:credentials-provider base-client-cfg)
                  (base-credentials-provider cfg))
         sts  (aws/client (cond-> {:api :sts}
-                           region (assoc :region region)
+                           ;; Force the regional STS endpoint. aws-api resolves :sts to the
+                           ;; global endpoint (credentialScope us-east-1), whose v1 tokens are
+                           ;; rejected in opt-in regions (af-south-1, …). Override the hostname
+                           ;; AND credentialScope so we sign for, and hit, the same region.
+                           ;; Standard `aws` partition only — govcloud/china differ.
+                           region (assoc :region            region
+                                         :endpoint-override {:hostname        (format "sts.%s.amazonaws.com" region)
+                                                             :credentialScope {:region region}})
                            base   (assoc :credentials-provider base)))]
     (aws-creds/cached-credentials-with-auto-refresh
      (reify aws-creds/CredentialsProvider
