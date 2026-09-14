@@ -268,12 +268,12 @@
    {:as              kafka-msg
     :keys            [topic]}]
 
-  (try (let [[event-ts row-data] (record->row:fn kafka-msg)
-             dataset-partition   (str "/" dataset-name
-                                      "/" topic
-                                      "/" (instant->partition event-ts))]
+  (try (when-let [[event-ts row-data] (record->row:fn kafka-msg)]
+         (let [dataset-partition   (str "/" dataset-name
+                                        "/" topic
+                                        "/" (instant->partition event-ts))]
 
-         [dataset-partition row-data])
+           [dataset-partition row-data]))
        (catch Throwable t
          (log/with-context+ (select-keys kafka-msg [:topic :partition :offset])
            (log/error t "->msg failed to work for a message."))
