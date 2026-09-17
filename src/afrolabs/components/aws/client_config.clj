@@ -8,7 +8,7 @@
    [taoensso.timbre :as log]
    ))
 
-(s/def ::profile string?)
+(s/def ::profile (s/nilable string?))
 (s/def ::access-key-id (s/nilable string?))
 (s/def ::secret-access-key (s/nilable string?))
 (s/def ::region (s/nilable string?))
