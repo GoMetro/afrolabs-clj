@@ -39,6 +39,7 @@
   com.cognitect.aws/sns                                  {:mvn/version "871.2.46.6"},
   com.cognitect.aws/sqs                                  {:mvn/version "871.2.34.1"},
   com.cognitect.aws/s3                                   {:mvn/version "871.2.54.18"},
+  com.cognitect.aws/athena                               {:mvn/version "871.2.41.25"},
   com.cognitect.aws/monitoring                           {:mvn/version "871.2.54.3"},
   com.cognitect.aws/logs                                 {:mvn/version "871.2.54.9"},
   nrepl/nrepl                                            {:mvn/version "1.7.0"},
