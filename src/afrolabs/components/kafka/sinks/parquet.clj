@@ -265,11 +265,15 @@
   may return `nil` in which case the record must be discarded."
   [{:as   _cfg
     :keys [record->row:fn
+           record->row:fn-context
            dataset-name]}
    {:as              kafka-msg
     :keys            [topic]}]
 
-  (try (when-let [[event-ts row-data extra-partition-str] (record->row:fn kafka-msg)]
+  (try (when-let [[event-ts row-data extra-partition-str]
+                  (if record->row:fn-context
+                    (record->row:fn record->row:fn-context kafka-msg)
+                    (record->row:fn kafka-msg))]
          (let [dataset-partition   (str "/" dataset-name
                                         "/" topic
                                         (when-not (str/blank? extra-partition-str)
@@ -552,6 +556,8 @@
                                    (and (symbol? x)
                                         (requiring-resolve x)))))
 (s/def ::record->row:fn  ::symbol)
+;; a collection of "extra context" that will be added, in order, as the first argument to record->row:fn
+(s/def ::record->row:fn-context any?)
 ;; a map of topic name to data row column name for order of sorting
 (s/def ::record->event-timestamp-column-name ::symbol)
 
@@ -580,6 +586,7 @@
                                         ::s3:bucket-name
                                         ::s3:path-prefix
                                         ::parallel-sort?
+                                        ::record->row:fn-context
                                         ]))
 
 (-comp/defcomponent {::-comp/ig-kw              ::parquet-sink
