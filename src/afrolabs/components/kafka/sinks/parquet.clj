@@ -21,7 +21,7 @@
    [tech.v3.dataset :as ds]
    [tech.v3.libs.parquet :as ds-parquet]
    [com.potetm.fusebox.retry :as retry]
-   )
+   [clojure.string :as str])
   (:import
    [java.io File FileOutputStream]
    [org.apache.kafka.common TopicPartition]
@@ -260,6 +260,7 @@
   "Accepts a message and returns a 2-tuple of
   - the partition (string) of the dataset that the record belongs to, (used like an s3 path prefix)
   - the modified row data that must/will be insterted into the relevant dataset. (must be flat map/dict data)
+  - OPTIONAL extra-partition-string that will be prepended to the date partition. This may not start with a `/` nor end with it `/`.
 
   may return `nil` in which case the record must be discarded."
   [{:as   _cfg
@@ -268,9 +269,11 @@
    {:as              kafka-msg
     :keys            [topic]}]
 
-  (try (when-let [[event-ts row-data] (record->row:fn kafka-msg)]
+  (try (when-let [[event-ts row-data extra-partition-str] (record->row:fn kafka-msg)]
          (let [dataset-partition   (str "/" dataset-name
                                         "/" topic
+                                        (when-not (str/blank? extra-partition-str)
+                                          (str "/" extra-partition-str))
                                         "/" (instant->partition event-ts))]
 
            [dataset-partition row-data]))
