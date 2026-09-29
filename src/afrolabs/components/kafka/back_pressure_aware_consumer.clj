@@ -27,7 +27,7 @@
 
 (-prom/register-metric (prom/gauge ::consumer-paused
                                    {:description "Is the backpressure-aware consumer strategy currently pausing the consumer?"
-                                    :labels [:component]}))
+                                    :labels [:component :consumer-group-id]}))
 
 (defn make-strategy
   "Creates an instance of a class which implements a bunch of protocols.
@@ -43,6 +43,7 @@
     :keys                     [actual-consumer-client]
     :afrolabs.components/keys [component-kw]}]
   (let [consumer*           (atom nil)
+        consumer-group-id*  (atom nil)
         assigned-partitions (atom nil)
         blocked-msgs        (atom [])
         msgs-in-outbox      (atom [])
@@ -53,7 +54,8 @@
                              (log/warn "Back-pressure aware consumer strategy is pausing the consumer. This means the outbound integration is slow.")
                              (when-let [assigned-partitions* @assigned-partitions]
                                (.pause  ^Consumer @consumer* assigned-partitions*)
-                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                               (prom/observe (get-gauge-consumer-paused {:component         component-kw
+                                                                         :consumer-group-id @consumer-group-id*})
                                              1)
                                (reset! pause-unpause-state :paused))))
         ensure-unpaused  (fn []
@@ -61,7 +63,8 @@
                              (when-let [assigned-partitions* @assigned-partitions]
                                (log/info "Back-pressure aware consumer strategy is consuming.")
                                (.resume ^Consumer @consumer* assigned-partitions*)
-                               (prom/observe (get-gauge-consumer-paused {:component component-kw})
+                               (prom/observe (get-gauge-consumer-paused {:component         component-kw
+                                                                         :consumer-group-id @consumer-group-id*})
                                              0)
                                (reset! pause-unpause-state :unpaused))))
 
@@ -118,12 +121,18 @@
       -comp/IHaltable
       (halt [_]
         (csp/close! incoming-msgs)
-        (csp/close! result-msgs) ;; this carries the danger of losing some results
-        (csp/<!! msgs-handling-thread))
+        ;; The handling thread may be parked on `(csp/>!! result-msgs results)`
+        (let [drainer (csp/thread
+                        (loop []
+                          (when (some? (csp/<!! result-msgs))
+                            (recur))))]
+          (csp/<!! msgs-handling-thread)
+          (csp/<!! drainer)))
 
       -kafka/IConsumerPostInitHook
       (post-init-hook [_this consumer]
-        (reset! consumer* consumer))
+        (reset! consumer* consumer)
+        (reset! consumer-group-id* (.groupId (.groupMetadata ^Consumer consumer))))
 
       -kafka/IConsumerAwareRebalanceListener
       (on-partitions-revoked [_ _consumer partitions]

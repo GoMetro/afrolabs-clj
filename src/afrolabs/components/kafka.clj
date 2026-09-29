@@ -21,7 +21,6 @@
    [java-time.api :as t]
    [net.cgrand.xforms :as x]
    [taoensso.timbre :as log]
-   [taoensso.timbre :as timbre :refer [log  trace  debug  info  warn  error  fatal  report logf tracef debugf infof warnf errorf fatalf reportf spy get-env]]
    [clj-memory-meter.core :as mm])
   (:import [org.apache.kafka.clients.producer
             ProducerConfig ProducerRecord KafkaProducer Producer Callback RecordMetadata]
@@ -134,6 +133,15 @@
   [header-name (when header-value
                  (deserialize-consumer-record-header header-name header-value))])
 
+(defn consumer-record-timestamp->instant
+  "Converts a `ConsumerRecord`'s raw `.timestamp` (epoch millis) to a `java.time.Instant`,
+  mapping non-positive values to `nil`. Kafka uses `-1` (`RecordBatch/NO_TIMESTAMP`) for
+  records without a timestamp; converting that blindly yields 1969-12-31T23:59:59.999Z,
+  which downstream consumers would mistake for a real (very old) timestamp."
+  [^long raw-timestamp]
+  (when (pos? raw-timestamp)
+    (t/instant raw-timestamp)))
+
 (comment
 
   (def serialize-producer-record-header-by-name nil)
@@ -165,9 +173,9 @@
   [x]
   (let [t (type x)]
     (when-not (@default-serialize-producer-record-header-used t)
-      (warnf "Using the default Kafka header value serializer for type: '%s'. defmethod on '%s' to silence this warning and provide better serialization."
-             (str t)
-             (str `serialize-producer-record-header))
+      (log/warnf "Using the default Kafka header value serializer for type: '%s'. defmethod on '%s' to silence this warning and provide better serialization."
+                 (str t)
+                 (str `serialize-producer-record-header))
       (swap! default-serialize-producer-record-header-used conj t)))
   (serialize-producer-record-header (str x)))
 
@@ -182,16 +190,16 @@
 (deftype KafkaProducingCompletionCallback [msg delivered-ch]
   Callback
   (onCompletion [_ meta-data ex]
-    (trace (str "Firing onCompletion for msg. "))
+    (log/trace (str "Firing onCompletion for msg. "))
     ;; TODO ex may contain non-retriable exceptions, which must be used to indicate this component is not healthy
     (when ex
-      (trace "Forwarding delivery exception...")
+      (log/trace "Forwarding delivery exception...")
       (csp/go
         (csp/>!! delivered-ch ex)
         (csp/close! delivered-ch)
-        (trace "when exception onCompletion done.")))
+        (log/trace "when exception onCompletion done.")))
     (when-not ex
-      (trace "Forwarding delivery notification...")
+      (log/trace "Forwarding delivery notification...")
       (csp/go
         (csp/>! delivered-ch (merge msg
                                     (cond-> {:topic     (.topic ^RecordMetadata meta-data)
@@ -203,7 +211,7 @@
                                       (.hasTimestamp ^RecordMetadata meta-data)
                                       (assoc :timestamp (t/instant (.timestamp ^RecordMetadata meta-data))))))
         (csp/close! delivered-ch)
-        (trace "onCompletion delivered result.")))))
+        (log/trace "onCompletion delivered result.")))))
 
 (-prom/register-metric (prom/counter ::producer-msgs-produced
                                      {:description "How many messages are being produce via producer-produce."
@@ -1076,8 +1084,8 @@
        [_ cfg]
      (let [group-id (str (when group-id-prepend (str group-id-prepend "-"))
                          (UUID/randomUUID))]
-       (info (format "Creating consumer group-id: %s"
-                     group-id))
+       (log/info (format "Creating consumer group-id: %s"
+                         group-id))
        (assoc cfg ConsumerConfig/GROUP_ID_CONFIG group-id)))))
 
 (defstrategy ConsumerGroup
@@ -1337,7 +1345,7 @@
 
 (-prom/register-metric (prom/counter ::consumer-main-msgs-consumed
                                      {:description "All messages consumed by kafka consumer-main."
-                                      :labels [:topic]}))
+                                      :labels [:topic :consumer-group-id]}))
 (-prom/register-metric (prom/counter ::consumer-poll
                                      {:description "Incemented every time a poll call is completed on the consumer."
                                       :labels [:consumer-group-id]}))
@@ -1407,7 +1415,12 @@
 
       (combined-post-init-hooks consumer)
 
-      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))]
+      (let [consumer-group-id (.groupId (.groupMetadata ^Consumer consumer))
+            ;; the set of {:consumer-group-id :topic :partition} label maps we currently
+            ;; hold a lag-gauge child for. Compared against the live assignment on every
+            ;; poll so that, on a rebalance, revoked partitions' children can be excised —
+            ;; otherwise the exporter emits their last (now-frozen) lag value forever.
+            gauge-lag-labels  (atom #{})]
 
         (while (not @must-stop)
           (let [consume-id                 (random-uuid)]
@@ -1424,7 +1437,7 @@
                                                                    :offset    (.offset r)
                                                                    :value     (.value r)
                                                                    :key       (.key r)
-                                                                   :timestamp (t/instant (.timestamp r))}
+                                                                   :timestamp (consumer-record-timestamp->instant (.timestamp r))}
                                                                 (seq hdrs) (assoc :headers hdrs)))))
                                                      (.poll ^Consumer consumer
                                                             ^java.time.Duration (t/duration poll-timeout :millis)))
@@ -1432,8 +1445,23 @@
                     ;; request the consumer lag on this consumer's topic-partition assignment
                     ;; and record it as a guage, per topic and per partition
                     ;; ALSO - measure how long it takes to make this measurement
-                    _ (let [start-millis (System/currentTimeMillis)]
-                        (doseq [^TopicPartition assignment (.assignment consumer)
+                    _ (let [start-millis   (System/currentTimeMillis)
+                            assignments    (.assignment consumer)
+                            current-labels (into #{}
+                                                 (map (fn [^TopicPartition tp]
+                                                        {:consumer-group-id consumer-group-id
+                                                         :topic             (.topic tp)
+                                                         :partition         (.partition tp)}))
+                                                 assignments)]
+                        ;; .assignment only changes on a rebalance; when it does, excise the
+                        ;; gauge children for revoked partitions. Guarded so the steady-state
+                        ;; hot path is just a set-equality check (no diff, no removal calls).
+                        (when (not= current-labels @gauge-lag-labels)
+                          (doseq [revoked (set/difference @gauge-lag-labels current-labels)]
+                            (remove-gauge-consumer-partition-lag revoked))
+                          (reset! gauge-lag-labels current-labels))
+
+                        (doseq [^TopicPartition assignment assignments
                                 :let [assignment-lag (.currentLag consumer assignment)]
                                 :when (not (.isEmpty assignment-lag))]
                           (prom/set (get-gauge-consumer-partition-lag {:consumer-group-id consumer-group-id
@@ -1452,7 +1480,8 @@
                     _ (doseq [[topic msgs-count] (into {}
                                                        (x/by-key :topic x/count)
                                                        consumed-records)]
-                        (prom/inc (get-counter-consumer-main-msgs-consumed {:topic topic})
+                        (prom/inc (get-counter-consumer-main-msgs-consumed {:topic             topic
+                                                                            :consumer-group-id consumer-group-id})
                                   msgs-count))
                     consumption-results        (->> consumed-records
                                                     (consumer-messages-pre-processor-chain)
@@ -1474,7 +1503,7 @@
                           strategies)]
           (try (shutdown-hook s consumer)
                (catch Throwable t
-                 (error t (str "Exception while calling shutdown-hook.")))))
+                 (log/error t "Exception while calling shutdown-hook."))))
 
         ;; close the consumer. this commits and exits cleanly
         (.close consumer)))))
@@ -1495,9 +1524,9 @@
                                                   :consumer-config consumer-config
                                                   :consumer-properties consumer-properties))))]
         (when (= :error status)
-          (error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
-                 (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
-                         consumer-group-id))
+          (log/error xtra ;; hopefully, an exception packaged with try/catch in -consumer-main
+                     (format "Kafka consumer main thread finished with exception. [consumer-group-id '%s'] Tripping the health switch..."
+                             consumer-group-id))
           (-health/indicate-unhealthy! service-health-trip-switch component-kw))
 
         ;; Anyway deliver the value into the promise.
@@ -1646,10 +1675,10 @@
                           (filter (complement existing-topics))
                           (distinct)
                           (map (fn [topic-name]
-                                 (info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
-                                               topic-name
-                                               (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                               "CLUSTER_DEFAULT"))
+                                 (log/info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
+                                                   topic-name
+                                                   (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                                   "CLUSTER_DEFAULT"))
                                  (NewTopic. ^String topic-name
                                             ^java.util.Optional
                                             (if nr-of-partitions
@@ -1904,9 +1933,9 @@
 
               ;; here the topics will be modified
               (do
-                (warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
-                              (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
-                              ktable-compaction-policy))
+                (log/warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
+                                  (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
+                                  ktable-compaction-policy))
 
                 (let [change-spec [(AlterConfigOp. (ConfigEntry. "cleanup.policy"
                                                                  ktable-compaction-policy)
@@ -1926,11 +1955,11 @@
                                    existing-topics)
         topic-create-result (->> new-topics
                                  (map (fn [topic-name]
-                                        (info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
-                                                      topic-name
-                                                      (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                      "CLUSTER_DEFAULT"
-                                                      ktable-compaction-policy))
+                                        (log/info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
+                                                          topic-name
+                                                          (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                                          "CLUSTER_DEFAULT"
+                                                          ktable-compaction-policy))
                                         (let [new-topic (NewTopic. ^String   topic-name
                                                                    ^Optional (if nr-of-partitions
                                                                                (Optional/of nr-of-partitions)
@@ -2103,8 +2132,8 @@
                                      ;; default, return old value
                                      :else
                                      (do
-                                       (warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
-                                                     (str t) (str k) (str v)))
+                                       (log/warn (format "merge-update-with-ktable does not have logic for this case: topic='%s', key='%s', value='%s'"
+                                                         (str t) (str k) (str v)))
                                        old)))
                                  (fn [old-meta]
                                    (cond-> old-meta
@@ -2158,7 +2187,8 @@
                                                         specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect topic name, continue to topic value-map
                                                         specter/ALL (specter/collect-one specter/FIRST) specter/LAST ;; collect record key, continue to record value
                                                         :timestamp                                                   ;; navigate to :timestamp
-                                                        #(t/before? % cutoff-timestamp)                              ;; match only when :timestamp is before cutoff
+                                                        ;; a record without a :timestamp (eg kafka NO_TIMESTAMP) is never expired
+                                                        #(and % (t/before? % cutoff-timestamp))                      ;; match only when :timestamp is before cutoff
                                                         ]
                                                        (meta result)))
              result-without-records (reduce (fn [acc [topic record-key]]
@@ -2220,7 +2250,9 @@
                 :let [t                     (.topic tp)
                       p                     (.partition tp)
                       offset-to-resume-from (get-in topic-partition-offsets [t p])]
-                :when offset-to-resume-from]
+                :when (and offset-to-resume-from
+                           ;; there are cases where this offset might be seeded with a sentinal value of -1
+                           (<= 0 offset-to-resume-from))]
           (log/with-context+ {:topic     t
                               :partition p
                               :offset    offset-to-resume-from}
@@ -2360,6 +2392,46 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                :partition
                                                :consumer-group-id]}))
 
+(-prom/register-metric (prom/gauge ::ktable-entry-count
+                                   {:description "Number of live key->value entries held in a ktable, per topic."
+                                    :labels [:ktable-id
+                                             :topic]}))
+
+(-prom/register-metric (prom/gauge ::ktable-info
+                                   {:description "Constant-1 series identifying a ktable copy (name <-> consumer-group-id/uuid)."
+                                    :labels [:ktable-id
+                                             :consumer-group-id]}))
+
+(-prom/register-metric (prom/counter ::ktable-updates
+                                     {:description "Total messages merged into a ktable, per topic."
+                                      :labels [:ktable-id
+                                               :topic]}))
+
+(-prom/register-metric (prom/gauge ::ktable-startup-duration-secs
+                                   {:description "Wall-clock seconds from ktable init until the first caught-up signal."
+                                    :labels [:ktable-id
+                                             :consumer-group-id]}))
+
+(-prom/register-metric (prom/summary ::ktable-checkpoint-retrieve-secs
+                                     {:description "How long retrieving the latest ktable checkpoint takes."
+                                      :labels [:ktable-id]}))
+
+(defn- publish-ktable-entry-counts!
+  "Publishes the `::ktable-entry-count` gauge for every topic in `ktable-value`.
+
+  A ktable value has the shape {topic-name {record-key record-value}}, so its top-level keys are
+  exactly the topics we hold data for. (Everything `:ktable/...` lives in meta-data, never as a
+  key.) An emptied per-topic map (tombstones, retention) is a legitimate 0 and is published as such.
+
+  Called twice: once at init from the restored checkpoint value, and after every consumed batch.
+  The init call matters because a checkpoint-restored ktable on a near-silent topic would otherwise
+  never publish its size at all -- the gauge would only appear when a message happens to arrive."
+  [ktable-id ktable-value]
+  (doseq [[t entries] ktable-value]
+    (prom/set (get-gauge-ktable-entry-count {:ktable-id ktable-id
+                                             :topic     t})
+              (count entries))))
+
 (defn- start-background-ktable-measuring-worker
   "Starts a process that can measure the size of even enormous ktable values in the background, without interfering
   with the primary consumer.
@@ -2460,9 +2532,19 @@ Returns a subscription handle with which you can unsubscribe later.")
 
   (let [consumer-group-id (str  "ktable-" ktable-id "-"
                                 (UUID/randomUUID))
+        _ (prom/set (get-gauge-ktable-info {:ktable-id         ktable-id
+                                            :consumer-group-id consumer-group-id})
+                    1)
+        ;; monotonic clock for durations — the injected `clock` is wall-time and is
+        ;; only present when `retention-ms` is set, so we can't rely on it here.
+        start-nanos (System/nanoTime)
         caught-up-ch (csp/chan)
         has-caught-up-once (promise)
         _ (csp/go (csp/<! caught-up-ch)
+                  (prom/set (get-gauge-ktable-startup-duration-secs
+                             {:ktable-id         ktable-id
+                              :consumer-group-id consumer-group-id})
+                            (/ (double (- (System/nanoTime) start-nanos)) 1e9))
                   (deliver has-caught-up-once true)
                   (csp/close! caught-up-ch))
 
@@ -2483,16 +2565,19 @@ Returns a subscription handle with which you can unsubscribe later.")
                                                               (when-not caught-up-once?
                                                                 caught-up-ch)]))
         ktable-initial-value (or (when ktable-checkpoint-storage
-                                   (-ktable-checkpoints/retrieve-latest-checkpoint ktable-checkpoint-storage
-                                                                                   ktable-id))
+                                   (prom/with-duration (get-summary-ktable-checkpoint-retrieve-secs
+                                                        {:ktable-id ktable-id})
+                                     (-ktable-checkpoints/retrieve-latest-checkpoint ktable-checkpoint-storage
+                                                                                     ktable-id)))
                                  {})
         ktable-state (atom ktable-initial-value)
+        _ (publish-ktable-entry-counts! ktable-id ktable-initial-value)
 
         merge-updates-opts (cond-> {}
                              retention-ms (assoc :retention-ms retention-ms))
 
 
-        ;; on the advice of the memory-meter library authors, we are doing it
+        ;; On the advice of the memory-meter library authors, we are measuring the size of the full ktable value
         ;; but not very frequently. So we are measuring "representation-size" of every topic-partition
         ;; shard of data in the ktable, once every minute.
         maybe-log-ktable-size! (start-background-ktable-measuring-worker {:consumer-group-id consumer-group-id})
@@ -2518,6 +2603,11 @@ Returns a subscription handle with which you can unsubscribe later.")
                                           (swap! ktable-state
                                                  #(merge-updates-with-ktable % msgs merge-updates-opts))]
                                       (maybe-log-ktable-size! latest-ktable-value)
+                                      (publish-ktable-entry-counts! ktable-id latest-ktable-value)
+                                      (doseq [[t cnt] (frequencies (map :topic msgs))]
+                                        (prom/inc (get-counter-ktable-updates {:ktable-id ktable-id
+                                                                               :topic     t})
+                                                  cnt))
                                       (when ktable-checkpoint-storage
                                         ;; This `register-ktable-value` is called after _every_ update to the ktable value.
                                         ;; We are depending on the implementation to store only a subset of registered ktable values.
@@ -2539,13 +2629,38 @@ Returns a subscription handle with which you can unsubscribe later.")
 
                         :else nil)
 
+        seeded-topic-partition-meta-data? (atom false)
+
         cfg (-> cfg
-                (update-in [:strategies] concat (remove nil?
-                                                        [(OffsetReset "earliest")
-                                                         (ConsumerGroup consumer-group-id)
-                                                         (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
-                                                         caught-up-notifications-strategy
-                                                         seek-strategy]))
+                (update-in [:strategies] concat
+                           (remove nil?
+                                   [(OffsetReset "earliest")
+                                    (ConsumerGroup consumer-group-id)
+                                    (when caught-up-once? (CaughtUpOnceNotifications caught-up-ch))
+                                    caught-up-notifications-strategy
+                                    seek-strategy
+                                    (reify
+                                      IPostConsumeHook
+                                      (post-consume-hook [_ consumer _consumed-records]
+                                        ;; this seeds the ktable value's meta-data with "fake" topic-partition offset values (-1)
+                                        ;; so that later when we are in `ktable-atom-wait-for-catchup` we know which topics we are
+                                        ;; subscribed to, so we can wait effectively even on topics that are empty.
+                                        (when-not @seeded-topic-partition-meta-data?
+                                          (let [assignment (.assignment consumer)]
+                                            ;; the assignment might still be empty on the first (few) invocations
+                                            (when (seq assignment)
+                                              (swap! ktable-state
+                                                     (fn [ktable-state-value]
+                                                       (vary-meta ktable-state-value
+                                                                  (fn [old-meta-data]
+                                                                    (reduce (fn [acc tp]
+                                                                              (update-in acc [:ktable/topic-partition-offsets
+                                                                                              (.topic ^TopicPartition tp)
+                                                                                              (.partition ^TopicPartition tp)]
+                                                                                         (fnil identity -1)))
+                                                                            old-meta-data
+                                                                            assignment)))))
+                                              (reset! seeded-topic-partition-meta-data? true))))))]))
                 (assoc :consumer/client consumer-client))
 
         consumer (make-consumer cfg)]
@@ -2555,6 +2670,15 @@ Returns a subscription handle with which you can unsubscribe later.")
       (halt [_]
         (maybe-log-ktable-size!) ;; will stop the measurement worker
         (csp/close! ktable-update-msgs-ch)
+        ;; remove this copy's per-copy gauge children so a stopped copy leaves Prometheus cleanly
+        ;; (the ::ktable-updates counter is cumulative and intentionally left in place)
+        ;; The entry-count loop below is paired with `publish-ktable-entry-counts!`: nothing ever
+        ;; dissocs a topic key from the ktable value, so every topic we published -- including the
+        ;; ones published at init from the checkpoint -- is still a key here.
+        (remove-gauge-ktable-info {:ktable-id ktable-id :consumer-group-id consumer-group-id})
+        (remove-gauge-ktable-startup-duration-secs {:ktable-id ktable-id :consumer-group-id consumer-group-id})
+        (doseq [t (keys @ktable-state)]
+          (remove-gauge-ktable-entry-count {:ktable-id ktable-id :topic t}))
         (-comp/halt consumer))
 
       IKTable
@@ -2689,8 +2813,8 @@ Returns a subscription handle with which you can unsubscribe later.")
   (let [transformer-actual (cond
                              literal-fn
                              (do
-                               (warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
-                                          literal-fn))
+                               (log/warn (str "The " ::consumed-result-forwarder " component is using eval to create a transformer: "
+                                              literal-fn))
                                (eval literal-fn)))]
     (reify
       IConsumedResultsHandler

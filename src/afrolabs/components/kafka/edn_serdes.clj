@@ -80,6 +80,8 @@
 
 (comment
 
+  ;; this is important...
+  (set! *compile-path* "target/classes")
   (compile 'afrolabs.components.kafka.edn-serdes)
 
 
