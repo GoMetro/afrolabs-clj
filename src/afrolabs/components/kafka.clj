@@ -267,8 +267,12 @@
 
 (defprotocol IConsumerPostInitHook
   "A strategy protocol for the kafka consumer object. This is called after IConsumerInitHook (after subscription) but
-  before the first .poll. Useful for getting info about partitions or topics before consumption starts."
-  (post-init-hook [this consumer] "Receives the consumer before the first call to .poll."))
+  before the consumer loop's first .poll. Useful for getting info about partitions or topics before consumption starts.
+
+  Records returned by any .poll made inside the hook never reach the consumer client. A hook that polls to obtain an
+  assignment must seek every assigned partition afterwards (see `poll-until-assigned!`), or those records are skipped.
+  To seek on (re)assignment, prefer `IConsumerAwareRebalanceListener/on-partitions-assigned`, which needs no poll here."
+  (post-init-hook [this consumer] "Receives the consumer before the consumer loop's first call to .poll."))
 
 (defprotocol IPostConsumeHook
   "A Strategy protocol for getting access to the Consumer Object and the consumed records, after the consume logic has
@@ -808,28 +812,47 @@
                      ^java.util.regex.Pattern regex
                      ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
+(defn poll-until-assigned!
+  "Poll `consumer` until it holds a partition assignment or `timeout` elapses.
+
+  Return the assignment; empty on timeout. The poll that produces the assignment
+  may also return records, which are discarded: the caller must seek every
+  partition in the returned assignment, or those records are skipped."
+  [^Consumer consumer ^java.time.Duration timeout]
+  (let [deadline (+ (System/nanoTime) (.toNanos timeout))]
+    (loop []
+      (let [assignment (.assignment consumer)]
+        (if (or (seq assignment)
+                (not (pos? (- deadline (System/nanoTime)))))
+          assignment
+          (do
+            (log/debug "Polling for topic-partition assignment, before seeking.")
+            (.poll consumer ^java.time.Duration (t/duration 1000 :millis))
+            (recur)))))))
+
 (defstrategy SeekToPartitionOffset
+  "Seek the listed partitions to the given offsets once assigned.
+
+  `topic-partition-offsets` is {topic {partition offset}}. Assigned partitions
+  not listed keep their position after the assignment poll, so records that poll
+  returned for them are skipped.
+
+  Throws from the post-init hook if no assignment arrives within 60 seconds."
   [topic-partition-offsets]
   (reify
     IConsumerPostInitHook
     (post-init-hook
         [_ consumer]
-      (let [assignment
-            (loop []
-              (let [assignment (.assignment ^KafkaConsumer consumer)]
-                (if (seq assignment)
-                  assignment
-                  (do
-                    (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                    (.poll ^Consumer consumer
-                           ^java.time.Duration (t/duration 5000 :millis))
-                    (recur)))))]
+      (let [timeout    (t/duration 60 :seconds)
+            assignment (poll-until-assigned! consumer timeout)]
+        (when-not (seq assignment)
+          (throw (ex-info "SeekToPartitionOffset Cannot find topic assignment to seek to" {:timeout timeout})))
         (doseq [[topic partition] (map (fn [topic-partition]
                                          [(.topic ^TopicPartition topic-partition)
                                           (.partition ^TopicPartition topic-partition)])
                                        assignment)]
           (when-let [offset (get-in topic-partition-offsets [topic partition])]
-            (.seek ^KafkaConsumer consumer
+            (.seek ^Consumer consumer
                    (TopicPartition. topic partition)
                    ^long offset)))))))
 
@@ -856,32 +879,32 @@
     (t/to-millis-from-epoch x)))
 
 (defstrategy SeekToTimestampOffset
+  "Seek every assigned partition to its first record at or after `offset`.
+
+  `offset` is an instant: epoch millis, an ISO-8601 string, an Instant or a
+  ZonedDateTime. A partition with no such record is not seeked: it keeps its
+  position after the assignment poll, so records that poll returned for it are
+  skipped and the rest of its (older) records are consumed.
+
+  Throws from the post-init hook if no assignment arrives within 10 seconds."
   [offset]
   (let [offset (->millis-from-epoch offset)]
     (reify
       IConsumerPostInitHook
       (post-init-hook
           [_ consumer]
-        (let [assignment
-              (loop [remaining 2]
-                (when (zero? remaining)
-                  (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:remaining remaining})))
-                (let [assignment (.assignment ^KafkaConsumer consumer)]
-                  (if (seq assignment)
-                    assignment
-                    (do
-                      (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                      (.poll ^Consumer consumer
-                             ^java.time.Duration (t/duration 5000 :millis))
-                      (recur (dec remaining))))))]
+        (let [timeout    (t/duration 10 :seconds)
+              assignment (poll-until-assigned! consumer timeout)]
+          (when-not (seq assignment)
+            (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:timeout timeout})))
           (doseq [[^TopicPartition topic-partition
                    ^OffsetAndTimestamp offset-and-timestamp]
-                  (.offsetsForTimes ^KafkaConsumer consumer
+                  (.offsetsForTimes ^Consumer consumer
                                     (into {}
                                           (map #(vector % offset))
                                           assignment))]
             (when offset-and-timestamp
-              (.seek ^KafkaConsumer consumer
+              (.seek ^Consumer consumer
                      topic-partition
                      (.offset offset-and-timestamp)))))))))
 
@@ -2233,34 +2256,45 @@
   )
 
 (defn ktable-checkpoint-seek-strategy
-  "Implements a kafka strategy specifically for seeking to partition-offsets
-  so that the ktable can resume from a checkpoint."
+  "Return a strategy that resumes a ktable consumer from `checkpoint-value`.
+
+  Once assigned, every partition is seeked: to the offset after its checkpoint
+  offset, or to the beginning when the checkpoint has none (absent or the -1
+  sentinel). If no assignment arrives within the timeout, nothing is seeked and
+  the ktable loads from the reset position instead."
   [checkpoint-value]
   (let [topic-partition-offsets (-> checkpoint-value
                                     (meta)
-                                    :ktable/topic-partition-offsets)]
+                                    :ktable/topic-partition-offsets)
+        timeout                 (t/duration 60 :seconds)]
     (reify
       IConsumerPostInitHook
       (post-init-hook [_ consumer]
-        ;; poll once, to achieve a topic-partition assignment
-        ;; This _is_ a ktable, so the assumption is that this is for _all_ partitions...
-        (.poll ^Consumer consumer
-               ^java.time.Duration (t/duration 1000 :millis))
-        (doseq [^TopicPartition tp (.assignment ^Consumer consumer)
-                :let [t                     (.topic tp)
-                      p                     (.partition tp)
-                      offset-to-resume-from (get-in topic-partition-offsets [t p])]
-                :when (and offset-to-resume-from
-                           ;; there are cases where this offset might be seeded with a sentinal value of -1
-                           (<= 0 offset-to-resume-from))]
-          (log/with-context+ {:topic     t
-                              :partition p
-                              :offset    offset-to-resume-from}
-            (log/info "KTable checkpoint loading is resuming ktable consumption from offset."))
-          (.seek ^Consumer consumer
-                 tp
-                 ;; we seek to at least one higher offset than what we are aware of, so we can start resuming from the new data
-                 (inc offset-to-resume-from)))))))
+        (let [assignment (poll-until-assigned! consumer timeout)
+              {checkpointed true
+               unseeded     false}
+              (group-by (fn [^TopicPartition tp]
+                          (let [offset (get-in topic-partition-offsets [(.topic tp) (.partition tp)])]
+                            (boolean (and offset (<= 0 offset)))))
+                        assignment)]
+          (when-not (seq assignment)
+            (log/with-context+ {:timeout timeout}
+              (log/warn "KTable checkpoint not applied: no partition assignment within timeout.")))
+          (doseq [^TopicPartition tp checkpointed
+                  :let [t                     (.topic tp)
+                        p                     (.partition tp)
+                        offset-to-resume-from (get-in topic-partition-offsets [t p])]]
+            (log/with-context+ {:topic     t
+                                :partition p
+                                :offset    offset-to-resume-from}
+              (log/info "KTable checkpoint loading is resuming ktable consumption from offset."))
+            (.seek ^Consumer consumer
+                   tp
+                   ^long (inc offset-to-resume-from)))
+          (when (seq unseeded)
+            (log/with-context+ {:topic-partitions (mapv str unseeded)}
+              (log/info "KTable checkpoint has no offset for partitions; consuming them from the beginning."))
+            (.seekToBeginning ^Consumer consumer ^Collection unseeded)))))))
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))
