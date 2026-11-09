@@ -159,7 +159,8 @@ With `:update-topics-with-bad-config` true, initialisation throws if the
 brokers reject a config change.
 
 Values compare as strings. A value the broker reports in another form,
-e.g. a ratio written as `0.20`, is reported as different on every start.
+e.g. `"0.20"` set on the broker and `0.2` in `:topic-config`, is reported
+as different on every start.
 
 Replication factor is always the cluster default.
 
