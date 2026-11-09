@@ -2,7 +2,8 @@
   (:require [afrolabs.components.kafka :as -kafka]
             [afrolabs.components.kafka.consumer-registry :as sut]
             [clojure.core.async :as csp]
-            [clojure.test :refer [deftest is testing]])
+            [clojure.test :refer [deftest is testing]]
+            [java-time.api :as t])
   (:import [org.apache.kafka.clients.consumer ConsumerGroupMetadata]
            [org.apache.kafka.common TopicPartition]))
 
@@ -11,6 +12,7 @@
 (def ^:private ownership->records #'sut/ownership->records)
 (def ^:private retry-delay-ms #'sut/retry-delay-ms)
 (def ^:private publish-snapshot! #'sut/publish-snapshot!)
+(def ^:private live-advertisements #'sut/live-advertisements)
 
 (defn- tps [& tp-pairs]
   (map (fn [[t p]] (TopicPartition. t (int p))) tp-pairs))
@@ -52,10 +54,12 @@
         (csp/put! delivered-ch (result msg))))
     (get-producer [_] nil)))
 
-(defn- registry [ownership producer]
+(defn- registry
+  [ownership make-producer]
   {:fence          (Object.)
    :ownership      (atom ownership)
-   :producer       (delay producer)
+   :producer       (atom nil)
+   :make-producer  make-producer
    :registry-topic "registry"
    :advertisement  {:url "http://x" :process-id 1}})
 
@@ -65,22 +69,45 @@
 
     (testing "all acknowledged"
       (let [sent (atom [])]
-        (is (true? (publish-snapshot! (registry o (fake-producer sent identity)))))
+        (is (true? (publish-snapshot! (registry o (constantly (fake-producer sent identity))))))
         (is (= #{["g" "t" 0] ["g" "t" 1]} (set (map :key @sent))))))
 
     (testing "one failed delivery fails the publish"
       (let [sent (atom [])
             p    (fake-producer sent #(if (= ["g" "t" 1] (:key %)) (ex-info "nope" {}) %))]
-        (is (false? (publish-snapshot! (registry o p))))))
+        (is (false? (publish-snapshot! (registry o (constantly p)))))))
 
     (testing "a throwing send fails the publish and releases the fence"
-      (let [r (registry o (reify -kafka/IProducer
-                            (produce! [_ _] (throw (ex-info "max.block.ms" {})))
-                            (get-producer [_] nil)))]
+      (let [r (registry o (constantly (reify -kafka/IProducer
+                                        (produce! [_ _] (throw (ex-info "max.block.ms" {})))
+                                        (get-producer [_] nil))))]
         (is (false? (publish-snapshot! r)))
         (is (true? (deref (future (locking (:fence r) true)) 1000 :blocked)))))
 
     (testing "empty ownership succeeds without creating a producer"
-      (let [r (registry {} nil)]
+      (let [r (registry {} #(throw (ex-info "must not create a producer" {})))]
         (is (true? (publish-snapshot! r)))
-        (is (not (realized? (:producer r))))))))
+        (is (nil? @(:producer r)))))
+
+    (testing "a failed producer creation is retried on the next publish"
+      (let [sent     (atom [])
+            attempts (atom 0)
+            r        (registry o (fn []
+                                   (when (= 1 (swap! attempts inc))
+                                     (throw (ex-info "no resolvable bootstrap urls" {})))
+                                   (fake-producer sent identity)))]
+        (is (false? (publish-snapshot! r)))
+        (is (nil? @(:producer r)))
+        (is (true? (publish-snapshot! r)))
+        (is (= 2 @attempts))
+        (is (= 2 (count @sent)))))))
+
+(deftest live-advertisements-drop-entries-older-than-retention
+  (let [now   (t/instant "2026-11-09T12:00:00Z")
+        at    (fn [m minutes-ago] (with-meta m {:timestamp (t/- now (t/minutes minutes-ago))}))
+        ads   {["g" "t" 0] (at {:url "fresh"} 10)
+               ["g" "t" 1] (at {:url "edge"} 90)
+               ["g" "t" 2] (at {:url "stale"} 91)
+               ["g" "t" 3] {:url "no-timestamp"}}]
+    (is (= #{["g" "t" 0] ["g" "t" 1] ["g" "t" 3]}
+           (set (keys (live-advertisements now ads)))))))

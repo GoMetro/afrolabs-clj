@@ -9,15 +9,17 @@
 
   Advertisements are never tombstoned. A new owner overwrites its
   predecessor. Each process republishes its whole ownership every 50-60
-  minutes; readers keep 90 minutes, so an entry not refreshed in that window
-  belongs to a process that is gone.
+  minutes; readers drop entries older than 90 minutes, so an entry not
+  refreshed in that window belongs to a process that is gone.
 
   Handover fence: sends and ownership changes share one lock, and the revoke
-  callback flushes the producer. Every record a process sent for a partition
-  is therefore written before the partition's next owner is assigned.
+  and lost callbacks flush the producer. Every record a process sent for a
+  partition is therefore written before the partition's next owner is
+  assigned.
 
-  Deref returns {[consumer-group-id topic partition] advertisement}, blocking
-  until the ktable has caught up once."
+  Init blocks until the ktable has caught up once. Deref returns
+  {[consumer-group-id topic partition] advertisement}, without entries older
+  than 90 minutes."
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.health :as -health]
             [afrolabs.components.kafka :as -kafka]
@@ -27,6 +29,7 @@
             [clojure.set :as set]
             [clojure.spec.alpha :as s]
             [iapetos.core :as prom]
+            [java-time.api :as t]
             [taoensso.timbre :as log])
   (:import [afrolabs.components IHaltable]
            [clojure.lang IDeref]
@@ -36,6 +39,7 @@
 
 (def ^:private registry-retention-ms (* 90 60 1000))
 (def ^:private registry-segment-ms (* 60 60 1000))
+(def ^:private registry-topic-retention-ms (* 24 60 60 1000))
 
 (def ^:private producer-config
   ["acks"                "all"
@@ -96,6 +100,17 @@
                    :member-id  member-id
                    :generation generation)}))
 
+(defn- live-advertisements
+  "Return `advertisements` without entries whose record timestamp is more than
+  `registry-retention-ms` before `now`. Entries without a timestamp are kept."
+  [now advertisements]
+  (let [cutoff (t/- now (t/millis registry-retention-ms))]
+    (into {}
+          (remove (fn [[_ v]]
+                    (when-let [ts (:timestamp (meta v))]
+                      (t/before? ts cutoff))))
+          advertisements)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; publishing
 
@@ -108,18 +123,26 @@
   [failures]
   (min 60000 (* 5000 failures)))
 
+(defn- ensure-producer!
+  "Return the registry's producer, creating it on first use. A failed creation
+  is not cached; the next call tries again."
+  [{:keys [producer make-producer]}]
+  (or @producer
+      (reset! producer (make-producer))))
+
 (defn- publish-snapshot!
   "Send one record per owned partition and wait for every acknowledgement.
 
   The snapshot and its sends happen under the fence lock. Return true iff
-  every record was acknowledged; an empty snapshot is a success."
-  [{:keys [fence ownership producer registry-topic advertisement]}]
+  every record was acknowledged; an empty snapshot is a success and creates
+  no producer."
+  [{:keys [fence ownership registry-topic advertisement] :as registry}]
   (try
     (let [msgs     (locking fence
                      (let [msgs (mapv #(assoc % :delivered-ch (csp/promise-chan))
                                       (ownership->records registry-topic advertisement @ownership))]
                        (when (seq msgs)
-                         (-kafka/produce! @producer msgs))
+                         (-kafka/produce! (ensure-producer! registry) msgs))
                        msgs))
           failures
           (->> msgs
@@ -183,7 +206,8 @@
                                                                          (get-topic-names [_] [registry-topic]))]
                                        :nr-of-partitions              1
                                        :ktable-compaction-policy      "compact,delete"
-                                       :ktable-segment-ms             registry-segment-ms
+                                       :topic-config                  {"retention.ms" registry-topic-retention-ms
+                                                                       "segment.ms"   registry-segment-ms}
                                        :update-topics-with-bad-config true})
       (finally
         (when-not admin-client
@@ -206,28 +230,29 @@
 
 (defn- flush-producer!
   [producer]
-  (when (realized? producer)
-    (try (.flush ^Producer (-kafka/get-producer @producer))
+  (when-let [p @producer]
+    (try (.flush ^Producer (-kafka/get-producer p))
          (catch Throwable t
-           (log/warn t "Consumer registry producer flush failed during revoke.")))))
+           (log/warn t "Consumer registry producer flush failed during handover.")))))
 
 (-comp/defcomponent {::-comp/config-spec ::registry-cfg
                      ::-comp/ig-kw       ::component}
   [{:as   cfg
-    :keys [bootstrap-server registry-topic advertised-url]}]
+    :keys [bootstrap-server registry-topic advertised-url clock]}]
   (let [cfg        (update cfg :strategies #(or % []))
         process-id (random-uuid)
         _          (assert-registry-topic! cfg)
         ktable     (make-registry-ktable cfg)
+        _          @ktable
         registry   {:fence          (Object.)
                     :ownership      (atom {})
-                    :producer       (delay
-                                      (-kafka/make-producer
-                                       {:bootstrap-server bootstrap-server
-                                        :strategies       (concat (:strategies cfg)
-                                                                  [(-kafka/EdnSerializer :producer :both)
-                                                                   (-kafka/ClientId (str "consumer-registry-" process-id))
-                                                                   (apply -kafka/AdhocConfig producer-config)])}))
+                    :producer       (atom nil)
+                    :make-producer  #(-kafka/make-producer
+                                      {:bootstrap-server bootstrap-server
+                                       :strategies       (concat (:strategies cfg)
+                                                                 [(-kafka/EdnSerializer :producer :both)
+                                                                  (-kafka/ClientId (str "consumer-registry-" process-id))
+                                                                  (apply -kafka/AdhocConfig producer-config)])})
                     :registry-topic registry-topic
                     :advertisement  {:url        advertised-url
                                      :process-id process-id}
@@ -258,16 +283,18 @@
       (on-partitions-lost [_ consumer partitions]
         (locking fence
           (swap! ownership disown consumer partitions))
-        (csp/put! changed-ch true))
+        (csp/put! changed-ch true)
+        (flush-producer! producer))
 
       IDeref
       (deref [_]
-        (get @ktable registry-topic {}))
+        (live-advertisements (-time/get-current-instant clock)
+                             (get @ktable registry-topic {})))
 
       IHaltable
       (halt [_]
         (csp/close! stop-ch)
         (csp/<!! publish-loop)
         (-comp/halt ktable)
-        (when (realized? producer)
-          (-comp/halt @producer))))))
+        (when-let [p @producer]
+          (-comp/halt p))))))

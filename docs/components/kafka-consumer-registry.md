@@ -31,10 +31,12 @@ consumers.
 
 A partition's entry names its most recent owner. Entries are not removed
 when a partition is revoked or a process stops; they are replaced by the
-next owner, or disappear after 90 minutes without a refresh.
+next owner, or disappear 90 minutes after their last refresh.
 
 The registry topic is created on start. An existing topic with a different
 configuration is updated.
+
+Initialisation blocks until the registry has loaded.
 
 ## CONFIGURATION
 
@@ -73,8 +75,8 @@ Optional:
 ;=> {[consumer-group-id topic partition] advertisement}
 ```
 
-Return the advertisements of all processes. Block until the registry has
-loaded.
+Return the advertisements refreshed within the last 90 minutes. Does not
+block.
 
 advertisement:
 
@@ -166,10 +168,12 @@ An entry may name a process that no longer owns the partition: the new
 owner's advertisement may not be loaded yet, or the old process may have
 stopped without a successor.
 
-A partition revoke may take up to 10 seconds longer while pending
+A partition revoke or loss may take up to 40 seconds longer while pending
 advertisements are written.
 
 ## SEE ALSO
 
 `afrolabs.components.kafka` — `SubscribeWithTopicsCollection`,
 `SubscribeWithTopicNameProvider`, `IConsumerAwareRebalanceListener`.
+
+[kafka-topic-asserters](kafka-topic-asserters.md)
