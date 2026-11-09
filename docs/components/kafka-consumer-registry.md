@@ -27,11 +27,14 @@ returns the advertisements of every process sharing the registry topic.
 
 Register a consumer by passing the component in its subscribe strategy's
 `:consumer-rebalance-listeners`. One registry serves any number of
-consumers.
+consumers. Registered consumers must not set `group.instance.id`.
 
 A partition's entry names its most recent owner. Entries are not removed
 when a partition is revoked or a process stops; they are replaced by the
 next owner, or disappear 90 minutes after their last refresh.
+
+An entry overwritten by a former owner is rewritten by the current owner as
+soon as the current owner reads it.
 
 The registry topic is created on start. An existing topic with a different
 configuration is updated.
@@ -94,6 +97,11 @@ advertisement:
 
 `::last-publish-success`
 : Gauge. Epoch seconds of the last successful publish.
+
+`::corrections{outcome}`
+: Counter. Owned entries found overwritten by another process. `outcome`
+  is `corrected` (rewritten) or `deferred` (the other process has a newer
+  group generation; this consumer has likely been removed from its group).
 
 ## EXAMPLES
 
@@ -165,11 +173,15 @@ advertisement:
 ## CAVEATS
 
 An entry may name a process that no longer owns the partition: the new
-owner's advertisement may not be loaded yet, or the old process may have
+owner's advertisement may not be loaded yet, a former owner may have
+overwritten it and not yet been corrected, or the old process may have
 stopped without a successor.
 
-A partition revoke or loss may take up to 40 seconds longer while pending
+A partition revoke may take up to 40 seconds longer while pending
 advertisements are written.
+
+A registered consumer with static group membership (`group.instance.id`)
+throws on its first partition assignment; its service becomes unhealthy.
 
 ## SEE ALSO
 

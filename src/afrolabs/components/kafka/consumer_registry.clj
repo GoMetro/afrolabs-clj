@@ -13,9 +13,16 @@
   refreshed in that window belongs to a process that is gone.
 
   Handover fence: sends and ownership changes share one lock, and the revoke
-  and lost callbacks flush the producer. Every record a process sent for a
-  partition is therefore written before the partition's next owner is
+  callback flushes the producer. On a revoke, every record a process sent for
+  a partition is therefore written before the partition's next owner is
   assigned.
+
+  Self-healing: a lost partition or a zombie can still write after the new
+  owner. Each process watches the registry and republishes when an entry it
+  owns was overwritten after its own acknowledged record by a writer of an
+  equal or older generation. A newer generation is deferred to. Two live
+  owners never share a generation, because static group membership is
+  refused.
 
   Init blocks until the ktable has caught up once. Deref returns
   {[consumer-group-id topic partition] advertisement}, without entries older
@@ -40,6 +47,7 @@
 (def ^:private registry-retention-ms (* 90 60 1000))
 (def ^:private registry-segment-ms (* 60 60 1000))
 (def ^:private registry-topic-retention-ms (* 24 60 60 1000))
+(def ^:private catch-up-timeout-ms 10000)
 
 (def ^:private producer-config
   ["acks"                "all"
@@ -59,6 +67,10 @@
 
 (-prom/register-metric (prom/gauge ::last-publish-success
                                    {:description "Epoch seconds of the last successful publish."}))
+
+(-prom/register-metric (prom/counter ::corrections
+                                     {:description "Owned registry entries found overwritten by another writer, by outcome."
+                                      :labels      [:outcome]}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ownership
@@ -100,6 +112,33 @@
                    :member-id  member-id
                    :generation generation)}))
 
+(defn- corrections
+  "Return {:correct [key ...] :defer [key ...]} for owned keys whose entry
+  differs from what this process would write, and was written after this
+  process's last acknowledged record for the key.
+
+  A differing entry with a higher generation is deferred to; any other is to
+  be corrected. `expected` is {key value} of the records this process would
+  write now, `acked` is {key offset}, `entries` is the registry ktable value."
+  [expected acked entries]
+  (reduce-kv (fn [acc k want]
+               (let [e            (get entries k)
+                     acked-offset (get acked k)
+                     offset       (:offset (meta e))]
+                 (cond
+                   (or (nil? acked-offset) (nil? e) (nil? offset)
+                       (<= offset acked-offset) (= want e))
+                   acc
+
+                   (let [g (:generation e)]
+                     (and (number? g) (> g (:generation want))))
+                   (update acc :defer conj k)
+
+                   :else
+                   (update acc :correct conj k))))
+             {:correct [] :defer []}
+             expected))
+
 (defn- live-advertisements
   "Return `advertisements` without entries whose record timestamp is more than
   `registry-retention-ms` before `now`. Entries without a timestamp are kept."
@@ -133,10 +172,11 @@
 (defn- publish-snapshot!
   "Send one record per owned partition and wait for every acknowledgement.
 
-  The snapshot and its sends happen under the fence lock. Return true iff
-  every record was acknowledged; an empty snapshot is a success and creates
-  no producer."
-  [{:keys [fence ownership registry-topic advertisement] :as registry}]
+  The snapshot and its sends happen under the fence lock. Set `acked` to the
+  offset of each acknowledged record, keeping only the snapshot's keys.
+  Return true iff every record was acknowledged; an empty snapshot is a
+  success and creates no producer."
+  [{:keys [fence ownership registry-topic advertisement acked] :as registry}]
   (try
     (let [msgs     (locking fence
                      (let [msgs (mapv #(assoc % :delivered-ch (csp/promise-chan))
@@ -144,13 +184,18 @@
                        (when (seq msgs)
                          (-kafka/produce! (ensure-producer! registry) msgs))
                        msgs))
-          failures
-          (->> msgs
-               (map (fn [{:keys [delivered-ch key]}]
-                      [key (csp/<!! delivered-ch)]))
-               (filter (fn [[_ r]]
-                           (or (nil? r)
-                               (instance? Throwable r)))))]
+          results  (mapv (fn [{:keys [delivered-ch key]}]
+                           [key (csp/<!! delivered-ch)])
+                         msgs)
+          failures (filter (fn [[_ r]]
+                             (or (nil? r)
+                                 (instance? Throwable r)))
+                           results)]
+      (swap! acked #(into (select-keys % (map :key msgs))
+                          (keep (fn [[k r]]
+                                  (when-let [o (and (map? r) (:offset r))]
+                                    [k o])))
+                          results))
       (if (seq failures)
         (let [[k ex] (first failures)]
           (log/with-context+ {:failed-records (count failures)
@@ -180,6 +225,65 @@
           (let [failures (inc failures)]
             (prom/inc (get-counter-publish-attempts {:outcome "failed"}))
             (recur (retry-delay-ms failures) failures)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; self-healing
+
+(defn- heal!
+  "Wait until the ktable has applied `batch`, then request a publish if an
+  owned entry needs correcting. Log deferrals."
+  [{:keys [ktable registry-topic advertisement ownership acked changed-ch]} batch]
+  (try
+    (if (= ::timeout (-kafka/ktable-wait-for-catchup ktable
+                                                     (-kafka/msgs->topic-partition-maxoffsets batch)
+                                                     (t/millis catch-up-timeout-ms)
+                                                     ::timeout))
+      (log/warn "Consumer registry ktable did not catch up; skipping correction check.")
+      (let [expected                (into {}
+                                          (map (juxt :key :value))
+                                          (ownership->records registry-topic advertisement @ownership))
+            {:keys [correct defer]} (corrections expected @acked (get @ktable registry-topic {}))]
+        (when (seq defer)
+          (prom/inc (get-counter-corrections {:outcome "deferred"}) (count defer))
+          (log/with-context+ {:keys  (count defer)
+                              :key   (first defer)
+                              :entry (get-in @ktable [registry-topic (first defer)])}
+            (log/warn "Consumer registry entries for owned partitions name a newer generation; this consumer may have been removed from its group.")))
+        (when (seq correct)
+          (prom/inc (get-counter-corrections {:outcome "corrected"}) (count correct))
+          (log/with-context+ {:keys  (count correct)
+                              :key   (first correct)
+                              :entry (get-in @ktable [registry-topic (first correct)])}
+            (log/info "Consumer registry entries for owned partitions were overwritten; republishing."))
+          (csp/put! changed-ch true))))
+    (catch Throwable t
+      (log/warn t "Consumer registry correction check failed."))))
+
+(defn- start-heal-loop!
+  "Run `heal!` on every batch the registry ktable consumes.
+
+  Return {:subscription handle, :done channel}. `:done` closes when the loop
+  exits, after `stop-ch` closes."
+  [{:keys [ktable stop-ch] :as registry}]
+  (let [batches      (csp/chan)
+        subscription (-kafka/ktable-subscribe ktable {:receiving-ch batches})]
+    {:subscription subscription
+     :done         (csp/go-loop []
+                     (let [[batch ch] (csp/alts! [stop-ch batches] :priority true)]
+                       (when (and (not= ch stop-ch) batch)
+                         (csp/<! (csp/io-thread (heal! registry batch)))
+                         (recur))))}))
+
+(defn- refuse-static-membership!
+  "Throw if `group-metadata` has a group instance id.
+
+  Static members can share a generation with the instance they replace, so
+  neither could win a correction."
+  [^ConsumerGroupMetadata group-metadata]
+  (when-let [instance-id (.orElse (.groupInstanceId group-metadata) nil)]
+    (throw (ex-info "Consumer registry does not support static group membership (group.instance.id)."
+                    {:group-id          (.groupId group-metadata)
+                     :group-instance-id instance-id}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; component
@@ -245,7 +349,9 @@
         ktable     (make-registry-ktable cfg)
         _          @ktable
         registry   {:fence          (Object.)
+                    :ktable         ktable
                     :ownership      (atom {})
+                    :acked          (atom {})
                     :producer       (atom nil)
                     :make-producer  #(-kafka/make-producer
                                       {:bootstrap-server bootstrap-server
@@ -259,6 +365,7 @@
                     :changed-ch     (csp/chan (csp/sliding-buffer 1))
                     :stop-ch        (csp/chan)}
         {:keys [fence ownership producer changed-ch stop-ch]} registry
+        heal-loop     (start-heal-loop! registry)
         publish-loop  (start-publish-loop! registry)]
 
     (log/with-context+ {:registry-topic registry-topic
@@ -270,6 +377,7 @@
       -kafka/IConsumerAwareRebalanceListener
       (on-partitions-assigned [_ consumer partitions]
         (let [group-metadata (.groupMetadata ^Consumer consumer)]
+          (refuse-static-membership! group-metadata)
           (locking fence
             (swap! ownership assign consumer group-metadata partitions)))
         (csp/put! changed-ch true))
@@ -283,8 +391,7 @@
       (on-partitions-lost [_ consumer partitions]
         (locking fence
           (swap! ownership disown consumer partitions))
-        (csp/put! changed-ch true)
-        (flush-producer! producer))
+        (csp/put! changed-ch true))
 
       IDeref
       (deref [_]
@@ -295,6 +402,8 @@
       (halt [_]
         (csp/close! stop-ch)
         (csp/<!! publish-loop)
+        (csp/<!! (:done heal-loop))
+        (-kafka/ktable-unsubscribe ktable (:subscription heal-loop))
         (-comp/halt ktable)
         (when-let [p @producer]
           (-comp/halt p))))))

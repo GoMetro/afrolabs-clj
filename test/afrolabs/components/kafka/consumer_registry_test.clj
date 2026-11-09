@@ -13,12 +13,17 @@
 (def ^:private retry-delay-ms #'sut/retry-delay-ms)
 (def ^:private publish-snapshot! #'sut/publish-snapshot!)
 (def ^:private live-advertisements #'sut/live-advertisements)
+(def ^:private corrections #'sut/corrections)
+(def ^:private refuse-static-membership! #'sut/refuse-static-membership!)
 
 (defn- tps [& tp-pairs]
   (map (fn [[t p]] (TopicPartition. t (int p))) tp-pairs))
 
-(defn- group-metadata [group-id generation member-id]
-  (ConsumerGroupMetadata. group-id (int generation) member-id (java.util.Optional/empty)))
+(defn- group-metadata
+  ([group-id generation member-id]
+   (group-metadata group-id generation member-id nil))
+  ([group-id generation member-id instance-id]
+   (ConsumerGroupMetadata. group-id (int generation) member-id (java.util.Optional/ofNullable instance-id))))
 
 (deftest ownership-tracks-assignment-and-revocation
   (let [c  (Object.)
@@ -54,10 +59,17 @@
         (csp/put! delivered-ch (result msg))))
     (get-producer [_] nil)))
 
+(defn- with-offsets
+  "Return a delivery result fn that assigns increasing offsets from `start`."
+  [start]
+  (let [o (atom (dec start))]
+    #(assoc % :offset (swap! o inc))))
+
 (defn- registry
   [ownership make-producer]
   {:fence          (Object.)
    :ownership      (atom ownership)
+   :acked          (atom {})
    :producer       (atom nil)
    :make-producer  make-producer
    :registry-topic "registry"
@@ -100,7 +112,72 @@
         (is (nil? @(:producer r)))
         (is (true? (publish-snapshot! r)))
         (is (= 2 @attempts))
-        (is (= 2 (count @sent)))))))
+        (is (= 2 (count @sent)))))
+
+    (testing "acknowledged offsets are recorded, failed ones keep their previous offset"
+      (let [r (registry o (constantly (fake-producer (atom []) (with-offsets 10))))]
+        (is (true? (publish-snapshot! r)))
+        (is (= #{["g" "t" 0] ["g" "t" 1]} (set (keys @(:acked r)))))
+        (is (= #{10 11} (set (vals @(:acked r)))))
+        (let [before @(:acked r)]
+          (reset! (:producer r) (fake-producer (atom []) #(if (= ["g" "t" 1] (:key %))
+                                                            (ex-info "nope" {})
+                                                            (assoc % :offset 20))))
+          (is (false? (publish-snapshot! r)))
+          (is (= (assoc before ["g" "t" 0] 20) @(:acked r))))))
+
+    (testing "acknowledged offsets keep only the snapshot's keys"
+      (let [r (registry o (constantly (fake-producer (atom []) (with-offsets 0))))]
+        (publish-snapshot! r)
+        (swap! (:ownership r) disown c (tps ["t" 0]))
+        (publish-snapshot! r)
+        (is (= #{["g" "t" 1]} (set (keys @(:acked r)))))))))
+
+(deftest corrections-decide-per-owned-key
+  (let [k        ["g" "t" 0]
+        ours     {:url "http://x" :process-id 1 :member-id "m" :generation 5}
+        expected {k ours}
+        entry    (fn [v offset] {k (with-meta v {:offset offset})})
+        other    (fn [generation] {:url "http://y" :process-id 2 :member-id "n" :generation generation})
+        none     {:correct [] :defer []}]
+
+    (testing "nothing acknowledged yet"
+      (is (= none (corrections expected {} (entry (other 4) 7)))))
+
+    (testing "no entry, or an entry without an offset"
+      (is (= none (corrections expected {k 3} {})))
+      (is (= none (corrections expected {k 3} {k (other 4)}))))
+
+    (testing "the ktable has not read our write yet"
+      (is (= none (corrections expected {k 7} (entry (other 4) 7))))
+      (is (= none (corrections expected {k 7} (entry (other 4) 6)))))
+
+    (testing "the entry is ours"
+      (is (= none (corrections expected {k 3} (entry ours 7)))))
+
+    (testing "an older or equal generation written after us is corrected"
+      (is (= {:correct [k] :defer []} (corrections expected {k 3} (entry (other 4) 7))))
+      (is (= {:correct [k] :defer []} (corrections expected {k 3} (entry (other 5) 7)))))
+
+    (testing "our own record from an earlier ownership period is corrected"
+      (is (= {:correct [k] :defer []}
+             (corrections expected {k 3} (entry (assoc ours :generation 2) 7)))))
+
+    (testing "a newer generation is deferred to"
+      (is (= {:correct [] :defer [k]} (corrections expected {k 3} (entry (other 6) 7)))))
+
+    (testing "keys are decided independently"
+      (let [k2 ["g2" "t" 0]]
+        (is (= {:correct [k2] :defer [k]}
+               (corrections (assoc expected k2 (assoc ours :generation 1))
+                            {k 3 k2 3}
+                            (merge (entry (other 6) 7)
+                                   {k2 (with-meta (other 1) {:offset 8})}))))))))
+
+(deftest static-membership-is-refused
+  (is (nil? (refuse-static-membership! (group-metadata "g" 1 "m"))))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"static group membership"
+                        (refuse-static-membership! (group-metadata "g" 1 "m" "instance-0")))))
 
 (deftest live-advertisements-drop-entries-older-than-retention
   (let [now   (t/instant "2026-11-09T12:00:00Z")
