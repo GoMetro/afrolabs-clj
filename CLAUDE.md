@@ -147,6 +147,17 @@ Protocols use `:extend-via-metadata true` throughout, enabling lightweight exten
 - `afrolabs.spec`: `assert!` helper
 - `afrolabs.user`: REPL helpers (loaded automatically in dev)
 
+## Component Documentation
+
+When doing maintenance on a component, check whether it has a documentation page under `docs/components/**.md`. If it does not, suggest creating one.
+
+Component docs are written for clients of the component: someone wiring it into an Integrant config and using what it provides.
+
+- Man-page style: terse, formal, scannable. Sections from NAME, SYNOPSIS, DESCRIPTION, CONFIGURATION, the client-facing API (e.g. DEREF, protocols it implements), METRICS, EXAMPLES, CAVEATS, SEE ALSO, as applicable.
+- Document the contract: what to configure, how to wire it in, what it returns or does, and behaviour the client can observe.
+- Leave out implementation detail: internal mechanisms, settings the client cannot change, design rationale, internal components it uses, and anything not implemented yet. If an internal mechanism has an observable consequence, state only the consequence.
+- Examples must be realistic `config.edn` and REPL snippets using only real config keys.
+
 ## Kafka Serializers Require AOT
 
 The Kafka serializers (`json-serdes`, `edn-serdes`, `bytes-serdes`, `transit-serdes`, `nippy`, `schema-registry-compatible-serdes`) and `spicyrun.ninja.lambda.runtime` **must be AOT-compiled** to `.class` files. The `:deps/prep-lib` key in `deps.edn` ensures `compile-aot` runs when the library is used as a dependency.
