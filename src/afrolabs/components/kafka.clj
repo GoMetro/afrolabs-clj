@@ -953,12 +953,12 @@
     IUpdateConsumerConfigHook
     (update-consumer-cfg-hook
         [_ cfg]
-      (assoc cfg ProducerConfig/CLIENT_ID_CONFIG client-id))
+      (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))
 
     IUpdateProducerConfigHook
     (update-producer-cfg-hook
         [_ cfg]
-      (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))))
+      (assoc cfg ProducerConfig/CLIENT_ID_CONFIG client-id))))
 
 (defn consumer-end-offsets
   "Gets the (.endOffsets ...) of the consumer in nice data format.
