@@ -3,8 +3,11 @@
             [afrolabs.components.kafka.consumer-registry :as sut]
             [clojure.core.async :as csp]
             [clojure.test :refer [deftest is testing]]
-            [java-time.api :as t])
-  (:import [org.apache.kafka.clients.consumer ConsumerGroupMetadata]
+            [java-time.api :as t]
+            [org.httpkit.server :as httpkit]
+            [taoensso.nippy :as nippy])
+  (:import [java.io ByteArrayInputStream]
+           [org.apache.kafka.clients.consumer ConsumerGroupMetadata MockConsumer]
            [org.apache.kafka.common TopicPartition]))
 
 (def ^:private assign #'sut/assign)
@@ -15,6 +18,9 @@
 (def ^:private live-advertisements #'sut/live-advertisements)
 (def ^:private corrections #'sut/corrections)
 (def ^:private refuse-static-membership! #'sut/refuse-static-membership!)
+(def ^:private route-group-id #'sut/route-group-id)
+(def ^:private answer-query-request #'sut/answer-query-request)
+(def ^:private send-query! #'sut/send-query!)
 
 (defn- tps [& tp-pairs]
   (map (fn [[t p]] (TopicPartition. t (int p))) tp-pairs))
@@ -188,3 +194,164 @@
                ["g" "t" 3] {:url "no-timestamp"}}]
     (is (= #{["g" "t" 0] ["g" "t" 1] ["g" "t" 3]}
            (set (keys (live-advertisements now ads)))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; queries
+
+(defn- handler
+  [f]
+  (reify sut/IConsumerGroupQueryHandler
+    (handle-query [_ group-id query] (f group-id query))))
+
+(defn- query-ctx
+  "Return a query context with `handlers`, a seq of [group-id handler]."
+  [handlers]
+  {:query-path       "/q"
+   :query-token      "secret"
+   :query-timeout-ms 2000
+   :query-handlers   (atom (into {}
+                                 (map-indexed (fn [i [g h]] [i {:group-id g :handler h}]))
+                                 handlers))})
+
+(defn- query-request
+  [& {:keys [uri headers body]
+      :or   {uri     "/q/g"
+             headers {"authorization"                      "Bearer secret"
+                      "x-consumergroupquery-correlationid" "cid"}
+             body    (nippy/freeze {:find 1})}}]
+  {:request-method :post
+   :uri            uri
+   :headers        headers
+   :body           (some-> body ByteArrayInputStream.)})
+
+(deftest query-routes
+  (is (= "g" (route-group-id "/q" {:request-method :post :uri "/q/g"})))
+  (is (= "a group/x" (route-group-id "/q" {:request-method :post :uri "/q/a+group%2Fx"})))
+  (is (nil? (route-group-id "/q" {:request-method :get :uri "/q/g"})))
+  (is (nil? (route-group-id "/q" {:request-method :post :uri "/q/"})))
+  (is (nil? (route-group-id "/q" {:request-method :post :uri "/q/g/x"})))
+  (is (nil? (route-group-id "/q" {:request-method :post :uri "/qg"}))))
+
+(deftest answering-query-requests
+  (let [answers #(some-> % :body nippy/thaw)]
+
+    (testing "requests for another route pass through"
+      (is (nil? (answer-query-request (query-ctx []) (query-request :uri "/other")))))
+
+    (testing "authorization"
+      (is (= {:status 401 :body nil}
+             (answer-query-request (query-ctx []) (query-request :headers {"x-consumergroupquery-correlationid" "cid"}))))
+      (is (= {:status 401 :body nil}
+             (answer-query-request (query-ctx []) (query-request :headers {"authorization"                      "Bearer wrong"
+                                                                           "x-consumergroupquery-correlationid" "cid"})))))
+
+    (testing "a missing correlation id is rejected"
+      (is (= {:status 400 :body nil}
+             (answer-query-request (query-ctx []) (query-request :headers {"authorization" "Bearer secret"})))))
+
+    (testing "a body that is not nippy is rejected"
+      (is (= {:status 400 :body nil}
+             (answer-query-request (query-ctx [["g" (handler (constantly 1))]])
+                                   (query-request :body (.getBytes "{:find 1}")))))
+      (is (= {:status 400 :body nil}
+             (answer-query-request (query-ctx [["g" (handler (constantly 1))]])
+                                   (assoc (query-request) :body nil)))))
+
+    (testing "no handler for the group"
+      (is (= {:status 404 :body nil}
+             (answer-query-request (query-ctx [["other" (handler (constantly 1))]]) (query-request)))))
+
+    (testing "every handler returning nil"
+      (is (= {:status 404 :body nil}
+             (answer-query-request (query-ctx [["g" (handler (constantly nil))]]) (query-request)))))
+
+    (testing "every handler of the group receives the group id and query"
+      (let [r (answer-query-request (query-ctx [["g" (handler vector)]
+                                                ["g" (handler (constantly :second))]
+                                                ["other" (handler (constantly :other))]])
+                                    (query-request))]
+        (is (= 200 (:status r)))
+        (is (= #{["g" {:find 1}] :second} (set (answers r))))))
+
+    (testing "a throwing handler is left out"
+      (let [r (answer-query-request (query-ctx [["g" (handler (fn [_ _] (throw (ex-info "boom" {}))))]
+                                                ["g" (handler (constantly :ok))]])
+                                    (query-request))]
+        (is (= [:ok] (answers r)))))
+
+    (testing "only throwing handlers"
+      (is (= {:status 404 :body nil}
+             (answer-query-request (query-ctx [["g" (handler (fn [_ _] (throw (ex-info "boom" {}))))]])
+                                   (query-request)))))
+
+    (testing "handlers may extend the protocol via metadata"
+      (let [h (with-meta {} {`sut/handle-query (fn [_ _ _] :meta)})]
+        (is (= [:meta] (answers (answer-query-request (query-ctx [["g" h]]) (query-request)))))))))
+
+(defn- serve
+  "Start an http-kit server answering queries for `handlers`; return
+  [base-url stop-fn]."
+  [handlers]
+  (let [ctx (query-ctx handlers)
+        s   (httpkit/run-server #(or (answer-query-request ctx %) {:status 418})
+                                {:port 0 :ip "127.0.0.1" :legacy-return-value? false})]
+    [(str "http://127.0.0.1:" (httpkit/server-port s))
+     #(httpkit/server-stop! s)]))
+
+(defn- sender
+  [entries]
+  (assoc (query-ctx [])
+         :advertisements (constantly (into {}
+                                           (map-indexed (fn [i [g url]] [[g "t" i] {:url url}]))
+                                           entries))))
+
+(deftest sending-queries
+  (let [at              (t/instant "2026-11-10T12:00:00.123456789Z")
+        [a stop-a]      (serve [["g" (handler (fn [_ q] {:echo q :at at}))]])
+        [b stop-b]      (serve [["g" (handler (constantly nil))]])
+        [c stop-c]      (serve [["g" (handler (fn [_ _] (throw (ex-info "boom" {}))))]])
+        [slow stop-slow] (serve [["g" (handler (fn [_ _] (Thread/sleep 2000) :late))]])]
+    (try
+      (testing "answers from every process are collected; others are dropped"
+        (is (= [{:echo {:find 1} :at at}]
+               (send-query! (sender [["g" a] ["g" a] ["g" b] ["g" c] ["g" "http://127.0.0.1:1"] ["other" slow]])
+                            {:group-id "g" :query {:find 1}}))))
+
+      (testing "a trailing slash on the advertised url"
+        (is (= 1 (count (send-query! (sender [["g" (str a "/")]]) {:group-id "g" :query 1})))))
+
+      (testing "a group without advertisements"
+        (is (= [] (send-query! (sender [["other" a]]) {:group-id "g" :query 1}))))
+
+      (testing "a wrong token gets no answers"
+        (is (= [] (send-query! (assoc (sender [["g" a]]) :query-token "wrong")
+                               {:group-id "g" :query 1}))))
+
+      (testing "answers arriving after the timeout are dropped"
+        (let [start  (System/currentTimeMillis)
+              result (send-query! (sender [["g" slow] ["g" a]]) {:group-id "g" :query 1 :timeout-ms 300})]
+          (is (= [{:echo 1 :at at}] result))
+          (is (< (- (System/currentTimeMillis) start) 1500))))
+      (finally
+        (doseq [stop [stop-a stop-b stop-c stop-slow]] (stop))))))
+
+(deftest query-handler-strategy
+  (let [registered (atom {})
+        registry   (reify sut/IConsumerGroupQueries
+                     (register-query-handler! [_ group-id h]
+                       (swap! registered assoc :handle [group-id h])
+                       :handle)
+                     (deregister-query-handler! [_ handle]
+                       (swap! registered dissoc handle))
+                     (query [_ _] []))
+        h          (handler (constantly 1))
+        strategy   (sut/ConsumerRegistryQueryHandler registry h)
+        consumer   (MockConsumer. "earliest")]
+    (-kafka/post-init-hook strategy consumer)
+    (is (= {:handle ["dummy.group.id" h]} @registered))
+    (-kafka/shutdown-hook strategy consumer)
+    (is (= {} @registered))
+
+    (testing "construction checks its arguments"
+      (is (thrown? clojure.lang.ExceptionInfo (sut/ConsumerRegistryQueryHandler {} h)))
+      (is (thrown? clojure.lang.ExceptionInfo (sut/ConsumerRegistryQueryHandler registry {}))))))
