@@ -2,10 +2,11 @@
   (:require [afrolabs.components.kafka :as -kafka]
             [afrolabs.components.kafka.consumer-registry :as sut]
             [clojure.core.async :as csp]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [java-time.api :as t]
             [org.httpkit.server :as httpkit]
-            [taoensso.nippy :as nippy])
+            [taoensso.nippy :as nippy]
+            [taoensso.timbre :as log])
   (:import [java.io ByteArrayInputStream]
            [org.apache.kafka.clients.consumer ConsumerGroupMetadata MockConsumer]
            [org.apache.kafka.common TopicPartition]))
@@ -21,6 +22,17 @@
 (def ^:private route-group-id #'sut/route-group-id)
 (def ^:private answer-query-request #'sut/answer-query-request)
 (def ^:private send-query! #'sut/send-query!)
+
+(defn- quiet-logs
+  "Run `f` with logging below :fatal suppressed. Set at the root, not bound,
+  because http-kit logs from its own threads."
+  [f]
+  (let [config log/*config*]
+    (log/set-min-level! :fatal)
+    (try (f)
+         (finally (log/set-config! config)))))
+
+(use-fixtures :once quiet-logs)
 
 (defn- tps [& tp-pairs]
   (map (fn [[t p]] (TopicPartition. t (int p))) tp-pairs))
