@@ -157,6 +157,9 @@ Component docs are written for clients of the component: someone wiring it into 
 - Document the contract: what to configure, how to wire it in, what it returns or does, and behaviour the client can observe.
 - Leave out implementation detail: internal mechanisms, settings the client cannot change, design rationale, internal components it uses, and anything not implemented yet. If an internal mechanism has an observable consequence, state only the consequence.
 - Examples must be realistic `config.edn` and REPL snippets using only real config keys.
+- Test every sentence: would a client change their config or code because of it? If not, it does not go in the component doc.
+- Findings from investigations, correctness arguments and invariants go in source docstrings, never in component docs.
+- A key appearing in a component's output is not a reason to explain how it is produced.
 
 ## Kafka Serializers Require AOT
 

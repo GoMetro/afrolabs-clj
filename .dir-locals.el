@@ -1,1 +1,1 @@
-((nil . ((cider-clojure-cli-aliases . ":repl"))))
+((nil . ((cider-clojure-cli-aliases . ":repl:test"))))

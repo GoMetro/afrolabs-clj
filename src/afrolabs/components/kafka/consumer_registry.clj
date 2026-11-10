@@ -20,9 +20,16 @@
   Self-healing: a lost partition or a zombie can still write after the new
   owner. Each process watches the registry and republishes when an entry it
   owns was overwritten after its own acknowledged record by a writer of an
-  equal or older generation. A newer generation is deferred to. Two live
-  owners never share a generation, because static group membership is
-  refused.
+  equal or older generation. A newer generation is deferred to.
+
+  Generations are compared only between entries for one partition. A
+  partition's owner records a higher generation than any former owner
+  recorded for it, under both group protocols (`classic` and `consumer`).
+  Under `consumer` a recorded generation can lag its member's current one, so
+  it says nothing across partitions or members, nor whether its writer is
+  alive. Static group membership is refused: a restarted static member can
+  reuse its predecessor's generation. Checked against a broker by
+  `dev/afrolabs/components/kafka/consumer_registry/scripts/kip848.clj`.
 
   Init blocks until the ktable has caught up once. Deref returns
   {[consumer-group-id topic partition] advertisement}, without entries older
@@ -295,12 +302,13 @@
 (defn- start-heal-loop!
   "Run `heal!` on every batch the registry ktable consumes.
 
-  Return {:subscription handle, :done channel}. `:done` closes when the loop
-  exits, after `stop-ch` closes."
+  Return {:subscription handle, :batches channel, :done channel}. `:done`
+  closes when the loop exits, after `stop-ch` closes."
   [{:keys [ktable stop-ch] :as registry}]
   (let [batches      (csp/chan)
         subscription (-kafka/ktable-subscribe ktable {:receiving-ch batches})]
     {:subscription subscription
+     :batches      batches
      :done         (csp/go-loop []
                      (let [[batch ch] (csp/alts! [stop-ch batches] :priority true)]
                        (when (and (not= ch stop-ch) batch)
@@ -433,7 +441,7 @@
                 (let [handlers (group-handlers @query-handlers group-id)]
                   (if-not (seq handlers)
                     (do (handled! "no-handler")
-                        (log/error "Consumer group query for a group without a registered query handler.")
+                        (log/warn "Consumer group query for a group without a registered query handler.")
                         no-answer)
                     (let [as (answers handlers group-id query)]
                       (if (seq as)
@@ -710,6 +718,9 @@
         (csp/<!! publish-loop)
         (csp/<!! (:done heal-loop))
         (-kafka/ktable-unsubscribe ktable (:subscription heal-loop))
+        ;; release a batch the subscription's pipe may be parked on
+        (csp/close! (:batches heal-loop))
+        (while (csp/poll! (:batches heal-loop)))
         (-comp/halt ktable)
         (when-let [p @producer]
           (-comp/halt p))))))
