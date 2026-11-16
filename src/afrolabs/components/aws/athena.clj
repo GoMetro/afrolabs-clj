@@ -136,7 +136,7 @@
   "How long the caller waits beyond `max-wait` for the poller, to cover a status call in flight at the deadline."
   30000)
 
-(defn- transient-failure?
+(defn transient-failure?
   "Return truthy when a failed Athena call, thrown as ex-info carrying its anomaly, is worth retrying.
 
   Athena reports throttling as HTTP 400 `TooManyRequestsException`, which aws-api
