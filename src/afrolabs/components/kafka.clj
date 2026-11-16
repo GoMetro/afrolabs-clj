@@ -2275,7 +2275,7 @@
 
   Once assigned, every partition is seeked: to the offset after its checkpoint
   offset, or to the beginning when the checkpoint has none (absent or the -1
-  sentinel). If no assignment arrives within the timeout, nothing is seeked and
+  sentinel). Logs -1 partitions at debug, absent ones at info. If no assignment arrives within the timeout, nothing is seeked and
   the ktable loads from the reset position instead."
   [checkpoint-value]
   (let [topic-partition-offsets (-> checkpoint-value
@@ -2307,8 +2307,20 @@
                    tp
                    ^long (inc offset-to-resume-from)))
           (when (seq unseeded)
-            (log/with-context+ {:topic-partitions (mapv str unseeded)}
-              (log/info "KTable checkpoint has no offset for partitions; consuming them from the beginning."))
+            ;; -1 marks a partition the ktable has never read from, so starting at the
+            ;; beginning is routine; a missing entry (e.g. a topic added since the
+            ;; checkpoint was taken) is worth surfacing.
+            (let [{empty-tps   true
+                   missing-tps false}
+                  (group-by (fn [^TopicPartition tp]
+                              (some? (get-in topic-partition-offsets [(.topic tp) (.partition tp)])))
+                            unseeded)]
+              (when (seq empty-tps)
+                (log/with-context+ {:topic-partitions (mapv str empty-tps)}
+                  (log/debug "KTable checkpoint records partitions as empty; consuming them from the beginning.")))
+              (when (seq missing-tps)
+                (log/with-context+ {:topic-partitions (mapv str missing-tps)}
+                  (log/info "KTable checkpoint has no offset for partitions; consuming them from the beginning."))))
             (.seekToBeginning ^Consumer consumer ^Collection unseeded)))))))
 
 (s/def ::ktable-id (s/and string?
