@@ -40,12 +40,7 @@
 
 (defrecord AthenaClient [client workgroup output-location catalog database]
   -comp/IHaltable
-  (halt [_] (aws/stop client))
-
-  ;; Derefs to the underlying aws-api client, so callers can invoke Athena operations
-  ;; this namespace does not wrap.
-  clojure.lang.IDeref
-  (deref [_] client))
+  (halt [_] (aws/stop client)))
 
 (defn make-athena-client
   "Build the Athena client component from its resolved configuration."
@@ -245,8 +240,8 @@
     (::athena-client @user/dev-system))
 
   ;; Inspect the operations the underlying client supports.
-  (aws/ops @(athena))
-  (aws/doc @(athena) :StartQueryExecution)
+  (aws/ops (:client (athena)))
+  (aws/doc (:client (athena)) :StartQueryExecution)
 
   ;; Run a query, then poll it until it completes.
   (def qid (start-query-execution! (athena) "SELECT count(*) FROM some_table"))
