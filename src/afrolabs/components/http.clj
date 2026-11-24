@@ -119,7 +119,6 @@
           middleware-chain (or (when (seq middleware-providers)
                                  (->> middleware-providers
                                       (mapcat get-middleware)
-                                      (reverse)
                                       (apply comp)))
                                identity)
           handler' (-> handler
