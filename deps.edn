@@ -116,7 +116,8 @@
                   :main-opts    ["-m" "clj-watson.cli"]}
 
                  :repl
-                 {:extra-deps {djblue/portal            {:mvn/version "0.64.0"}
+                 {:extra-paths ["dev"]
+                  :extra-deps {djblue/portal            {:mvn/version "0.64.0"}
                                criterium/criterium      {:mvn/version "0.4.6"}}}
 
                  :test

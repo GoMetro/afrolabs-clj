@@ -126,10 +126,16 @@ The `defstrategy` macro defines both a constructor function and a `create-strate
 
 ## Topic Management
 
-- `assert-topics!` / `assert-topics` (deprecated) — creates missing topics; optionally increases partition count
+- `assert-topics!` / `assert-topics` (deprecated) — creates missing topics with `:topic-config`; optionally increases partition count; reconciles `:topic-config` on existing topics
 - `delete-topics!` — deletes topics that exist
 - `::topic-asserter` component — runs `assert-topics!` at system init time
-- `::ktable-asserter` component — like `topic-asserter` but also enforces `cleanup.policy` for compacted topics (supports `"compact"`, `"compact,delete"`)
+- `::ktable-asserter` component — `topic-asserter` that also sets `cleanup.policy` from `:ktable-compaction-policy` (`"compact"`, `"compact,delete"`)
+
+Client-facing contract: `docs/components/kafka-topic-asserters.md`. Behaviour shared by both asserters:
+
+- `:topic-config` is a map of Kafka topic config names to values (`{"retention.ms" 86400000}`), passed through verbatim. Prefer it over adding a typed option per config key.
+- Existing topics: only keys in the effective config are compared. `:update-topics-with-bad-config true` sets differing keys and fails init if the brokers reject a change; otherwise differences are logged at info. Operators tune topics by hand, so a mismatch never throws — except `cleanup.policy` in `ktable-asserter`, which throws when updating is off, because a ktable on a non-compacted topic loses keys.
+- `ktable-asserter` effective config: `:topic-config`, then the deprecated typed options (`:topic-delete-retention-ms`, `:ktable-segment-ms`, `:ktable-min-cleanable-dirty-ratio`, `:ktable-max-compaction-lag-ms`) on top, then `cleanup.policy`.
 - `::list-of-topics` component — wraps a list of topic strings as an `ITopicNameProvider`, for use as an Integrant ref in `:topic-name-providers`
 
 ## KTable (`::ktable`)
@@ -238,10 +244,10 @@ In practice, applications use two separate `::ktable-asserter` components becaus
 ```clojure
 ;; Shared compaction tuning — reference this from both asserters
 :my-app/common-ktable-config
-{:topic-delete-retention-ms        86400000   ;; tombstones kept 24 hours
- :ktable-segment-ms                43200000   ;; segments max 12 hours
- :ktable-max-compaction-lag-ms     604800000  ;; compact at least weekly
- :ktable-min-cleanable-dirty-ratio 0.2}
+{:topic-config {"delete.retention.ms"       86400000   ;; tombstones kept 24 hours
+                "segment.ms"                43200000   ;; segments max 12 hours
+                "max.compaction.lag.ms"     604800000  ;; compact at least weekly
+                "min.cleanable.dirty.ratio" 0.2}}
 
 ;; Config ktables: pure "compact" — records are valid forever until replaced
 :my-app/ktable-asserter:config
@@ -249,10 +255,7 @@ In practice, applications use two separate `::ktable-asserter` components becaus
  :strategies                    [#ref [:my-app/common-kafka-config :auth/strategy]]
  :update-topics-with-bad-config true
  :topic-name-providers          [#ig/ref :my-app/config-topic-provider]
- :topic-delete-retention-ms     #ref [:my-app/common-ktable-config :topic-delete-retention-ms]
- :ktable-segment-ms             #ref [:my-app/common-ktable-config :ktable-segment-ms]
- :ktable-max-compaction-lag-ms  #ref [:my-app/common-ktable-config :ktable-max-compaction-lag-ms]
- :ktable-min-cleanable-dirty-ratio #ref [:my-app/common-ktable-config :ktable-min-cleanable-dirty-ratio]}
+ :topic-config                  #ref [:my-app/common-ktable-config :topic-config]}
  ;; :ktable-compaction-policy defaults to "compact"
 
 ;; State ktables: "compact,delete" — records expire after retention period
@@ -264,10 +267,10 @@ In practice, applications use two separate `::ktable-asserter` components becaus
  :ktable-compaction-policy         "delete,compact"
  :topic-name-providers             [#ig/ref :my-app/state-topic-a-provider
                                     #ig/ref :my-app/state-topic-b-provider]
- :topic-delete-retention-ms        #ref [:my-app/common-ktable-config :topic-delete-retention-ms]
- ;; ... other compaction refs
- }
+ :topic-config                     #ref [:my-app/common-ktable-config :topic-config]}
 ```
+
+Existing configs may still use the deprecated typed options (`:ktable-segment-ms` etc.); they override the matching `:topic-config` key.
 
 ### Producer-consumer pipeline (consume → transform → produce)
 

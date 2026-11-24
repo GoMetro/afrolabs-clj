@@ -13,8 +13,7 @@
    [cognitect.aws.client.api :as aws]
    [clojure.spec.alpha :as s]
    [taoensso.timbre :as log]
-   [clojure.core.async :as csp]
-   [failjure.core :as f])
+   [clojure.core.async :as csp])
   (:import
    [java.time LocalDate LocalDateTime ZoneOffset]
    [java.time.format DateTimeFormatterBuilder]
@@ -41,12 +40,7 @@
 
 (defrecord AthenaClient [client workgroup output-location catalog database]
   -comp/IHaltable
-  (halt [_] (aws/stop client))
-
-  ;; Derefs to the underlying aws-api client, so callers can invoke Athena operations
-  ;; this namespace does not wrap.
-  clojure.lang.IDeref
-  (deref [_] client))
+  (halt [_] (aws/stop client)))
 
 (defn make-athena-client
   "Build the Athena client component from its resolved configuration."
@@ -132,42 +126,84 @@
 
 (def query-terminal-states #{"SUCCEEDED" "FAILED" "CANCELLED"})
 (def magic-wait-time 691) ;; it's a magic number
+
+(def ^:private caller-grace-ms
+  "How long the caller waits beyond `max-wait` for the poller, to cover a status call in flight at the deadline."
+  30000)
+
+(defn transient-failure?
+  "Return truthy when a failed Athena call, thrown as ex-info carrying its anomaly, is worth retrying.
+
+  Athena reports throttling as HTTP 400 `TooManyRequestsException`, which aws-api
+  categorises as `:incorrect`; the error code is checked as well as the category."
+  [e]
+  (let [{category :cognitect.anomalies/category
+         code     :cognitect.aws.error/code} (ex-data e)]
+    (or (#{:cognitect.anomalies/busy
+           :cognitect.anomalies/interrupted
+           :cognitect.anomalies/unavailable
+           :cognitect.anomalies/fault} category)
+        (#{"TooManyRequestsException" "ThrottlingException"} code))))
+
 (defn await-query-execution
-  "Block until the query reaches a terminal state; return the terminal state value of the `:QueryExecution` record.
-  Return `timeout-value` instead if `max-wait` (a `Duration`) elapses first."
+  "Block until the query reaches a terminal state; return that state, one of `query-terminal-states`.
+  Return `timeout-value` instead if `max-wait` (a `Duration`) elapses first.
+
+  Retry throttled and transiently failing status calls until the deadline. Throw ex-info,
+  carrying the aws-api anomaly and `:query-execution-id`, when a status call fails
+  permanently, e.g. for an unknown or expired query-execution id."
   [component query-execution-id ^java.time.Duration max-wait timeout-value]
-  (let [result      (csp/chan)
-        deadline-ms (+ (System/currentTimeMillis)
-                                (.toMillis max-wait))
-        poller-thread
-        (csp/io-thread
-         (loop []
-           (let [execution (f/try-all [execution (query-execution component query-execution-id)]
-                             (get-in execution [:Status :State])
-                             (f/when-failed [e]
-                               (log/with-context+ {:failure (f/message e)}
-                                 (log/warn "Unable to query athena."))
-                               :call-failure))]
-             (if (contains? query-terminal-states execution)
-               (csp/>!! result execution)
-               (let [remaining (- deadline-ms (System/currentTimeMillis))]
-                 (if (pos? remaining)
-                   (do (csp/<!! (csp/timeout (min remaining
-                                                  magic-wait-time)))
-                       (recur))
-                   (csp/>!! result timeout-value)))))))]
-    (csp/<!! result)))
+  (let [result      (csp/promise-chan)
+        max-wait-ms (.toMillis max-wait)
+        deadline-ms (+ (System/currentTimeMillis) max-wait-ms)]
+    (csp/io-thread
+     (try
+       (loop []
+         (let [state (try
+                       (get-in (query-execution component query-execution-id) [:Status :State])
+                       (catch clojure.lang.ExceptionInfo e
+                         (when-not (transient-failure? e)
+                           (throw e))
+                         (log/with-context+ {:failure (ex-message e)}
+                           (log/warn "Unable to query athena; retrying."))
+                         ::transient-failure))]
+           (if (contains? query-terminal-states state)
+             (csp/>!! result [:value state])
+             (let [remaining (- deadline-ms (System/currentTimeMillis))]
+               (if (pos? remaining)
+                 (do (csp/<!! (csp/timeout (min remaining
+                                                magic-wait-time)))
+                     (recur))
+                 (csp/>!! result [:value timeout-value]))))))
+       (catch Throwable t
+         (csp/>!! result [:error t]))))
+    (let [caller-timeout       (csp/timeout (+ max-wait-ms caller-grace-ms))
+          [[outcome v] port]   (csp/alts!! [result caller-timeout])]
+      (cond
+        (= port caller-timeout) timeout-value
+        (= :value outcome)      v
+        (instance? clojure.lang.ExceptionInfo v)
+        (throw (ex-info "Unable to await Athena query execution."
+                        (assoc (ex-data v) :query-execution-id query-execution-id)
+                        v))
+        :else                   (throw v)))))
 
 (defn query-results
   "Return the rows of a completed query as a lazy sequence of maps.
 
-  The query must have reached the SUCCEEDED state."
+  The query must have reached the SUCCEEDED state. Pages are fetched as the seq is
+  consumed, with a few read ahead on call. Throw ex-info, carrying the aws-api anomaly and
+  `:query-execution-id`, when a page can not be read, including once the query's
+  results have expired or been removed from the output location."
   [{:keys [client]} query-execution-id]
   (let [pages        (iteration (fn [next-token]
-                                  (-aws/throw-when-anomaly
-                                   (aws/invoke client {:op      :GetQueryResults
-                                                       :request (cond-> {:QueryExecutionId query-execution-id}
-                                                                  next-token (assoc :NextToken next-token))})))
+                                  (let [response (aws/invoke client {:op      :GetQueryResults
+                                                                     :request (cond-> {:QueryExecutionId query-execution-id}
+                                                                                next-token (assoc :NextToken next-token))})]
+                                    (when (:cognitect.anomalies/category response)
+                                      (throw (ex-info "Unable to read Athena query results."
+                                                      (assoc response :query-execution-id query-execution-id))))
+                                    response))
                                 :vf    :ResultSet
                                 :kf    :NextToken
                                 :initk nil)
@@ -204,8 +240,8 @@
     (::athena-client @user/dev-system))
 
   ;; Inspect the operations the underlying client supports.
-  (aws/ops @(athena))
-  (aws/doc @(athena) :StartQueryExecution)
+  (aws/ops (:client (athena)))
+  (aws/doc (:client (athena)) :StartQueryExecution)
 
   ;; Run a query, then poll it until it completes.
   (def qid (start-query-execution! (athena) "SELECT count(*) FROM some_table"))

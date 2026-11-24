@@ -71,7 +71,9 @@
 
   Returns the raw AWS result."
   [component & {:as options}]
-  (admin-initiate-auth:username&password* (:client @component) options))
+  (admin-initiate-auth:username&password* (:client @component)
+                                          (merge options
+                                                 @component)))
 
 ;;;;;;;;;;;;;;;;;;;;
 
@@ -160,11 +162,18 @@
                    ::redirect-uri]))
 
 (defn make-cognito-client
-  [{:keys [aws-client-cfg] :as cfg}]
+  "Deref'd state is `cfg` plus `:client`, and `:jwks-url` when both the region
+  and `:user-pool-id` are known."
+  [{:keys [aws-client-cfg user-pool-id] :as cfg}]
   (let [client (-> aws-client-cfg
                    (assoc :api :cognito-idp)
                    (aws/client))
-        state (assoc cfg :client client)]
+        region (:region aws-client-cfg)
+        state  (cond-> (assoc cfg :client client)
+                 (and region user-pool-id)
+                 (assoc :jwks-url (format "https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json"
+                                          region
+                                          user-pool-id)))]
     (reify
       -comp/IHaltable
       (halt [_] (aws/stop client))

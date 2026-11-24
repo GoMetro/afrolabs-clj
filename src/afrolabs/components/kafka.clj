@@ -267,8 +267,12 @@
 
 (defprotocol IConsumerPostInitHook
   "A strategy protocol for the kafka consumer object. This is called after IConsumerInitHook (after subscription) but
-  before the first .poll. Useful for getting info about partitions or topics before consumption starts."
-  (post-init-hook [this consumer] "Receives the consumer before the first call to .poll."))
+  before the consumer loop's first .poll. Useful for getting info about partitions or topics before consumption starts.
+
+  Records returned by any .poll made inside the hook never reach the consumer client. A hook that polls to obtain an
+  assignment must seek every assigned partition afterwards (see `poll-until-assigned!`), or those records are skipped.
+  To seek on (re)assignment, prefer `IConsumerAwareRebalanceListener/on-partitions-assigned`, which needs no poll here."
+  (post-init-hook [this consumer] "Receives the consumer before the consumer loop's first call to .poll."))
 
 (defprotocol IPostConsumeHook
   "A Strategy protocol for getting access to the Consumer Object and the consumed records, after the consume logic has
@@ -808,28 +812,47 @@
                      ^java.util.regex.Pattern regex
                      ^ConsumerRebalanceListener (with-consumer-rebalance-listener consumer)))))))
 
+(defn poll-until-assigned!
+  "Poll `consumer` until it holds a partition assignment or `timeout` elapses.
+
+  Return the assignment; empty on timeout. The poll that produces the assignment
+  may also return records, which are discarded: the caller must seek every
+  partition in the returned assignment, or those records are skipped."
+  [^Consumer consumer ^java.time.Duration timeout]
+  (let [deadline (+ (System/nanoTime) (.toNanos timeout))]
+    (loop []
+      (let [assignment (.assignment consumer)]
+        (if (or (seq assignment)
+                (not (pos? (- deadline (System/nanoTime)))))
+          assignment
+          (do
+            (log/debug "Polling for topic-partition assignment, before seeking.")
+            (.poll consumer ^java.time.Duration (t/duration 1000 :millis))
+            (recur)))))))
+
 (defstrategy SeekToPartitionOffset
+  "Seek the listed partitions to the given offsets once assigned.
+
+  `topic-partition-offsets` is {topic {partition offset}}. Assigned partitions
+  not listed keep their position after the assignment poll, so records that poll
+  returned for them are skipped.
+
+  Throws from the post-init hook if no assignment arrives within 60 seconds."
   [topic-partition-offsets]
   (reify
     IConsumerPostInitHook
     (post-init-hook
         [_ consumer]
-      (let [assignment
-            (loop []
-              (let [assignment (.assignment ^KafkaConsumer consumer)]
-                (if (seq assignment)
-                  assignment
-                  (do
-                    (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                    (.poll ^Consumer consumer
-                           ^java.time.Duration (t/duration 5000 :millis))
-                    (recur)))))]
+      (let [timeout    (t/duration 60 :seconds)
+            assignment (poll-until-assigned! consumer timeout)]
+        (when-not (seq assignment)
+          (throw (ex-info "SeekToPartitionOffset Cannot find topic assignment to seek to" {:timeout timeout})))
         (doseq [[topic partition] (map (fn [topic-partition]
                                          [(.topic ^TopicPartition topic-partition)
                                           (.partition ^TopicPartition topic-partition)])
                                        assignment)]
           (when-let [offset (get-in topic-partition-offsets [topic partition])]
-            (.seek ^KafkaConsumer consumer
+            (.seek ^Consumer consumer
                    (TopicPartition. topic partition)
                    ^long offset)))))))
 
@@ -856,32 +879,32 @@
     (t/to-millis-from-epoch x)))
 
 (defstrategy SeekToTimestampOffset
+  "Seek every assigned partition to its first record at or after `offset`.
+
+  `offset` is an instant: epoch millis, an ISO-8601 string, an Instant or a
+  ZonedDateTime. A partition with no such record is not seeked: it keeps its
+  position after the assignment poll, so records that poll returned for it are
+  skipped and the rest of its (older) records are consumed.
+
+  Throws from the post-init hook if no assignment arrives within 10 seconds."
   [offset]
   (let [offset (->millis-from-epoch offset)]
     (reify
       IConsumerPostInitHook
       (post-init-hook
           [_ consumer]
-        (let [assignment
-              (loop [remaining 2]
-                (when (zero? remaining)
-                  (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:remaining remaining})))
-                (let [assignment (.assignment ^KafkaConsumer consumer)]
-                  (if (seq assignment)
-                    assignment
-                    (do
-                      (log/debug "Polling once for topic-partition assignment to happen, before seeking to offsets.")
-                      (.poll ^Consumer consumer
-                             ^java.time.Duration (t/duration 5000 :millis))
-                      (recur (dec remaining))))))]
+        (let [timeout    (t/duration 10 :seconds)
+              assignment (poll-until-assigned! consumer timeout)]
+          (when-not (seq assignment)
+            (throw (ex-info "SeekToTimestampOffset Cannot find topic assignment to seek to" {:timeout timeout})))
           (doseq [[^TopicPartition topic-partition
                    ^OffsetAndTimestamp offset-and-timestamp]
-                  (.offsetsForTimes ^KafkaConsumer consumer
+                  (.offsetsForTimes ^Consumer consumer
                                     (into {}
                                           (map #(vector % offset))
                                           assignment))]
             (when offset-and-timestamp
-              (.seek ^KafkaConsumer consumer
+              (.seek ^Consumer consumer
                      topic-partition
                      (.offset offset-and-timestamp)))))))))
 
@@ -930,12 +953,12 @@
     IUpdateConsumerConfigHook
     (update-consumer-cfg-hook
         [_ cfg]
-      (assoc cfg ProducerConfig/CLIENT_ID_CONFIG client-id))
+      (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))
 
     IUpdateProducerConfigHook
     (update-producer-cfg-hook
         [_ cfg]
-      (assoc cfg ConsumerConfig/CLIENT_ID_CONFIG client-id))))
+      (assoc cfg ProducerConfig/CLIENT_ID_CONFIG client-id))))
 
 (defn consumer-end-offsets
   "Gets the (.endOffsets ...) of the consumer in nice data format.
@@ -1654,6 +1677,66 @@
           (.createPartitions topics-createPartitions-parameter)
           (.all)))))
 
+(s/def ::topic-config (s/map-of string? (s/or :s string? :n number? :b boolean?)))
+
+(defn- normalize-topic-config-value
+  "Return `v` in a form comparable across writers: `cleanup.policy` lists are
+  order-insensitive."
+  [k v]
+  (if (and v (= "cleanup.policy" k))
+    (str/join "," (sort (map str/trim (str/split v #","))))
+    v))
+
+(defn- topic-config-differences
+  "Return {topic {config-key [current desired]}} for each key of `topic-config`
+  whose value differs on an existing topic in `topic-names`. Values compare as
+  strings."
+  [^AdminClient admin-client topic-names topic-config]
+  (if-not (and (seq topic-names) (seq topic-config))
+    {}
+    (let [desired (update-vals topic-config str)]
+      (->> (map #(ConfigResource. ConfigResource$Type/TOPIC %) topic-names)
+           (.describeConfigs admin-client)
+           (.all)
+           (.get)
+           (keep (fn [[^ConfigResource resource ^Config cfg]]
+                   (let [diffs (into {}
+                                     (keep (fn [[k v]]
+                                             (let [current (some-> (.get cfg ^String k) (.value))]
+                                               (when (not= (normalize-topic-config-value k current)
+                                                           (normalize-topic-config-value k v))
+                                                 [k [current v]]))))
+                                     desired)]
+                     (when (seq diffs)
+                       [(.name resource) diffs]))))
+           (into {})))))
+
+(defn- reconcile-topic-configs!
+  "Act on `differences`, as returned by `topic-config-differences`. With
+  `update?`, set every differing key and wait for the brokers to accept it;
+  otherwise log each topic's differences at info and change nothing."
+  [^AdminClient admin-client differences update?]
+  (doseq [[topic diffs] differences]
+    (log/with-context+ {:topic       topic
+                        :differences diffs}
+      (if update?
+        (log/warn "Topic config differs from the desired config. Updating the topic.")
+        (log/info "Topic config differs from the desired config. Leaving the topic unchanged."))))
+  (when (and update? (seq differences))
+    (-> (.incrementalAlterConfigs admin-client
+                                  (into {}
+                                        (map (fn [[topic diffs]]
+                                               [(ConfigResource. ConfigResource$Type/TOPIC topic)
+                                                (mapv (fn [[k [_ desired]]]
+                                                        (AlterConfigOp. (ConfigEntry. k desired)
+                                                                        AlterConfigOp$OpType/SET))
+                                                      diffs)]))
+                                        differences))
+        (.all)
+        (.get))))
+
+(declare assert-topics!)
+
 (defn ^{:deprecated    true
         :superseded-by "assert-topics!"} assert-topics
   "SUPERSEDED-BY `assert-topics!`
@@ -1662,60 +1745,67 @@
   increased to match (when `increase-existing-partitions?` is `true`)."
   [^AdminClient admin-client
    desired-topics
+   & {:as opts}]
+  (assert-topics! admin-client desired-topics opts))
+
+(defn assert-topics!
+  "Ensure `desired-topics` exist. Return nil.
+
+  New topics are created with `nr-of-partitions` (default: cluster default)
+  and `topic-config`, a map of Kafka topic config names to values.
+
+  Existing topics:
+  - `increase-existing-partitions?` true: partitions below `nr-of-partitions`
+    are increased to it.
+  - `topic-config` keys whose value differs are set when
+    `update-topics-with-bad-config` is true, otherwise logged at info. Keys not
+    in `topic-config` are left alone."
+  [^AdminClient admin-client
+   desired-topics
    & {:keys [nr-of-partitions
-             increase-existing-partitions?]
-      :or   {increase-existing-partitions? false}}]
-  (let [existing-topics (-> admin-client
+             increase-existing-partitions?
+             topic-config
+             update-topics-with-bad-config]
+      :or   {increase-existing-partitions? false
+             topic-config                  {}
+             update-topics-with-bad-config false}}]
+  (let [desired-topics  (set desired-topics)
+        topic-config    (update-vals topic-config str)
+        existing-topics (-> admin-client
                             (.listTopics)
                             (.names)
                             (.get)
                             (set))
-        new-topics (into []
-                         (comp
-                          (filter (complement existing-topics))
-                          (distinct)
-                          (map (fn [topic-name]
-                                 (log/info (format "Creating topic '%s' with nr-partitions '%s' and replication-factor '%s'."
-                                                   topic-name
-                                                   (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                   "CLUSTER_DEFAULT"))
-                                 (NewTopic. ^String topic-name
-                                            ^java.util.Optional
-                                            (if nr-of-partitions
-                                              (Optional/of (Integer. ^long nr-of-partitions))
+        existing-desired-topics (set/intersection existing-topics desired-topics)
+        new-topics (mapv (fn [topic-name]
+                           (log/info (format "Creating topic '%s' with nr-partitions '%s', replication-factor '%s' and config %s."
+                                             topic-name
+                                             (str (or nr-of-partitions "CLUSTER_DEFAULT"))
+                                             "CLUSTER_DEFAULT"
+                                             (pr-str topic-config)))
+                           (cond-> (NewTopic. ^String topic-name
+                                              ^java.util.Optional
+                                              (if nr-of-partitions
+                                                (Optional/of (Integer. ^long nr-of-partitions))
+                                                (Optional/empty))
+                                              ^java.util.Optional
                                               (Optional/empty))
-                                            ^java.util.Optional
-                                            (Optional/empty)))))
-                         desired-topics)
-        topic-create-result (.createTopics admin-client new-topics)
-
-        ^java.util.Collection existing-topics-to-check
-        (set/intersection existing-topics
-                          (set desired-topics))]
+                             (seq topic-config) (.configs ^java.util.Map topic-config)))
+                         (set/difference desired-topics existing-topics))]
 
     (when increase-existing-partitions?
       (increase-topic-partitions! admin-client
-                                  existing-topics-to-check
+                                  existing-desired-topics
                                   nr-of-partitions))
 
-    ;; wait for complete success
-    (-> topic-create-result
+    (reconcile-topic-configs! admin-client
+                              (topic-config-differences admin-client existing-desired-topics topic-config)
+                              update-topics-with-bad-config)
+
+    (-> (.createTopics admin-client new-topics)
         (.all)
         (.get))
     nil))
-
-;; this is the new preferred name
-(defn assert-topics!
-  "Makes sure topics exist with the given number of partitions.
-  If a topic exists and has fewer partitions than specified with `nr-of-partitions`, the partitions will be
-  increased to match (when `increase-existing-partitions?` is `true`)."
-  [^AdminClient admin-client
-   desired-topics
-   & {:keys [nr-of-partitions
-             increase-existing-partitions?]
-      :or   {increase-existing-partitions? false}
-      :as   opts}]
-  (assert-topics admin-client desired-topics opts))
 
 (defn delete-topics!
   [^AdminClient admin-client
@@ -1740,15 +1830,20 @@
                                 :i   pos-int?
                                 :s   #(try (Integer/parseInt %)
                                            (catch NumberFormatException _ false))))
+(s/def ::update-topics-with-bad-config boolean?)
 (s/def ::topic-asserter-cfg
   (s/or :implied-admin-client (s/and ::admin-client-cfg
                                      (s/keys :req-un [::topic-name-providers]
                                              :opt-un [::nr-of-partitions
-                                                      ::increase-existing-partitions?]))
+                                                      ::increase-existing-partitions?
+                                                      ::topic-config
+                                                      ::update-topics-with-bad-config]))
         :provided-admin-client (s/keys :req-un [::admin-client
                                                 ::topic-name-providers]
                                        :opt-un [::nr-of-partitions
-                                                ::increase-existing-partitions?])))
+                                                ::increase-existing-partitions?
+                                                ::topic-config
+                                                ::update-topics-with-bad-config])))
 
 (-comp/defcomponent {::-comp/ig-kw              ::topic-asserter
                      ::-comp/config-spec        ::topic-asserter-cfg
@@ -1757,8 +1852,12 @@
     :keys [topic-name-providers
            nr-of-partitions
            increase-existing-partitions?
+           topic-config
+           update-topics-with-bad-config
            admin-client]
-    :or   {increase-existing-partitions? false}}]
+    :or   {increase-existing-partitions? false
+           topic-config                  {}
+           update-topics-with-bad-config false}}]
 
   (let [^java.lang.Integer
         nr-of-partitions (or (when (and nr-of-partitions
@@ -1773,7 +1872,9 @@
     (assert-topics! @ac
                     (mapcat #(get-topic-names %) topic-name-providers)
                     :nr-of-partitions              nr-of-partitions
-                    :increase-existing-partitions? increase-existing-partitions?)
+                    :increase-existing-partitions? increase-existing-partitions?
+                    :topic-config                  topic-config
+                    :update-topics-with-bad-config update-topics-with-bad-config)
 
     ;; stop the admin client, but only when we created it
     (when-not admin-client
@@ -1816,7 +1917,6 @@
                                                 :d (s/and double?
                                                           #(< 0.0 % 1.0))))
 (s/def ::recreate-topics-with-bad-config boolean?)
-(s/def ::update-topics-with-bad-config boolean?)
 (s/def ::ktable-compaction-policy #{;; normal compaction, keeps the last value of records by key
                                     "compact"
                                     ;; keeps the last value of a record by key, for the retention period
@@ -1828,6 +1928,7 @@
   (s/or :implicit-admin-client (s/and ::admin-client-cfg
                                       (s/keys :req-un [::topic-name-providers]
                                               :opt-un [::nr-of-partitions
+                                                       ::topic-config
                                                        ::topic-delete-retention-ms
                                                        ::ktable-segment-ms
                                                        ::ktable-min-cleanable-dirty-ratio
@@ -1839,6 +1940,7 @@
         :provided-admin-client (s/keys :req-un [::admin-client
                                                 ::topic-name-providers]
                                        :opt-un [::nr-of-partitions
+                                                ::topic-config
                                                 ::topic-delete-retention-ms
                                                 ::ktable-segment-ms
                                                 ::ktable-min-cleanable-dirty-ratio
@@ -1855,6 +1957,7 @@
     :keys [admin-client
            topic-name-providers
            nr-of-partitions
+           topic-config
            topic-delete-retention-ms
            ktable-segment-ms
            ktable-min-cleanable-dirty-ratio
@@ -1862,7 +1965,8 @@
            update-topics-with-bad-config
            ktable-compaction-policy
            increase-existing-partitions?]
-    :or   {ktable-compaction-policy        "compact"}}]
+    :or   {ktable-compaction-policy        "compact"
+           topic-config                    {}}}]
 
   (when-not (nil? (:recreate-topics-with-bad-config cfg))
     (log/info "KTable asserter option `recreate-topics-with-bad-config` has been deprecated in favour of `update-topics-with-bad-config`."))
@@ -1881,108 +1985,42 @@
                              (when (number? nr-of-partitions)
                                (Integer. nr-of-partitions))
                              nr-of-partitions)
-        ac (or admin-client
-               (make-admin-client cfg))
-        existing-topics (-> ^AdminClient @ac
-                            (.listTopics)
-                            (.names)
-                            (.get)
-                            (set))
-
+        ;; the specific options win over `topic-config`
+        topic-config (cond-> topic-config
+                       topic-delete-retention-ms        (assoc "delete.retention.ms" topic-delete-retention-ms)
+                       ktable-segment-ms                (assoc "segment.ms" ktable-segment-ms)
+                       ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty.ratio" ktable-min-cleanable-dirty-ratio)
+                       ktable-max-compaction-lag-ms     (assoc "max.compaction.lag.ms" ktable-max-compaction-lag-ms)
+                       :always                          (assoc "cleanup.policy" ktable-compaction-policy))
         desired-topics (set (mapcat #(get-topic-names %) topic-name-providers))
+        ac (or admin-client
+               (make-admin-client cfg))]
+    (try
+      ;; A ktable on a topic with the wrong cleanup.policy loses keys, so this
+      ;; mismatch alone stops startup unless the topic may be updated.
+      (when-not update-topics-with-bad-config
+        (let [existing-topics (set/intersection desired-topics
+                                                (-> ^AdminClient @ac (.listTopics) (.names) (.get) (set)))
+              wrong-policy    (vec (keys (topic-config-differences @ac
+                                                                    existing-topics
+                                                                    {"cleanup.policy" ktable-compaction-policy})))]
+          (when (seq wrong-policy)
+            (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
+                                    ktable-compaction-policy
+                                    (str wrong-policy))
+                            {:topics         wrong-policy
+                             :desired-policy ktable-compaction-policy})))))
 
-        ;; make sure topics have the correct number of partitions
-        _ (when increase-existing-partitions?
-            (increase-topic-partitions! @ac
-                                        (set/intersection desired-topics
-                                                          existing-topics)
-                                        nr-of-partitions))
-
-        ;; we can't CHANGE a topic that has been created the wrong way
-        ;; and neither can we let it be.
-        ;; The app is in a broken state if a topic that must be compacted is not.
-        topics-with-wrong-config
-        (->> (set/intersection desired-topics
-                               existing-topics)
-             (map #(ConfigResource. ConfigResource$Type/TOPIC %))
-             (.describeConfigs ^AdminClient @ac)
-             (.all)
-             (.get)
-             (map (fn [[^ConfigResource resource ^Config cfg]]
-                    [(.name resource)
-                     (.value (.get cfg "cleanup.policy"))]))
-             (filter (fn [[_ topic-compaction-strategy]]
-                       (let [topic-compaction-strategy (if (= topic-compaction-strategy
-                                                              "delete,compact")
-                                                         "compact,delete" ;; normalize
-                                                         topic-compaction-strategy)]
-                         (not= ktable-compaction-policy
-                               topic-compaction-strategy))))
-             (map first)
-             vec)
-
-        ;; we want to either alert (by throwing) that a topic is misconfigured
-        ;; or we will modify the topic in-place. governed by `update-topics-with-bad-config` flag.
-        _ (when (pos-int? (count topics-with-wrong-config))
-            (if-not update-topics-with-bad-config
-              (throw (ex-info (format "These topics must be created with topic config 'cleanup.policy' == '%s', but they are not. Cannot continue.\n%s"
-                                      ktable-compaction-policy
-                                      (str topics-with-wrong-config))
-                              {:topics         topics-with-wrong-config
-                               :desired-policy ktable-compaction-policy}))
-
-              ;; here the topics will be modified
-              (do
-                (log/warn (format "These topics [%s] were created incorrectly ('cleanup.policy' != '%s'). They will now be modified. (Control this behaviour with component setting 'recreate-topics-with-bad-config'.)"
-                                  (str/join "," (map #(str "'" % "'") topics-with-wrong-config))
-                                  ktable-compaction-policy))
-
-                (let [change-spec [(AlterConfigOp. (ConfigEntry. "cleanup.policy"
-                                                                 ktable-compaction-policy)
-                                                   AlterConfigOp$OpType/SET)]]
-                  (-> (.incrementalAlterConfigs ^AdminClient @ac
-                                                (into {}
-                                                      (map (fn [topic-name]
-                                                             [(ConfigResource. ConfigResource$Type/TOPIC
-                                                                               topic-name)
-                                                              change-spec]))
-                                                      topics-with-wrong-config))
-                      (.all))))))
-
-
-
-        new-topics (set/difference (set desired-topics)
-                                   existing-topics)
-        topic-create-result (->> new-topics
-                                 (map (fn [topic-name]
-                                        (log/info (format "Creating log-compacted topic '%s' with nr-partitions '%s', replication-factor '%s' & cleanup.policy = '%s'."
-                                                          topic-name
-                                                          (str (or nr-of-partitions "CLUSTER_DEFAULT"))
-                                                          "CLUSTER_DEFAULT"
-                                                          ktable-compaction-policy))
-                                        (let [new-topic (NewTopic. ^String   topic-name
-                                                                   ^Optional (if nr-of-partitions
-                                                                               (Optional/of nr-of-partitions)
-                                                                               (Optional/empty))
-                                                                   ^Optional (Optional/empty))
-                                              _ (.configs new-topic
-                                                          (cond-> {"cleanup.policy" ktable-compaction-policy}
-                                                            topic-delete-retention-ms        (assoc "delete.retention.ms" (str topic-delete-retention-ms))
-                                                            ktable-segment-ms                (assoc "segment.ms" (str ktable-segment-ms))
-                                                            ktable-min-cleanable-dirty-ratio (assoc "min.cleanable.dirty.ratio" (str ktable-min-cleanable-dirty-ratio))
-                                                            ktable-max-compaction-lag-ms     (assoc "max.compaction.lag.ms" (str ktable-max-compaction-lag-ms))
-                                                            ))]
-                                          new-topic)))
-                                 (.createTopics ^AdminClient @ac))]
-
-    ;; wait for complete success
-    (-> topic-create-result
-        (.all)
-        (.get))
-
-    ;; stop the admin client, but only when we created it
-    (when-not admin-client
-      (-comp/halt ac))
+      (assert-topics! @ac
+                      desired-topics
+                      :nr-of-partitions              nr-of-partitions
+                      :increase-existing-partitions? increase-existing-partitions?
+                      :topic-config                  topic-config
+                      :update-topics-with-bad-config (boolean update-topics-with-bad-config))
+      (finally
+        ;; stop the admin client, but only when we created it
+        (when-not admin-client
+          (-comp/halt ac))))
 
     ;; we need to return something for the component value, let's just use the config until something better comes about
     cfg))
@@ -2233,34 +2271,57 @@
   )
 
 (defn ktable-checkpoint-seek-strategy
-  "Implements a kafka strategy specifically for seeking to partition-offsets
-  so that the ktable can resume from a checkpoint."
+  "Return a strategy that resumes a ktable consumer from `checkpoint-value`.
+
+  Once assigned, every partition is seeked: to the offset after its checkpoint
+  offset, or to the beginning when the checkpoint has none (absent or the -1
+  sentinel). Logs -1 partitions at debug, absent ones at info. If no assignment arrives within the timeout, nothing is seeked and
+  the ktable loads from the reset position instead."
   [checkpoint-value]
   (let [topic-partition-offsets (-> checkpoint-value
                                     (meta)
-                                    :ktable/topic-partition-offsets)]
+                                    :ktable/topic-partition-offsets)
+        timeout                 (t/duration 60 :seconds)]
     (reify
       IConsumerPostInitHook
       (post-init-hook [_ consumer]
-        ;; poll once, to achieve a topic-partition assignment
-        ;; This _is_ a ktable, so the assumption is that this is for _all_ partitions...
-        (.poll ^Consumer consumer
-               ^java.time.Duration (t/duration 1000 :millis))
-        (doseq [^TopicPartition tp (.assignment ^Consumer consumer)
-                :let [t                     (.topic tp)
-                      p                     (.partition tp)
-                      offset-to-resume-from (get-in topic-partition-offsets [t p])]
-                :when (and offset-to-resume-from
-                           ;; there are cases where this offset might be seeded with a sentinal value of -1
-                           (<= 0 offset-to-resume-from))]
-          (log/with-context+ {:topic     t
-                              :partition p
-                              :offset    offset-to-resume-from}
-            (log/info "KTable checkpoint loading is resuming ktable consumption from offset."))
-          (.seek ^Consumer consumer
-                 tp
-                 ;; we seek to at least one higher offset than what we are aware of, so we can start resuming from the new data
-                 (inc offset-to-resume-from)))))))
+        (let [assignment (poll-until-assigned! consumer timeout)
+              {checkpointed true
+               unseeded     false}
+              (group-by (fn [^TopicPartition tp]
+                          (let [offset (get-in topic-partition-offsets [(.topic tp) (.partition tp)])]
+                            (boolean (and offset (<= 0 offset)))))
+                        assignment)]
+          (when-not (seq assignment)
+            (log/with-context+ {:timeout timeout}
+              (log/warn "KTable checkpoint not applied: no partition assignment within timeout.")))
+          (doseq [^TopicPartition tp checkpointed
+                  :let [t                     (.topic tp)
+                        p                     (.partition tp)
+                        offset-to-resume-from (get-in topic-partition-offsets [t p])]]
+            (log/with-context+ {:topic     t
+                                :partition p
+                                :offset    offset-to-resume-from}
+              (log/info "KTable checkpoint loading is resuming ktable consumption from offset."))
+            (.seek ^Consumer consumer
+                   tp
+                   ^long (inc offset-to-resume-from)))
+          (when (seq unseeded)
+            ;; -1 marks a partition the ktable has never read from, so starting at the
+            ;; beginning is routine; a missing entry (e.g. a topic added since the
+            ;; checkpoint was taken) is worth surfacing.
+            (let [{empty-tps   true
+                   missing-tps false}
+                  (group-by (fn [^TopicPartition tp]
+                              (some? (get-in topic-partition-offsets [(.topic tp) (.partition tp)])))
+                            unseeded)]
+              (when (seq empty-tps)
+                (log/with-context+ {:topic-partitions (mapv str empty-tps)}
+                  (log/debug "KTable checkpoint records partitions as empty; consuming them from the beginning.")))
+              (when (seq missing-tps)
+                (log/with-context+ {:topic-partitions (mapv str missing-tps)}
+                  (log/info "KTable checkpoint has no offset for partitions; consuming them from the beginning."))))
+            (.seekToBeginning ^Consumer consumer ^Collection unseeded)))))))
 
 (s/def ::ktable-id (s/and string?
                           #(pos-int? (count %))))

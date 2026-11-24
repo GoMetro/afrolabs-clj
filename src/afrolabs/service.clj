@@ -104,6 +104,14 @@
                        (assoc :logging-params (into [:disable-stacktrace-colors true]
                                                     logging-params))))]
 
+      (cond
+        (nil? ig-system)
+        (throw (ex-info "System failed to initialize; see the preceding error." {}))
+
+        (nil? health-component)
+        (throw (ex-info "System has no health component; cannot wait on it."
+                        {:components (keys ig-system)})))
+
       (log/info "System started...")
       (-health/wait-while-healthy health-component)
 
