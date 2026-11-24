@@ -5,7 +5,7 @@
             [afrolabs.components.health :as -health]
             [clojure.string :as str]
             [taoensso.timbre :as log]
-            [afrolabs.version :as -version]
+            [afrolabs.components.version-info :as -version-info]
             [ring.util.http-response :as http-response]
             [ring.middleware.pratchett]
             [clojure.pprint]
@@ -169,22 +169,37 @@
 (s/def ::endpoint (s/and string?
                          #(pos-int? (count %))
                          #(str/starts-with? % "/")))
-(s/def ::version-info-resource string?)
-(s/def ::health-endpoint-cfg (s/keys :req-un [::health-component
-                                              ::endpoint]
-                                     :opt-un [::version-info-resource]))
+(s/def ::version-info-resource ::-version-info/version-info-resource)
+(s/def ::version-info ::-version-info/version-info)
+
+(defn- version-info-from-cfg
+  "Return `{:git-sha :git-ref}` from `:version-info` or `:version-info-resource`, or nil."
+  [{:keys [version-info version-info-resource]}]
+  (cond
+    version-info          (-version-info/version-info version-info)
+    version-info-resource (-version-info/read-version-info version-info-resource)))
+
+(s/def ::health-endpoint-cfg (s/and (s/keys :req-un [::health-component
+                                                     ::endpoint]
+                                            :opt-un [::version-info-resource
+                                                     ::version-info])
+                                    #(not (and (:version-info %)
+                                               (:version-info-resource %)))))
 
 (defn create-http-health-endpoint
+  "Return an `IHttpRequestHandler` answering GET `endpoint` with the health of
+  `health-component`.
+
+  Version headers come from at most one of `:version-info` (an `IVersionInfo`)
+  or `:version-info-resource`."
   [{:keys [health-component
-           endpoint
-           version-info-resource]
+           endpoint]
     :as   cfg}]
 
   (s/assert ::health-endpoint-cfg cfg)
 
   (let [{:keys [git-ref
-                git-sha]} (when version-info-resource
-                            (-version/read-version-info version-info-resource))]
+                git-sha]} (version-info-from-cfg cfg)]
     (reify
       IHttpRequestHandler
       (handle-http-request
@@ -207,28 +222,29 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; The resource file identified with `version-info-resource` has to have this format:
-;; {:git-ref  "refs/heads/pwab/BSA-103-add-git-commit-branch-info-into-deployed-artifact-so-you-can-see-what-version-is-running"
-;;  :git-sha  "f7ba5fa0d8bfd1c8a078cae583f8b4cda39b59c3"}
-
-
-(s/def ::version-info-resource string?)
-
 (s/def ::git-version-middleware-cfg
-  (s/keys :req-un [::version-info-resource]
-          :opt-un []))
+  (s/and (s/keys :opt-un [::version-info-resource
+                          ::version-info])
+         #(not= (boolean (:version-info %))
+                (boolean (:version-info-resource %)))))
 
 (defn create-git-version-middleware
-  [{:as   _cfg
+  "Return an `IRingMiddlewareProvider` adding `X-Version-GitRef` and
+  `X-Version-GitSHA` to every response.
+
+  Takes exactly one of `:version-info` (an `IVersionInfo`) or
+  `:version-info-resource` (see `afrolabs.components.version-info`)."
+  [{:as   cfg
     :keys [version-info-resource]}]
-  (let [{:keys [git-ref git-sha]} (-version/read-version-info version-info-resource)]
+  (let [{:keys [git-ref git-sha]} (version-info-from-cfg cfg)]
     (reify
       IRingMiddlewareProvider
       (get-middleware [_]
         (if-not (and git-ref git-sha)
-          (do (log/warn (str "Failed to load version info from resource '"
-                             version-info-resource
-                             "'. Unable to create version middleware."))
+          (do (log/warn (str "No version info"
+                             (when version-info-resource
+                               (str " in resource '" version-info-resource "'"))
+                             ". Unable to create version middleware."))
               [])
           [(fn [handler]
              (fn [request]
