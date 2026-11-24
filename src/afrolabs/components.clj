@@ -16,8 +16,10 @@
 
      (defmethod ig/halt-key! ~ig-kw
        [cfg-key# state#]
+       ;; satisfies? does not see :extend-via-metadata implementations
        (when (and state#
-                  (satisfies? IHaltable state#))
+                  (or (satisfies? IHaltable state#)
+                      (get (meta state#) 'halt)))
          (halt state#)))
      ))
 

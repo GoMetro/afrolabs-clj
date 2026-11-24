@@ -1,6 +1,5 @@
 (ns afrolabs.components.sentry-test
-  (:require [afrolabs.components :as -comp]
-            [afrolabs.components.sentry :as sut]
+  (:require [afrolabs.components.sentry :as sut]
             [afrolabs.components.version-info :as -version-info]
             [clojure.test :as t :refer [deftest is testing]]
             [integrant.core :as ig]
@@ -146,8 +145,7 @@
       (is (not (sut/enabled? client)))
       (is (nil? (sut/capture-message! client "m" :warn)))
       (is (nil? (sut/capture-exception! client (Exception. "e"))))
-      (is (nil? ((:fn (sut/timbre-appender client)) {:level :error :msg_ (delay "m")})))
-      (-comp/halt client)))
+      (is (nil? ((:fn (sut/timbre-appender client)) {:level :error :msg_ (delay "m")})))))
   (testing "nil client"
     (is (not (sut/enabled? nil)))
     (is (nil? (sut/capture-message! nil "m" :warn)))
@@ -172,4 +170,6 @@
       (sut/capture-message! (::other-client system) "to b" :warn)
       (is (= ["to a"] (map (comp :message summary) @events-a)))
       (is (= ["to b"] (map (comp :message summary) @events-b)))
-      (finally (ig/halt! system)))))
+      (finally (ig/halt! system)))
+    (testing "halt closes the scopes"
+      (is (not (.isEnabled (sut/scopes (::sut/client system))))))))

@@ -64,12 +64,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; capturing
 
-(defrecord Client [^Scopes scopes]
-  -comp/IHaltable
-  (halt [_]
-    (when scopes
-      (.close scopes))))
-
 (defn scopes
   "Return the root `io.sentry.Scopes` of `client`, or nil when disabled."
   ^Scopes [client]
@@ -237,17 +231,20 @@
     opts))
 
 (defn make-client
-  "Return a `Client` for `cfg` (see `::client-cfg`). A blank `:dsn` returns a
-  disabled client. Throws on an invalid DSN.
+  "Return a client map for `cfg` (see `::client-cfg`), haltable via
+  `afrolabs.components/halt`. A blank `:dsn` returns a disabled client. Throws
+  on an invalid DSN.
 
   `:before-send` is `(fn [^SentryEvent event hint])` returning the event to
   send, or nil to drop it."
   [{:keys [dsn] :as cfg}]
   (if (str/blank? dsn)
-    (->Client nil)
-    (let [opts      (sentry-options cfg)
-          global    (doto (Scope. opts) (.bindClient (SentryClient. opts)))]
-      (->Client (Scopes. (Scope. opts) (Scope. opts) global "afrolabs.components.sentry")))))
+    {:scopes nil}
+    (let [opts   (sentry-options cfg)
+          global (doto (Scope. opts) (.bindClient (SentryClient. opts)))
+          scopes (Scopes. (Scope. opts) (Scope. opts) global "afrolabs.components.sentry")]
+      (with-meta {:scopes scopes}
+        {`-comp/halt (fn [_] (.close scopes))}))))
 
 (-comp/defcomponent {::-comp/config-spec        ::client-cfg
                      ::-comp/ig-kw              ::client

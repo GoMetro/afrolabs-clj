@@ -23,9 +23,9 @@ running service.
 
 ## DESCRIPTION
 
-Reads the version info resource once at initialisation and serves it via
-`IVersionInfo`. Reference the component from components that report the
-version.
+Reads the version info resource once at initialisation. The component value
+is the map `{:git-sha :git-ref}`, which also implements `IVersionInfo`.
+Reference the component from components that report the version.
 
 The resource is an EDN file on the classpath, usually written by the build:
 

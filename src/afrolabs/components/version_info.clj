@@ -47,15 +47,16 @@
                     "GIT-SHA-FALLBACK")}))
 
 (s/def ::version-info-resource string?)
-(s/def ::version-info #(satisfies? IVersionInfo %))
+(s/def ::version-info #(or (satisfies? IVersionInfo %)
+                           (contains? (meta %) `version-info)))
 (s/def ::version-info-cfg (s/keys :req-un [::version-info-resource]))
 
 (defn make-version-info
-  "Return an `IVersionInfo` serving `version-info-resource`, read once."
+  "Return `{:git-sha :git-ref}` read once from `version-info-resource`,
+  implementing `IVersionInfo`."
   [version-info-resource]
-  (let [info (read-version-info version-info-resource)]
-    (reify IVersionInfo
-      (version-info [_] info))))
+  (with-meta (read-version-info version-info-resource)
+    {`version-info identity}))
 
 (-comp/defcomponent {::-comp/config-spec ::version-info-cfg
                      ::-comp/ig-kw       ::version-info}
