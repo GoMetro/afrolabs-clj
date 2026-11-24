@@ -224,6 +224,12 @@ Breadcrumbs are not recorded.
 The appender sends synchronously on the logging thread. The SDK queues
 events and sends them in the background.
 
+A log component that refs the client forms a dependency cycle under
+`afrolabs.service/as-system` with `:log-component-setup`, which makes every
+component depend on the log component. Exempt the client's key and its
+`:version-info` component's key via `:log-component-dependencies-pred`; this
+includes keys minted with `redeclare-client`.
+
 ## SEE ALSO
 
 [version-info](version-info.md)
