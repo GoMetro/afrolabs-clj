@@ -100,7 +100,8 @@ All optional.
 ## EVENTS
 
 Clojure data is attached as Sentry contexts, shown as sections on the event.
-Keywords keep their colon, so `:order/id` shows as `":order/id"`.
+Keywords keep their colon, so `:order/id` shows as `":order/id"`. UUIDs
+show as their string, instants as ISO-8601 UTC strings.
 
 `"ex-data"`
 : `ex-data` of the exception if it is an `ExceptionInfo`, otherwise of the

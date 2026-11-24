@@ -32,12 +32,15 @@
 (defn- ->sentry-data
   "Return `x` as data Sentry serializes faithfully: Java maps and lists of
   strings, numbers, booleans and nil. Keywords keep their leading colon, so
-  `:order/id` reads as `\":order/id\"`."
+  `:order/id` reads as `\":order/id\"`. UUIDs become their string; instants an
+  ISO-8601 UTC string."
   [x]
   (cond
     (or (nil? x) (string? x) (number? x) (boolean? x)) x
     (keyword? x) (str x)
     (symbol? x) (str x)
+    (uuid? x) (str x)
+    (inst? x) (str (java.time.Instant/ofEpochMilli (inst-ms x)))
     (class? x) (.getName ^Class x)
     (map? x) (let [m (java.util.LinkedHashMap.)]
                (doseq [[k v] x]
