@@ -85,6 +85,36 @@
                          {:println (context-println-appender :colorized-output? true)}}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; per-call appender skipping
+
+(defn- skip-aware-fn
+  [appender-id f]
+  (if (::skip-aware? (meta f))
+    f
+    (with-meta (fn [data]
+                 (when-not (contains? (get-in data [:context ::skip-appenders]) appender-id)
+                   (f data)))
+      {::skip-aware? true})))
+
+(defn install-skip-appenders!
+  "Make each appender in the timbre config ignore log calls whose context holds
+  its id in `::skip-appenders`, a set of appender ids. Other appenders log those
+  calls as usual.
+
+  Idempotent. Affects only the appenders configured at call time; call again
+  after adding or replacing one."
+  []
+  (timbre/swap-config!
+   (fn [config]
+     (update config :appenders
+             (fn [appenders]
+               (into {}
+                     (map (fn [[id appender]]
+                            [id (cond-> appender
+                                  (:fn appender) (update :fn #(skip-aware-fn id %)))]))
+                     appenders))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; in-memory log tap
 ;;
 ;; A single global ring buffer appender. Install it once; read from anywhere.

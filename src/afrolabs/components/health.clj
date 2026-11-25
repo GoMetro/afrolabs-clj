@@ -105,12 +105,14 @@
 
     (letfn [(os-signal-handler
               [signal]
-              (log/fatalf "Health component received OS signal '%s', marking the system as unhealthy."
-                          signal)
-              (indicate-unhealthy)
-              (when trigger-self-destruct-timer-seconds
-                (log/warn "Triggering the self-destruct timer if another OS signal arrives.")
-                (self-destruct!)))
+              ;; A requested shutdown is not an incident.
+              (log/with-context+ {:afrolabs.logging/skip-appenders #{:sentry}}
+                (log/fatalf "Health component received OS signal '%s', marking the system as unhealthy."
+                            signal)
+                (indicate-unhealthy)
+                (when trigger-self-destruct-timer-seconds
+                  (log/warn "Triggering the self-destruct timer if another OS signal arrives.")
+                  (self-destruct!))))
 
             (uncaught-exception-handler
               [thread exception]
