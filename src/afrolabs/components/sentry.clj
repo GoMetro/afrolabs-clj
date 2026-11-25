@@ -13,7 +13,8 @@
   (:require [afrolabs.components :as -comp]
             [afrolabs.components.version-info :as -version-info]
             [clojure.spec.alpha :as s]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [afrolabs.utils :refer [condas->]])
   (:import [io.sentry Scope Scopes ScopeCallback SentryClient SentryEvent SentryLevel
             SentryOptions SentryOptions$BeforeSendCallback SystemOutLogger]
            [io.sentry.protocol Message]))
@@ -63,6 +64,45 @@
   (if (keyword? v)
     (subs (str v) 1)
     (str v)))
+
+(defn- make-release-string
+  "Return `:release`, else `<ref>+<sha>` from `:version-info`, else nil.
+
+  ref: `:git-ref` without `refs/tags/`, `refs/heads/` or `refs/`, at most 100
+       characters.
+  sha: `:git-sha`, shortened to 8 characters when it starts with a hex SHA;
+       a `:DIRTY` suffix is kept.
+  The result obeys Sentry's release rules."
+  [{:keys [release version-info]}]
+  (or release
+      (when version-info
+        (let [{:keys [git-sha git-ref]} (-version-info/version-info version-info)
+              git-sha  (when (string? git-sha) (not-empty git-sha))
+              dirty?   (some-> git-sha (str/ends-with? ":DIRTY"))
+              sha      (some-> git-sha (str/replace #":DIRTY$" ""))
+              sha      (when sha (or (re-find #"^[0-9a-f]{8}" sha) sha))
+              git-sha' (some-> sha (str (when dirty? ":DIRTY")))
+              git-ref' (when (string? git-ref)
+                         (condas-> git-ref $
+                           (str/starts-with? $ "refs/tags/")
+                           (subs $ 10)
+
+                           (str/starts-with? $ "refs/heads/")
+                           (subs $ 11)
+
+                           (str/starts-with? $ "refs/")
+                           (subs $ 5)
+
+                           (<= 100 (count $))
+                           (subs $ 0 100)))
+              separator (when (and (seq git-ref') (seq git-sha'))
+                          "+")
+              candidate (-> (str git-ref' separator git-sha')
+                            (str/replace #"[/\\\n\r\t]+" "-"))
+              candidate (subs candidate 0 (min 200 (count candidate)))]
+          (when-not (or (str/blank? candidate)
+                        (#{"." ".." "latest"} candidate))
+            candidate)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; capturing
@@ -212,9 +252,9 @@
 (defn- sentry-options
   ^SentryOptions
   [{:keys [dsn environment release server-name sample-rate tags in-app-includes
-           send-default-pii? shutdown-timeout-ms debug? version-info before-send]}]
-  (let [release (or release
-                    (some-> version-info -version-info/version-info :git-sha))
+           send-default-pii? shutdown-timeout-ms debug? version-info before-send]
+    :as cfg}]
+  (let [release (make-release-string cfg)
         opts    (SentryOptions.)]
     (.setDsn opts dsn)
     (when environment (.setEnvironment opts environment))

@@ -1,7 +1,11 @@
 (ns afrolabs.components.sentry-test
   (:require [afrolabs.components.sentry :as sut]
             [afrolabs.components.version-info :as -version-info]
+            [clojure.string :as str]
             [clojure.test :as t :refer [deftest is testing]]
+            [clojure.test.check.clojure-test :refer [defspec]]
+            [clojure.test.check.generators :as gen]
+            [clojure.test.check.properties :as prop]
             [integrant.core :as ig]
             [taoensso.timbre :as timbre])
   (:import [io.sentry SentryEvent]))
@@ -128,16 +132,92 @@
       (is (= {"service" "svc"} (:tags e2)))
       (is (= {} (:contexts e2))))))
 
-(deftest release
-  (let [vi (with-meta {} {`-version-info/version-info (fn [_] {:git-sha "abc123" :git-ref "refs/heads/main"})})]
-    (testing "from version-info"
-      (let [[client events] (capturing-client {:version-info vi})]
-        (sut/capture-message! client "m" :warn)
-        (is (= "abc123" (:release (summary (first @events)))))))
-    (testing "explicit :release wins"
-      (let [[client events] (capturing-client {:version-info vi :release "1.2.3"})]
-        (sut/capture-message! client "m" :warn)
-        (is (= "1.2.3" (:release (summary (first @events)))))))))
+(defn- version-info
+  [m]
+  (with-meta {} {`-version-info/version-info (fn [_] m)}))
+
+(defn- release-of
+  "Return the release of an event sent by a client with `cfg`."
+  [cfg]
+  (let [[client events] (capturing-client cfg)]
+    (try
+      (sut/capture-message! client "m" :warn)
+      (:release (summary (first @events)))
+      (finally (.close (sut/scopes client))))))
+
+(defn- release-for
+  [git-ref git-sha]
+  (release-of {:version-info (version-info (cond-> {}
+                                             git-ref (assoc :git-ref git-ref)
+                                             git-sha (assoc :git-sha git-sha)))}))
+
+(defn- valid-sentry-release?
+  "Sentry's release name rules."
+  [r]
+  (and (string? r)
+       (not (str/blank? r))
+       (<= (count r) 200)
+       (not (re-find #"[/\\\n\r\t]" r))
+       (not (#{"." ".." "latest"} r))))
+
+(def ^:private gen-hex-sha
+  (gen/fmap str/join (gen/vector (gen/elements "0123456789abcdef") 40)))
+
+(def ^:private gen-name
+  "A tag or branch name segment, as git allows them: not starting with `.`."
+  (gen/such-that #(not (str/starts-with? % "."))
+                 (gen/fmap str/join (gen/vector (gen/elements "abcxyzABC0189-._") 1 40))))
+
+(def ^:private gen-git-ref
+  (gen/one-of [(gen/fmap #(str "refs/tags/" %) gen-name)
+               (gen/fmap #(str "refs/heads/" (str/join "/" %)) (gen/vector gen-name 1 4))
+               (gen/fmap #(str "refs/" %) gen/string)
+               gen/string
+               (gen/return nil)]))
+
+(def ^:private gen-git-sha
+  (gen/one-of [gen-hex-sha
+               (gen/fmap #(str % ":DIRTY") gen-hex-sha)
+               gen/string
+               (gen/return nil)]))
+
+(deftest explicit-release-wins
+  (is (= "1.2.3" (release-of {:version-info (version-info {:git-sha "abc123" :git-ref "refs/heads/main"})
+                              :release      "1.2.3"}))))
+
+(defspec release-is-absent-or-valid 200
+  (prop/for-all [git-ref gen-git-ref
+                 git-sha gen-git-sha]
+    (let [r (release-for git-ref git-sha)]
+      (or (nil? r) (valid-sentry-release? r)))))
+
+(defspec release-present-when-sha-or-ref-is 100
+  (prop/for-all [git-ref (gen/one-of [(gen/fmap #(str "refs/tags/" %) gen-name) (gen/return nil)])
+                 git-sha (gen/one-of [gen-hex-sha (gen/return nil)])]
+    (let [r (release-for git-ref git-sha)]
+      (if (or git-ref git-sha) (some? r) (nil? r)))))
+
+(defspec release-names-the-commit 100
+  (prop/for-all [git-ref gen-git-ref
+                 git-sha gen-hex-sha
+                 dirty?  gen/boolean]
+    (let [r (release-for git-ref (cond-> git-sha dirty? (str ":DIRTY")))]
+      (and (str/includes? r (subs git-sha 0 8))
+           (= dirty? (str/ends-with? r ":DIRTY"))))))
+
+(defspec release-names-the-tag 100
+  (prop/for-all [tag     gen-name
+                 git-sha gen-hex-sha]
+    (str/includes? (release-for (str "refs/tags/" tag) git-sha) tag)))
+
+(defspec release-tells-builds-apart 100
+  (prop/for-all [[tag-a tag-b] (gen/such-that (fn [[a b]] (not= a b)) (gen/tuple gen-name gen-name))
+                 [sha-a sha-b] (gen/such-that (fn [[a b]] (not= (subs a 0 8) (subs b 0 8)))
+                                              (gen/tuple gen-hex-sha gen-hex-sha))]
+    (and (not= (release-for (str "refs/tags/" tag-a) sha-a)
+               (release-for (str "refs/tags/" tag-b) sha-a))
+         (not= (release-for (str "refs/tags/" tag-a) sha-a)
+               (release-for (str "refs/tags/" tag-a) sha-b)))))
 
 (deftest disabled
   (testing "nil DSN"

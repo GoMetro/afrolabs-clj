@@ -62,8 +62,8 @@ All optional.
 : String identifying the deployed version.
 
 `:version-info`
-: `:afrolabs.components.version-info/version-info` component. Its `:git-sha`
-  is the release when `:release` is not set.
+: `:afrolabs.components.version-info/version-info` component. Builds a sentry
+  release tag from this information.
 
 `:server-name`
 : String. Default: the host name.
